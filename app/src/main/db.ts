@@ -1,3 +1,11 @@
+import WebSocket from 'ws'
+
+// supabase-js requires a global WebSocket (native in Node 22+); Electron's
+// bundled Node may be older, so polyfill before the client is created.
+if (typeof globalThis.WebSocket === 'undefined') {
+  ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = WebSocket
+}
+
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type {
   ComputedDaily,

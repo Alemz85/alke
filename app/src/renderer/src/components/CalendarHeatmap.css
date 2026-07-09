@@ -1,0 +1,175 @@
+.calendar-heatmap {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.calendar-heatmap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.calendar-heatmap-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+}
+
+.calendar-heatmap-nav {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.calendar-heatmap-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: none;
+  color: var(--color-text-secondary);
+  transition: background var(--motion-hover);
+}
+
+.calendar-heatmap-nav-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.calendar-heatmap-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-heatmap-weekday {
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 400;
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+  padding-bottom: var(--space-xxs);
+}
+
+.calendar-heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-heatmap-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  min-height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: none;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  transition: background var(--motion-hover);
+}
+
+.calendar-heatmap-cell:disabled {
+  cursor: default;
+}
+
+.calendar-heatmap-cell:not(:disabled) {
+  cursor: pointer;
+}
+
+.calendar-heatmap-cell:not(:disabled):hover {
+  background: var(--color-surface-hover);
+}
+
+.calendar-heatmap-cell--blank {
+  background: transparent;
+  visibility: hidden;
+}
+
+.calendar-heatmap-daynum {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
+
+/* Duration-step scale: sessions-dim (15%) ramping toward full sessions accent
+   as total session duration for the day increases. Four steps per the
+   calendar-heatmap spec: <30m, 30-60m, 60-90m, >90m. */
+.calendar-heatmap-cell--step-0 {
+  background: rgba(251, 146, 60, 0.15);
+}
+.calendar-heatmap-cell--step-0 .calendar-heatmap-daynum {
+  color: var(--color-text-secondary);
+}
+
+.calendar-heatmap-cell--step-1 {
+  background: rgba(251, 146, 60, 0.4);
+}
+.calendar-heatmap-cell--step-1 .calendar-heatmap-daynum {
+  color: var(--color-text);
+}
+
+.calendar-heatmap-cell--step-2 {
+  background: rgba(251, 146, 60, 0.7);
+}
+.calendar-heatmap-cell--step-2 .calendar-heatmap-daynum {
+  color: var(--color-text);
+}
+
+.calendar-heatmap-cell--step-3 {
+  background: var(--color-sessions);
+}
+.calendar-heatmap-cell--step-3 .calendar-heatmap-daynum {
+  color: var(--color-text-on-accent);
+}
+
+.calendar-heatmap-cell--today {
+  outline: 1px solid var(--color-hairline);
+  outline-offset: -1px;
+}
+
+.calendar-heatmap-dots {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.calendar-heatmap-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.calendar-heatmap-dot--aerobic {
+  background: var(--color-aerobic);
+}
+.calendar-heatmap-dot--load {
+  background: var(--color-load);
+}
+.calendar-heatmap-dot--recovery {
+  background: var(--color-recovery);
+}
+.calendar-heatmap-dot--sessions {
+  background: var(--color-sessions);
+}
+.calendar-heatmap-dot--flag {
+  background: var(--color-flag);
+}
+.calendar-heatmap-dot--neutral {
+  background: var(--color-text-tertiary);
+}

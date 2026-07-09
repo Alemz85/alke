@@ -1,0 +1,204 @@
+.dashboard-flags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-md);
+}
+
+.dashboard-grid > * {
+  grid-column: span 12;
+}
+
+.dashboard-grid--span-4 {
+  grid-column: span 4 !important;
+}
+
+.dashboard-grid--span-6 {
+  grid-column: span 6 !important;
+}
+
+.dashboard-grid--span-8 {
+  grid-column: span 8 !important;
+}
+
+.dashboard-grid--span-12 {
+  grid-column: span 12 !important;
+}
+
+@media (max-width: 1439px) and (min-width: 1100px) {
+  .dashboard-grid--span-6 {
+    grid-column: span 12 !important;
+  }
+}
+
+@media (max-width: 1099px) {
+  .dashboard-grid--span-4 {
+    grid-column: span 6 !important;
+  }
+  .dashboard-grid--span-6,
+  .dashboard-grid--span-8 {
+    grid-column: span 12 !important;
+  }
+}
+
+@media (max-width: 759px) {
+  .dashboard-grid--span-4 {
+    grid-column: span 12 !important;
+  }
+}
+
+/* Two-stat card (ATL & TSB) */
+.dashboard-dual-stat {
+  display: flex;
+  gap: var(--space-lg);
+}
+
+.dashboard-dual-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1;
+}
+
+.dashboard-dual-stat-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.dashboard-dual-stat-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  color: var(--color-load);
+}
+
+/* Session adherence card */
+.dashboard-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dashboard-sessions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.dashboard-sessions-row-label {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.dashboard-sessions-row-value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-sessions);
+  font-weight: 600;
+}
+
+/* Workouts list card */
+.dashboard-workouts-card {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.dashboard-workouts-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+}
+
+.dashboard-workouts-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-workout-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.dashboard-workout-row:last-child {
+  border-bottom: none;
+}
+
+.dashboard-workout-name {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-workout-meta {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.dashboard-workout-stats {
+  display: flex;
+  gap: var(--space-lg);
+  flex-shrink: 0;
+}
+
+.dashboard-workout-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 56px;
+}
+
+.dashboard-workout-stat-value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+}
+
+.dashboard-workout-stat-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 759px) {
+  .dashboard-workout-row {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-workout-stats {
+    gap: var(--space-md);
+  }
+}
