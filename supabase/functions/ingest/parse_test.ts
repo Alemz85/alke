@@ -180,6 +180,158 @@ Deno.test("strips bulky HR series keys from raw but keeps everything else", () =
   assertEquals(raw.id, "raw-strip");
 });
 
+Deno.test("strips top-level arrays with more than 50 elements from raw, recording counts in _stripped", () => {
+  const bulky = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      qty: i,
+      date: "2026-07-08 07:00:00 +0200",
+      units: "m",
+      source: "Watch",
+    }));
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "bulk-strip",
+          name: "Pool Swim",
+          start: "2026-07-08 07:00:00 +0200",
+          end: "2026-07-08 08:00:00 +0200",
+          swimDistance: bulky(60),
+          activeEnergy: bulky(55),
+          stepCount: bulky(51),
+          shortSeries: bulky(3), // <=50: kept
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals(raw.swimDistance, undefined);
+  assertEquals(raw.activeEnergy, undefined);
+  assertEquals(raw.stepCount, undefined);
+  assertEquals(Array.isArray(raw.shortSeries), true);
+  assertEquals(raw._stripped, { swimDistance: 60, activeEnergy: 55, stepCount: 51 });
+});
+
+Deno.test("keeps short arrays (50 or fewer elements) in raw with no _stripped key", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "short-arrays",
+          name: "Walk",
+          start: "2026-07-08 07:00:00 +0200",
+          end: "2026-07-08 07:30:00 +0200",
+          elevation: Array.from({ length: 50 }, (_, i) => ({ qty: i })), // exactly 50: kept
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals(Array.isArray(raw.elevation), true);
+  assertEquals((raw.elevation as unknown[]).length, 50);
+  assertEquals(raw._stripped, undefined);
+});
+
+Deno.test("extracts _route_start from first route point and strips route even when short", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "route-1",
+          name: "Outdoor Walk",
+          start: "2026-07-08 08:52:00 +0200",
+          end: "2026-07-08 09:52:00 +0200",
+          route: [
+            {
+              latitude: 43.2965,
+              longitude: -2.9876,
+              altitude: 12.4,
+              timestamp: "2026-07-08 08:52:48 +0200",
+              speed: 1.3,
+              course: 180.2,
+              horizontalAccuracy: 3.1,
+            },
+            { latitude: 43.2966, longitude: -2.9877, timestamp: "2026-07-08 08:52:49 +0200" },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals(raw.route, undefined);
+  assertEquals(raw._route_start, {
+    latitude: 43.2965,
+    longitude: -2.9876,
+    timestamp: "2026-07-08 08:52:48 +0200",
+  });
+});
+
+Deno.test("no _route_start key when route is absent", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "no-route",
+          name: "Pool Swim",
+          start: "2026-07-08 07:00:00 +0200",
+          end: "2026-07-08 08:00:00 +0200",
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals("_route_start" in raw, false);
+});
+
+Deno.test("_route_start is null-tolerant when the first route point is malformed", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "route-malformed",
+          name: "Outdoor Walk",
+          start: "2026-07-08 08:52:00 +0200",
+          end: "2026-07-08 09:52:00 +0200",
+          route: [{ altitude: 5 }], // no lat/lon/timestamp
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals(raw.route, undefined);
+  assertEquals(raw._route_start, { latitude: null, longitude: null, timestamp: null });
+});
+
+Deno.test("explicit HR strips are also recorded in _stripped", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "explicit-strip-count",
+          name: "Run",
+          start: "2026-07-08 07:00:00 +0200",
+          end: "2026-07-08 08:00:00 +0200",
+          heartRateData: [
+            { date: "2026-07-08 07:00:10 +0200", Avg: 100 },
+            { date: "2026-07-08 07:01:10 +0200", Avg: 110 },
+          ],
+          heartRateRecovery: [{ date: "2026-07-08 08:00:30 +0200", Avg: 120 }],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const raw = result.workouts[0].raw;
+  assertEquals(raw.heartRateData, undefined);
+  assertEquals(raw.heartRateRecovery, undefined);
+  assertEquals(raw._stripped, { heartRateData: 2, heartRateRecovery: 1 });
+});
+
 Deno.test("keeps unknown workout fields in raw jsonb", () => {
   const payload = {
     data: {

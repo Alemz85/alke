@@ -79,11 +79,15 @@ const FIELD_MAP = {
     maxHr: "maxHeartRate", // summary field; preferred over sample-derived max
     hrSeries: "heartRateData",
     hrRecoverySeries: "heartRateRecovery",
+    route: "route", // GPS trace: [{latitude, longitude, altitude, timestamp, ...}]
   },
-  // Bulky per-sample series stripped from workouts.raw (already preserved
-  // verbatim in raw_payloads, and the HR series is normalized into
-  // workout_hr_samples).
+  // Bulky per-sample series always stripped from workouts.raw (already
+  // preserved verbatim in raw_payloads, and the HR series is normalized
+  // into workout_hr_samples). Route is stripped separately (see
+  // routeStartFields) so its first point can be summarized first.
   workoutRawStripKeys: ["heartRateData", "heartRateRecovery"],
+  // Fields copied from the first route point into raw._route_start.
+  routeStartFields: ["latitude", "longitude", "timestamp"],
   // Per-sample HR value candidates, in preference order.
   hrSampleValueKeys: ["Avg", "avg", "qty"],
   hrSampleDateKey: "date",
@@ -103,6 +107,12 @@ const FIELD_MAP = {
     yd: 0.9144,
   } as Record<string, number>,
 } as const;
+
+// Real workouts carry many per-second series at the top level (swimDistance,
+// activeEnergy, stepCount, speed, ...) with thousands of entries each. Any
+// top-level array longer than this is stripped from workouts.raw and noted
+// in raw._stripped; the full data stays recoverable from raw_payloads.
+const MAX_RAW_ARRAY_ENTRIES = 50;
 
 // ===========================================================================
 // Date parsing
@@ -216,12 +226,7 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     ? Math.max(...hrSamples.map((s) => s.bpm))
     : null);
 
-  // Strip bulky per-sample series from raw; they're preserved verbatim in
-  // raw_payloads and (for the HR series) normalized into workout_hr_samples.
-  const raw = { ...w };
-  for (const key of FIELD_MAP.workoutRawStripKeys) {
-    delete raw[key];
-  }
+  const raw = buildWorkoutRaw(w);
 
   return {
     external_id,
@@ -237,6 +242,55 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     raw,
     hrSamples,
   };
+}
+
+/**
+ * Builds the slimmed-down `raw` jsonb for a workout: keeps everything from
+ * the original entry except bulky per-sample series, which are removed and
+ * tallied in `_stripped` ({key: entryCount}). The `route` GPS trace is
+ * always stripped (regardless of length), but its first point is first
+ * summarized into `_route_start` for cheap "where was this workout" queries.
+ * All stripped data remains recoverable from the raw_payloads table.
+ */
+function buildWorkoutRaw(w: Record<string, unknown>): Record<string, unknown> {
+  const raw: Record<string, unknown> = { ...w };
+  const stripped: Record<string, number> = {};
+
+  const strip = (key: string): void => {
+    const value = raw[key];
+    stripped[key] = Array.isArray(value) ? value.length : 0;
+    delete raw[key];
+  };
+
+  // Route: summarize the first point, then strip even when short.
+  const routeKey = FIELD_MAP.workout.route;
+  if (routeKey in raw) {
+    const route = raw[routeKey];
+    if (Array.isArray(route) && route.length > 0) {
+      const first = isPlainObject(route[0]) ? route[0] : {};
+      const routeStart: Record<string, unknown> = {};
+      for (const field of FIELD_MAP.routeStartFields) {
+        routeStart[field] = first[field] ?? null;
+      }
+      raw._route_start = routeStart;
+    }
+    strip(routeKey);
+  }
+
+  // Explicitly known bulky series.
+  for (const key of FIELD_MAP.workoutRawStripKeys) {
+    if (key in raw) strip(key);
+  }
+
+  // Generic rule: any remaining top-level array with too many entries.
+  for (const [key, value] of Object.entries(raw)) {
+    if (Array.isArray(value) && value.length > MAX_RAW_ARRAY_ENTRIES) {
+      strip(key);
+    }
+  }
+
+  if (Object.keys(stripped).length > 0) raw._stripped = stripped;
+  return raw;
 }
 
 /**
