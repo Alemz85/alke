@@ -30,3 +30,4 @@ supabase/.branches/
 
 # Claude local settings
 .claude/settings.local.json
+metrics/.venv/
