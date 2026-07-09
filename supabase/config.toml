@@ -1,0 +1,6 @@
+project_id = "your-project-ref"
+
+# Auth is our own x-ingest-token shared secret; Health Auto Export cannot
+# send a Supabase JWT, so gateway JWT verification must stay off.
+[functions.ingest]
+verify_jwt = false
