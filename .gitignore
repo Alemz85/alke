@@ -1,0 +1,29 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Node
+node_modules/
+dist/
+out/
+release/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Supabase local dev
+supabase/.temp/
+supabase/.branches/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
