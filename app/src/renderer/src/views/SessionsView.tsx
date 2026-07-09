@@ -116,7 +116,7 @@ export function SessionsView(): ReactElement {
       {flags.length > 0 && (
         <div className="sessions-flags">
           {flags.map((flag, i) => (
-            <FlagBanner key={`${flag.type}-${i}`} message={flag.message} />
+            <FlagBanner key={`${flag.type}-${i}`} message={flag.message} severity={flag.severity === 'info' ? 'info' : 'warn'} />
           ))}
         </div>
       )}

@@ -9,9 +9,22 @@
   padding: var(--space-sm) var(--space-md);
 }
 
+.flag-banner--info {
+  background: var(--color-surface-elevated);
+  border-left-color: var(--color-hairline);
+}
+
 .flag-banner-icon {
   color: var(--color-flag);
   flex-shrink: 0;
+}
+
+.flag-banner--info .flag-banner-icon {
+  color: var(--color-text-tertiary);
+}
+
+.flag-banner--info .flag-banner-text {
+  color: var(--color-text-secondary);
 }
 
 .flag-banner-text {
