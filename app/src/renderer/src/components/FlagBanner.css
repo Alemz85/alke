@@ -1,0 +1,41 @@
+.flag-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  background: var(--color-flag-dim);
+  border-left: 3px solid var(--color-flag);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.flag-banner-icon {
+  color: var(--color-flag);
+  flex-shrink: 0;
+}
+
+.flag-banner-text {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+  color: var(--color-text);
+}
+
+.flag-banner-dismiss {
+  background: transparent;
+  border: none;
+  padding: var(--space-xxs);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.flag-banner-dismiss:hover {
+  background: var(--color-surface-hover);
+}

@@ -27,3 +27,6 @@ supabase/.branches/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude local settings
+.claude/settings.local.json

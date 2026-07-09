@@ -1,0 +1,27 @@
+.button-soft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  border: none;
+  border-radius: var(--radius-full);
+  height: 44px;
+  padding: 12px 24px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-md-size);
+  font-weight: var(--type-button-md-weight);
+  line-height: var(--type-button-md-line-height);
+  letter-spacing: var(--type-button-md-letter-spacing);
+  transition: background var(--motion-hover);
+}
+
+.button-soft:hover {
+  background: var(--color-surface-hover);
+}
+
+.button-soft:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}

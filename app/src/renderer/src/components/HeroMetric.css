@@ -1,0 +1,90 @@
+.hero-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.hero-metric-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.hero-metric-eyebrow--aerobic {
+  color: var(--color-aerobic);
+}
+.hero-metric-eyebrow--load {
+  color: var(--color-load);
+}
+.hero-metric-eyebrow--recovery {
+  color: var(--color-recovery);
+}
+.hero-metric-eyebrow--sessions {
+  color: var(--color-sessions);
+}
+.hero-metric-eyebrow--flag {
+  color: var(--color-flag);
+}
+
+.hero-metric-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.hero-metric-value {
+  font-family: var(--font-display);
+  font-size: var(--type-hero-metric-size);
+  font-weight: var(--type-hero-metric-weight);
+  line-height: var(--type-hero-metric-line-height);
+  letter-spacing: var(--type-hero-metric-letter-spacing);
+  color: var(--color-text);
+}
+
+.hero-metric-unit {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: var(--type-body-sm-weight);
+  color: var(--color-text-tertiary);
+}
+
+.hero-metric-delta {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+}
+
+.hero-metric-delta--neutral {
+  color: var(--color-text-tertiary);
+}
+.hero-metric-delta--aerobic {
+  color: var(--color-aerobic);
+}
+.hero-metric-delta--load {
+  color: var(--color-load);
+}
+.hero-metric-delta--recovery {
+  color: var(--color-recovery);
+}
+.hero-metric-delta--sessions {
+  color: var(--color-sessions);
+}
+.hero-metric-delta--flag {
+  color: var(--color-flag);
+}
+
+@media (max-width: 1099px) and (min-width: 760px) {
+  .hero-metric-value {
+    font-size: 56px;
+  }
+}
+
+@media (max-width: 759px) {
+  .hero-metric-value {
+    font-size: 48px;
+  }
+}

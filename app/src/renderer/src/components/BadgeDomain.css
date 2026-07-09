@@ -1,0 +1,38 @@
+.badge-domain {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-domain--aerobic {
+  background: var(--color-aerobic-dim);
+  color: var(--color-aerobic);
+}
+
+.badge-domain--load {
+  background: var(--color-load-dim);
+  color: var(--color-load);
+}
+
+.badge-domain--recovery {
+  background: var(--color-recovery-dim);
+  color: var(--color-recovery);
+}
+
+.badge-domain--sessions {
+  background: var(--color-sessions-dim);
+  color: var(--color-sessions);
+}
+
+.badge-domain--flag {
+  background: var(--color-flag-dim);
+  color: var(--color-flag);
+}

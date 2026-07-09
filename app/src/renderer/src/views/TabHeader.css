@@ -1,0 +1,24 @@
+.tab-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.tab-header-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.tab-header-title {
+  font-family: var(--font-display);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: var(--type-display-line-height);
+  letter-spacing: var(--type-display-letter-spacing);
+  color: var(--color-text);
+}

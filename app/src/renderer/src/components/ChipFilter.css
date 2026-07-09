@@ -1,0 +1,30 @@
+.chip-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.chip {
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  height: 32px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  transition: background var(--motion-hover);
+}
+
+.chip:hover {
+  background: var(--color-surface-hover);
+}
+
+.chip--active,
+.chip--active:hover {
+  background: var(--color-text);
+  color: var(--color-text-on-accent);
+}

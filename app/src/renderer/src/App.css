@@ -1,0 +1,40 @@
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background: var(--color-canvas);
+}
+
+.content-area {
+  flex: 1;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--color-canvas);
+}
+
+.content-area-inner {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-xxl) var(--space-xl) var(--space-section);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  min-height: 100%;
+}
+
+.content-area-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+@media (max-width: 759px) {
+  .content-area-inner {
+    padding: var(--space-xl) var(--space-md) var(--space-xl);
+  }
+}

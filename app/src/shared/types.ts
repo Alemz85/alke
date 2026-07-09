@@ -1,0 +1,117 @@
+// Shared types between main, preload, and renderer processes.
+// Numeric columns from PostgREST may arrive as strings; db.ts normalizes them
+// to numbers before they cross the IPC boundary, so these types describe the
+// *normalized* shape the renderer can rely on.
+
+export interface Workout {
+  id: string
+  external_id: string | null
+  type: string
+  start_at: string
+  end_at: string | null
+  duration_s: number | null
+  distance_m: number | null
+  energy_kcal: number | null
+  avg_hr: number | null
+  max_hr: number | null
+  source: string | null
+  raw: Record<string, unknown> | null
+  // Joined from computed_workout (left join — may be null if not yet computed)
+  computed: ComputedWorkout | null
+}
+
+export interface WorkoutHrSample {
+  workout_id: string
+  offset_s: number
+  bpm: number
+}
+
+export interface ComputedWorkout {
+  workout_id: string
+  time_in_zones: Record<string, unknown> | null
+  trimp: number | null
+  ef: number | null
+  decoupling_pct: number | null
+  hrr60: number | null
+  computed_at: string | null
+}
+
+export interface WorkoutDetail {
+  workout: Omit<Workout, 'computed'>
+  hrSamples: WorkoutHrSample[]
+  computed: ComputedWorkout | null
+}
+
+export interface DailyMetric {
+  date: string
+  resting_hr: number | null
+  hrv_sdnn_ms: number | null
+  respiratory_rate: number | null
+  sleep_start: string | null
+  sleep_end: string | null
+  sleep_duration_min: number | null
+  sleep_stages: Record<string, unknown> | null
+  vo2max: number | null
+  steps: number | null
+  active_energy_kcal: number | null
+  wrist_temp_deviation_c: number | null
+  state_of_mind: Record<string, unknown> | null
+}
+
+export interface ComputedDaily {
+  date: string
+  trimp_total: number | null
+  ctl: number | null
+  atl: number | null
+  tsb: number | null
+  acwr: number | null
+  rhr_baseline_60d: number | null
+  rhr_dev: number | null
+  hrv_baseline_60d: number | null
+  hrv_dev: number | null
+  flags: Flag[] | null
+  computed_at: string | null
+}
+
+export interface UserConfig {
+  id: number
+  hr_max: number | null
+  swim_hr_offset: number | null
+  zone2_low_frac: number | null
+  zone2_high_frac: number | null
+  weekly_min_sessions: Record<string, unknown> | null
+  timezone: string | null
+}
+
+export interface Flag {
+  type: string
+  message: string
+  severity?: 'info' | 'warning' | 'critical'
+  [key: string]: unknown
+}
+
+export interface DbStatus {
+  connected: boolean
+  error?: string
+}
+
+// The typed surface exposed on window.api by the preload script.
+export interface HealthApi {
+  getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
+  getWorkoutDetail(id: string): Promise<WorkoutDetail>
+  getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
+  getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
+  getUserConfig(): Promise<UserConfig>
+  getTodayFlags(): Promise<Flag[]>
+  getDbStatus(): Promise<DbStatus>
+}
+
+export const IPC_CHANNELS = {
+  getWorkouts: 'db:getWorkouts',
+  getWorkoutDetail: 'db:getWorkoutDetail',
+  getDailyMetrics: 'db:getDailyMetrics',
+  getComputedDaily: 'db:getComputedDaily',
+  getUserConfig: 'db:getUserConfig',
+  getTodayFlags: 'db:getTodayFlags',
+  getDbStatus: 'db:getDbStatus'
+} as const
