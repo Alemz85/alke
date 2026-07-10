@@ -199,6 +199,80 @@ def run(full: bool) -> None:
     db.upsert_computed_daily(sb, daily_rows)
     print(f"computed_daily: {len(daily_rows)} rows ({days[0]} → {days[-1]})")
 
+    # ---- insights (SPEC §5.4) ----
+    run_insights(sb, all_workouts, daily_metrics, daily_rows, tz)
+
+
+def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
+    import pandas as pd
+
+    from metrics.insights import compute_correlations, ef_dlm, zscore_trailing
+
+    # per-day performance: EF / decoupling / HRR60 averaged over that day's workouts
+    perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
+    perf_by_date: dict[date, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for w in all_workouts:
+        perf = perf_by_id.get(w["id"])
+        if not perf:
+            continue
+        day = local_date(w["start_at"], tz)
+        for key, col in (("ef", "ef"), ("decoupling_pct", "decoupling"), ("hrr60", "hrr60")):
+            if perf[key] is not None:
+                perf_by_date[day][col].append(float(perf[key]))
+
+    def midpoint_hours(row: dict) -> float | None:
+        if not row.get("sleep_start") or not row.get("sleep_end"):
+            return None
+        start = datetime.fromisoformat(row["sleep_start"].replace("Z", "+00:00")).astimezone(tz)
+        end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).astimezone(tz)
+        mid = start + (end - start) / 2
+        # hours from the previous local midnight of the wake date, so pre- and
+        # post-midnight midpoints stay comparable
+        return (mid - datetime.combine(end.date(), datetime.min.time(), tz)).total_seconds() / 3600
+
+    dm_by_date = {date.fromisoformat(r["date"]): r for r in daily_metrics}
+    index = [date.fromisoformat(r["date"]) for r in daily_rows]
+    frame = pd.DataFrame(
+        {
+            "sleep_duration": [
+                (dm_by_date.get(d) or {}).get("sleep_duration_min") for d in index
+            ],
+            "sleep_midpoint": [
+                midpoint_hours(dm_by_date[d]) if d in dm_by_date else None for d in index
+            ],
+            "rhr_dev": [r["rhr_dev"] for r in daily_rows],
+            "hrv_dev": [r["hrv_dev"] for r in daily_rows],
+            "ctl": [r["ctl"] for r in daily_rows],
+            "atl": [r["atl"] for r in daily_rows],
+            "trimp_total": [r["trimp_total"] for r in daily_rows],
+            "ef": [pd.Series(perf_by_date[d]["ef"]).mean() if perf_by_date[d]["ef"] else None for d in index],
+            "decoupling": [
+                pd.Series(perf_by_date[d]["decoupling"]).mean() if perf_by_date[d]["decoupling"] else None
+                for d in index
+            ],
+            "hrr60": [
+                pd.Series(perf_by_date[d]["hrr60"]).mean() if perf_by_date[d]["hrr60"] else None for d in index
+            ],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp(d) for d in index]),
+    ).astype(float)
+    frame["trimp_prior"] = frame["trimp_total"].shift(1)
+    # consistency: absolute deviation from the 14-day rolling median midpoint
+    frame["sleep_midpoint_dev"] = (
+        frame["sleep_midpoint"] - frame["sleep_midpoint"].rolling(14, min_periods=5).median()
+    ).abs()
+
+    correlations = compute_correlations(zscore_trailing(frame))
+    db.replace_insight_correlations(sb, correlations)
+    print(f"insight_correlations: {len(correlations)} pairs")
+
+    model = ef_dlm(frame)
+    if model is not None:
+        db.upsert_insight_model(sb, model)
+        print(f"insight_models: ef_on_sleep_dlm (n={model['diagnostics']['n']})")
+    else:
+        print("insight_models: skipped (fewer than 40 EF observations)")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nightly health metrics job")

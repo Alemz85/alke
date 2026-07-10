@@ -63,7 +63,9 @@ def fetch_hr_samples(sb: Client, workout_ids: list[str]) -> dict[str, list[tuple
 
 def fetch_daily_metrics(sb: Client) -> list[dict]:
     def q():
-        return sb.table("daily_metrics").select("date, resting_hr, hrv_sdnn_ms").order("date")
+        return sb.table("daily_metrics").select(
+            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min"
+        ).order("date")
 
     return _fetch_all(q)
 
@@ -80,3 +82,21 @@ def upsert_computed_workouts(sb: Client, rows: list[dict]) -> None:
 def upsert_computed_daily(sb: Client, rows: list[dict]) -> None:
     for i in range(0, len(rows), WRITE_CHUNK):
         sb.table("computed_daily").upsert(rows[i : i + WRITE_CHUNK]).execute()
+
+
+def fetch_computed_workouts(sb: Client) -> list[dict]:
+    def q():
+        return sb.table("computed_workout").select("workout_id, ef, decoupling_pct, hrr60").order("workout_id")
+
+    return _fetch_all(q)
+
+
+def replace_insight_correlations(sb: Client, rows: list[dict]) -> None:
+    """SPEC: the exploratory table is overwritten each nightly run."""
+    sb.table("insight_correlations").delete().neq("lag_days", -1).execute()
+    for i in range(0, len(rows), WRITE_CHUNK):
+        sb.table("insight_correlations").insert(rows[i : i + WRITE_CHUNK]).execute()
+
+
+def upsert_insight_model(sb: Client, row: dict) -> None:
+    sb.table("insight_models").upsert(row).execute()
