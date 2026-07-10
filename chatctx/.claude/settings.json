@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python3 db.py:*)",
-      "Bash(python db.py:*)"
+      "Bash(python db.py:*)",
+      "Bash(python3 injuries.py:*)"
     ]
   }
 }

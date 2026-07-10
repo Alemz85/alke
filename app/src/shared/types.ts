@@ -111,6 +111,30 @@ export interface DbStatus {
   error?: string
 }
 
+export interface Injury {
+  id: string
+  name: string
+  body_area: string | null
+  status: 'active' | 'recovering' | 'resolved'
+  severity: 'mild' | 'moderate' | 'severe' | null
+  started_at: string | null
+  resolved_at: string | null
+  summary: string | null
+  recovery_plan: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface InjuryLogEntry {
+  id: number
+  injury_id: string
+  entry_date: string
+  noted_at: string | null
+  source: string | null
+  note: string
+  pain_level: number | null
+}
+
 // The typed surface exposed on window.api by the preload script.
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
@@ -120,6 +144,8 @@ export interface HealthApi {
   getUserConfig(): Promise<UserConfig>
   updateUserConfig(patch: UserConfigPatch): Promise<UserConfig>
   getTodayFlags(): Promise<Flag[]>
+  getInjuries(): Promise<Injury[]>
+  getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]>
   getDbStatus(): Promise<DbStatus>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
@@ -141,6 +167,8 @@ export const IPC_CHANNELS = {
   getUserConfig: 'db:getUserConfig',
   updateUserConfig: 'db:updateUserConfig',
   getTodayFlags: 'db:getTodayFlags',
+  getInjuries: 'db:getInjuries',
+  getInjuryLog: 'db:getInjuryLog',
   getDbStatus: 'db:getDbStatus',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',

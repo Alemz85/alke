@@ -18,6 +18,8 @@ import type {
   DailyMetric,
   DbStatus,
   Flag,
+  Injury,
+  InjuryLogEntry,
   UserConfig,
   UserConfigPatch,
   Workout,
@@ -337,6 +339,40 @@ export async function getTodayFlags(): Promise<Flag[]> {
   if (!data || !data.flags) return []
 
   return Array.isArray(data.flags) ? (data.flags as Flag[]) : []
+}
+
+const INJURY_COLUMNS =
+  'id, name, body_area, status, severity, started_at, resolved_at, summary, recovery_plan, created_at, updated_at'
+
+const INJURY_LOG_COLUMNS = 'id, injury_id, entry_date, noted_at, source, note, pain_level'
+
+// Read-only: injuries/injury_notes are written exclusively by the chat agent's
+// separate injuries.py helper (chatctx/injuries.py), not by the app.
+export async function getInjuries(): Promise<Injury[]> {
+  const supabase = getClient()
+
+  const { data, error } = await supabase
+    .from('injuries')
+    .select(INJURY_COLUMNS)
+    .order('updated_at', { ascending: false })
+
+  if (error) throw new Error(`getInjuries: ${error.message}`)
+
+  return (data ?? []) as Injury[]
+}
+
+export async function getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]> {
+  const supabase = getClient()
+
+  const { data, error } = await supabase
+    .from('injury_notes')
+    .select(INJURY_LOG_COLUMNS)
+    .eq('injury_id', injuryId)
+    .order('entry_date', { ascending: false })
+
+  if (error) throw new Error(`getInjuryLog: ${error.message}`)
+
+  return (data ?? []) as InjuryLogEntry[]
 }
 
 export async function getDbStatus(): Promise<DbStatus> {
