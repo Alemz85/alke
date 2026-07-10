@@ -280,3 +280,148 @@ export function sharpnessSparkline(rows: Zone2Fitness[], count = 30): { i: numbe
     .slice(-count)
     .map((r, i) => ({ i, value: r.sharpness as number }))
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Calendar coaching guidance — the "calendar is the coach" model.
+//
+// From the latest zone2 row's decay window (warn_after_days) plus the user's
+// recent Zone-2 session history we place three forward-looking dates on the month
+// grid so the calendar answers "when do I train next?" at a glance:
+//
+//   buildBy    — the next session to keep the durable level CLIMBING (~every 2–3 d).
+//   maintainBy — the latest day to train to HOLD the level (the day before decay).
+//   decayFrom  — the day the index begins to erode without a session.
+//
+// v1 date math (deliberately simple, spec'd in the task):
+//   lastSession = max(sessionDates)              (undefined ⇒ stale-forever branch)
+//   buildBy     = max(today, lastSession + 3d)
+//   decayFrom   = max(today + 1, lastSession + warn_after_days)   (warn_after_days ⇒ 9 default)
+//   maintainBy  = decayFrom − 1d
+//
+// All dates are plain "YYYY-MM-DD" keys; arithmetic is UTC-anchored (DST-safe).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fallback decay window (days) when the row carries no warn_after_days — the tight
+ *  thin-base window from spec §5b (B<0.33 ⇒ 9 d). */
+export const DEFAULT_WARN_AFTER_DAYS = 9
+
+export type Zone2MarkerKind = 'build' | 'maintain' | 'decay'
+
+export interface Zone2CalendarMarker {
+  kind: Zone2MarkerKind
+  /** Accessible title / tooltip for the annotated day cell. */
+  label: string
+}
+
+export interface Zone2GuidanceDoses {
+  build: string
+  maintain: string
+}
+
+export interface Zone2CalendarGuidance {
+  /** Next-session-to-keep-building date ("YYYY-MM-DD"). */
+  buildBy: string
+  /** Latest-day-to-hold date ("YYYY-MM-DD"). */
+  maintainBy: string
+  /** First-day-of-erosion date ("YYYY-MM-DD"). */
+  decayFrom: string
+  /** The most-recent Zone-2 session date used ("YYYY-MM-DD"), or null when none. */
+  lastSession: string | null
+  /** Trailing-7-day session count ending at `today`. */
+  sessions7d: number
+  /** One-line actionable summary with real weekday/date formatting. */
+  summary: string
+  /** Suggested-dose copy for the build and maintain markers. */
+  doses: Zone2GuidanceDoses
+  /** Marker record keyed by "YYYY-MM-DD" — pass straight to CalendarHeatmap `markers`. */
+  markers: Record<string, Zone2CalendarMarker>
+}
+
+/** Suggested-dose copy (fixed strings from the task spec). */
+export const ZONE2_BUILD_DOSE = 'Build · 3–4 Zone 2 sessions/wk, ~40–50 min at Zone 2 HR.'
+export const ZONE2_MAINTAIN_DOSE = 'Maintain · 2 Zone 2 sessions/wk, ≥20 min at Zone 2 intensity.'
+
+/** Compare two "YYYY-MM-DD" keys; returns the later one. */
+function maxKey(a: string, b: string): string {
+  return a >= b ? a : b
+}
+
+/** Count session dates within the trailing 7 days ending (inclusive) at `today`. */
+function trailing7Count(sessionDates: string[], today: string): number {
+  const lo = addDaysKey(today, -6) // 7-day window inclusive of today
+  return sessionDates.filter((d) => d >= lo && d <= today).length
+}
+
+/** "Sat 12 Jul" style label for a date key (weekday + day + short month, no locale deps). */
+export function formatGuidanceDate(dateKey: string): string {
+  const [y, m, d] = dateKey.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]
+  const month = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ][dt.getUTCMonth()]
+  return `${weekday} ${d} ${month}`
+}
+
+/**
+ * Forward-looking Zone-2 coaching dates from the model + session history.
+ * PURE — fixed `today`, deterministic. See the block comment above for the math.
+ *
+ * `sessionDates` are Zone-2 session day keys ("YYYY-MM-DD"), any order, dupes ok.
+ * `today` is the reference "YYYY-MM-DD" (never mutated).
+ */
+export function zone2CalendarGuidance(
+  row: Pick<Zone2Fitness, 'warn_after_days' | 'maintenance_met'> | null | undefined,
+  sessionDates: string[],
+  today: string
+): Zone2CalendarGuidance {
+  const warnAfter =
+    row && row.warn_after_days != null && row.warn_after_days > 0
+      ? Math.round(row.warn_after_days)
+      : DEFAULT_WARN_AFTER_DAYS
+
+  // Most-recent session date (clamp anything in the future to at most today so a
+  // stray future-dated row can't push the window out).
+  let lastSession: string | null = null
+  for (const raw of sessionDates) {
+    if (!raw) continue
+    const d = raw > today ? today : raw
+    if (lastSession == null || d > lastSession) lastSession = d
+  }
+
+  const sessions7d = trailing7Count(sessionDates, today)
+
+  // Base the cadence on the last session; with none on record, treat "today" as
+  // the anchor so every marker lands from today forward (nothing in the past).
+  const anchor = lastSession ?? today
+
+  const buildBy = maxKey(today, addDaysKey(anchor, 3))
+  const decayFrom = maxKey(addDaysKey(today, 1), addDaysKey(anchor, warnAfter))
+  const maintainBy = addDaysKey(decayFrom, -1)
+
+  const doses: Zone2GuidanceDoses = { build: ZONE2_BUILD_DOSE, maintain: ZONE2_MAINTAIN_DOSE }
+
+  // Build the marker record. maintainBy and decayFrom are always distinct (decay =
+  // maintain + 1d). buildBy can coincide with maintainBy; when it does, the build
+  // marker wins (the more actionable "keep climbing" call).
+  const markers: Record<string, Zone2CalendarMarker> = {}
+  markers[decayFrom] = {
+    kind: 'decay',
+    label: `Eases from ${formatGuidanceDate(decayFrom)} — index starts to erode without a Zone 2 session.`
+  }
+  markers[maintainBy] = {
+    kind: 'maintain',
+    label: `Hold by ${formatGuidanceDate(maintainBy)} — ${ZONE2_MAINTAIN_DOSE}`
+  }
+  markers[buildBy] = {
+    kind: 'build',
+    label: `Build by ${formatGuidanceDate(buildBy)} — ${ZONE2_BUILD_DOSE}`
+  }
+
+  const summary =
+    `Train by ${formatGuidanceDate(buildBy)} to keep building` +
+    ` · holds through ${formatGuidanceDate(maintainBy)}` +
+    ` · eases from ${formatGuidanceDate(decayFrom)}.`
+
+  return { buildBy, maintainBy, decayFrom, lastSession, sessions7d, summary, doses, markers }
+}

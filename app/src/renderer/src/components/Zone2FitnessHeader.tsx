@@ -1,20 +1,13 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import {
-  ComposedChart,
-  Line,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from 'recharts'
-import type { Zone2Fitness } from '@shared/types'
+import type { Workout, Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import { CalendarHeatmap } from './CalendarHeatmap'
 import { EmptyState } from './EmptyState'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
-import { addDays, todayYMD, ymdToIsoStart } from '../hooks/sessionsDate'
+import { addDays, localDateKey, todayYMD, ymdKey, ymdToIsoStart } from '../hooks/sessionsDate'
+import { cardioModalityOf } from '../lib/cardioModality'
 import {
   evidenceReason,
   hasMaintenanceFlag,
@@ -23,14 +16,10 @@ import {
   maintenanceMessage,
   stageLabel,
   zone2BarGeometry,
-  zone2IndexValue,
-  zone2ProjectionSeries
+  zone2CalendarGuidance,
+  zone2IndexValue
 } from '../lib/zone2Fitness'
 import './Zone2FitnessHeader.css'
-
-// Chart geometry keeps the base accent; teal = aerobic, everywhere (DESIGN.md law).
-const AEROBIC = 'var(--color-aerobic)'
-const TERTIARY = 'var(--color-text-tertiary)'
 
 // v2 honesty caption: the number is anchored to the user's own swim/bike signals now,
 // with watch VO2max demoted to an occasional calibration check. Trend is trustworthy;
@@ -46,23 +35,41 @@ interface Props {
   timezone: string | null
 }
 
-const stripTooltipStyle = {
-  backgroundColor: 'var(--color-surface-hover)',
-  border: 'none',
-  borderRadius: 12,
-  fontSize: 13,
-  fontVariantNumeric: 'tabular-nums' as const
+/** Seconds spent in a given HR zone for a workout, or 0 when unavailable. */
+function zoneSeconds(w: Workout, key: 'z2' | 'z3'): number {
+  const tiz = w.computed?.time_in_zones as Record<string, unknown> | null | undefined
+  const v = tiz?.[key]
+  return typeof v === 'number' ? v : 0
 }
 
 /**
- * The Zone-2 fitness model header (docs/zone2-fitness-model.md v2 "Visual"): a single
- * VERTICAL two-zone bar for the composition — a solid "earned" durable foundation on the
- * bottom [0,70] and a lighter "provisional" fast cap on top [70,100], each ghosting to its
- * ceiling so headroom is honest. The headline number is the index D+F with its ± band; a
- * soft error zone across the top of the current fill keeps the crisp bar from implying false
- * precision. Below: the session calendar and the "if you stop from today" projection trail
- * (a dimmed dashed forward tail, never conflated with the solid current fill). Fetches its
- * own data with react-query so it drops in above the existing tab content.
+ * A workout is a Zone-2 session for this tab iff it is a tracked cardio modality
+ * (swim/bike/row/elliptical/walk) AND carries actual Zone-2 work — z2+z3 seconds > 0.
+ * Strength/core/other modalities are excluded outright, so pure-gym days never
+ * appear on the Zone-2 calendar. A cardio workout whose zones haven't been computed
+ * yet (computed == null) is still shown — we can't yet rule out its aerobic minutes,
+ * and dropping fresh swims/bikes would understate the calendar.
+ */
+function isZone2Session(w: Workout): boolean {
+  if (cardioModalityOf(w.type) == null) return false
+  if (w.computed?.time_in_zones == null) return true // not yet computed — keep cardio
+  return zoneSeconds(w, 'z2') + zoneSeconds(w, 'z3') > 0
+}
+
+/**
+ * The Zone-2 fitness model header (docs/zone2-fitness-model.md v2 "Visual"). Three parts:
+ *
+ *  1. A CLEAN vertical two-zone composition bar — solid "earned" durable base on the
+ *     bottom [0,70], a lighter "provisional" fast cap on top [70,100], each with ONE
+ *     quiet ghost tone for its headroom and a single divider tick at the 70 ceiling. A
+ *     small legend labels the two tones; uncertainty shows only as the "±N" text and a
+ *     single thin tick at the index level. Nothing else on the bar.
+ *  2. The headline index D+F, composition line, stage pill, honesty caption (kept).
+ *  3. The month calendar as a COACH — annotated with forward-looking build / maintain /
+ *     decay-onset markers computed from the model window + recent Zone-2 session history,
+ *     with a legend and a one-line actionable summary. No trend strip.
+ *
+ * Fetches its own data with react-query so it drops in above the existing tab content.
  */
 export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const today = useMemo(() => todayYMD(timezone), [timezone])
@@ -98,10 +105,25 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
 
   const rows = useMemo(() => fitnessQuery.data ?? [], [fitnessQuery.data])
   const latest = useMemo(() => latestZone2Row(rows), [rows])
-  const projection = useMemo(() => zone2ProjectionSeries(rows), [rows])
-  const daysByKey = useMemo(
-    () => groupWorkoutsByDay(monthWorkoutsQuery.data ?? [], timezone),
-    [monthWorkoutsQuery.data, timezone]
+
+  // Only Zone-2 cardio sessions belong on this tab's calendar — strength/gym days
+  // are filtered out entirely, and a day is kept only when it had actual Zone-2 work.
+  const zone2Workouts = useMemo(
+    () => (monthWorkoutsQuery.data ?? []).filter(isZone2Session),
+    [monthWorkoutsQuery.data]
+  )
+  const daysByKey = useMemo(() => groupWorkoutsByDay(zone2Workouts, timezone), [zone2Workouts, timezone])
+
+  // Zone-2 session day keys for the cadence math (same filtered workouts as the grid).
+  const zone2SessionDates = useMemo(
+    () => zone2Workouts.map((w) => localDateKey(w.start_at, timezone)),
+    [zone2Workouts, timezone]
+  )
+
+  const todayKey = ymdKey(today)
+  const guidance = useMemo(
+    () => zone2CalendarGuidance(latest, zone2SessionDates, todayKey),
+    [latest, zone2SessionDates, todayKey]
   )
 
   function handlePrevMonth(): void {
@@ -144,19 +166,29 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const atRisk = hasMaintenanceFlag(latest)
   const reason = evidenceReason(latest.evidence_state)
 
-  // The soft error zone: a faint band centred on the top of the CURRENT fill (the index),
-  // spanning the confidence interval. Positioned bottom-up so 0% == bottom of the bar.
-  const bandStyle: CSSProperties = geom.hasBand
-    ? { bottom: `${geom.bandLoPct}%`, height: `${Math.max(0, geom.bandHiPct - geom.bandLoPct)}%` }
-    : { display: 'none' }
-
   // The durable ceiling divider sits at C_D / (C_D + C_F) of the height.
   const dividerPct = (ZONE2_DURABLE_CEILING / (ZONE2_DURABLE_CEILING + ZONE2_FAST_CEILING)) * 100
+
+  // A single quiet 1px tick at the index level (top of the current combined fill) —
+  // the ONLY on-bar uncertainty cue; the real band lives in the "±N" text.
+  const indexTickPct = geom.durableFillPct + geom.fastFillPct
+  const indexTickStyle: CSSProperties = { bottom: `${indexTickPct}%` }
+
+  // Any guidance marker that falls outside the visible month is called out in the
+  // summary line instead of the grid (dates are still shown, just not annotated).
+  const markerInMonth = (key: string): boolean => {
+    const [y, m] = key.split('-').map(Number)
+    return y === viewYear && m === viewMonth
+  }
+  const anyMarkerOffMonth =
+    !markerInMonth(guidance.buildBy) ||
+    !markerInMonth(guidance.maintainBy) ||
+    !markerInMonth(guidance.decayFrom)
 
   return (
     <section className="z2f" aria-label="Zone 2 fitness level">
       <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
-        {/* ── Vertical two-zone composition bar ─────────────────────────── */}
+        {/* ── Clean vertical two-zone composition bar ───────────────────── */}
         <div className="z2f-barwrap">
           <div
             className="z2f-bar"
@@ -165,26 +197,18 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
               halfWidth != null ? `, plus or minus ${halfWidth}` : ''
             }. Durable base ${durableRounded} of ${ZONE2_DURABLE_CEILING}, fast layer ${fastRounded} of ${ZONE2_FAST_CEILING}.`}
           >
-            {/* Stacked bottom→top: durable fill, durable ghost, fast fill, fast ghost.
-                Flex column-reverse would invert; we render top→bottom in DOM order so
-                the fast ghost (top of bar) is first. */}
+            {/* Stacked top→bottom in DOM order: fast ghost, fast fill, durable ghost,
+                durable fill. Two fills, two faint ghosts — nothing else. */}
             <div className="z2f-bar-seg z2f-bar-seg--fast-ghost" style={{ height: `${geom.fastGhostPct}%` }} />
             <div className="z2f-bar-seg z2f-bar-seg--fast-fill" style={{ height: `${geom.fastFillPct}%` }} />
             <div className="z2f-bar-seg z2f-bar-seg--durable-ghost" style={{ height: `${geom.durableGhostPct}%` }} />
             <div className="z2f-bar-seg z2f-bar-seg--durable-fill" style={{ height: `${geom.durableFillPct}%` }} />
 
-            {/* Subtle divider at the 70 ceiling (from the TOP, so it lands on the seam). */}
+            {/* Single thin divider tick at the 70 ceiling (the seam). */}
             <div className="z2f-bar-divider" style={{ bottom: `${dividerPct}%` }} aria-hidden="true" />
 
-            {/* Soft confidence error zone across the top of the current fill. */}
-            <div className="z2f-bar-band" style={bandStyle} aria-hidden="true" />
-          </div>
-
-          {/* Zone labels flanking the bar. */}
-          <div className="z2f-bar-axis" aria-hidden="true">
-            <span className="z2f-bar-axis-top">FAST · provisional</span>
-            <span className="z2f-bar-axis-mid">70</span>
-            <span className="z2f-bar-axis-bottom">DURABLE · earned</span>
+            {/* One quiet 1px tick at the index level — the only on-bar uncertainty cue. */}
+            <div className="z2f-bar-tick" style={indexTickStyle} aria-hidden="true" />
           </div>
         </div>
 
@@ -211,6 +235,16 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
             </span>
           </div>
 
+          {/* Quiet legend labelling the two bar tones (no text lives on the bar). */}
+          <div className="z2f-bar-legend" aria-hidden="true">
+            <span className="z2f-bar-legend-item">
+              <span className="z2f-swatch z2f-swatch--durable" /> Durable
+            </span>
+            <span className="z2f-bar-legend-item">
+              <span className="z2f-swatch z2f-swatch--fast" /> Fast
+            </span>
+          </div>
+
           <div className="z2f-pills">
             <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
           </div>
@@ -226,7 +260,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
         </div>
       </div>
 
-      {/* ── Session calendar with the "if you stop" projection trail ─────── */}
+      {/* ── Session calendar as a coach: forward-looking guidance markers ── */}
       <div className="z2f-calendar-block">
         <CalendarHeatmap
           year={viewYear}
@@ -236,27 +270,37 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           onSelectDay={() => {}}
           onPrevMonth={handlePrevMonth}
           onNextMonth={handleNextMonth}
+          markers={guidance.markers}
         />
 
-        <div className="z2f-strip">
-          <ResponsiveContainer width="100%" height={96}>
-            <ComposedChart data={projection} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={40} tickFormatter={(v: string) => v.slice(5)} />
-              <YAxis domain={[0, 100]} tick={{ fill: TERTIARY, fontSize: 11 }} axisLine={false} tickLine={false} width={28} />
-              <Tooltip contentStyle={stripTooltipStyle} labelFormatter={(v) => String(v)} />
-              {/* CURRENT STATE — solid historical lines. */}
-              <Line dataKey="durable" name="Durable base" stroke={AEROBIC} strokeWidth={1.5} dot={false} type="monotone" isAnimationActive={false} connectNulls={false} />
-              <Line dataKey="sharpness" name="Fast layer" stroke={AEROBIC} strokeOpacity={0.45} strokeWidth={1.5} dot={false} type="monotone" isAnimationActive={false} connectNulls={false} />
-              {/* PROJECTION — dimmed dashed "if you stop from today" forward trail, unmistakable from the solid fill. */}
-              <Line dataKey="durableProjected" name="projected if you stop" stroke={AEROBIC} strokeOpacity={0.4} strokeWidth={1.5} strokeDasharray="2 3" dot={false} type="monotone" isAnimationActive={false} connectNulls={false} legendType="none" />
-              <Line dataKey="sharpnessProjected" name="projected if you stop" stroke={AEROBIC} strokeOpacity={0.25} strokeWidth={1.5} strokeDasharray="2 3" dot={false} type="monotone" isAnimationActive={false} connectNulls={false} legendType="none" />
-            </ComposedChart>
-          </ResponsiveContainer>
-          <div className="z2f-strip-legend">
-            <span className="z2f-legend-item"><span className="z2f-legend-swatch z2f-legend-swatch--durable" /> Durable base</span>
-            <span className="z2f-legend-item"><span className="z2f-legend-swatch z2f-legend-swatch--sharpness" /> Fast layer</span>
-            <span className="z2f-legend-item z2f-legend-item--projected"><span className="z2f-legend-swatch z2f-legend-swatch--projected" /> Projected if you stop</span>
-          </div>
+        {/* One-line actionable summary (real weekday/date formatting). */}
+        <p className="z2f-guidance-summary">{guidance.summary}</p>
+        {anyMarkerOffMonth && (
+          <p className="z2f-guidance-offmonth">
+            Some markers fall outside this month — use the arrows to see them.
+          </p>
+        )}
+
+        {/* Compact legend explaining the three markers. */}
+        <div className="z2f-guidance-legend">
+          <span className="z2f-guidance-legend-item">
+            <span className="z2f-guidance-swatch z2f-guidance-swatch--build" />
+            <span>
+              <strong>Build</strong> — next session to keep climbing. {guidance.doses.build}
+            </span>
+          </span>
+          <span className="z2f-guidance-legend-item">
+            <span className="z2f-guidance-swatch z2f-guidance-swatch--maintain" />
+            <span>
+              <strong>Maintain</strong> — latest day to hold. {guidance.doses.maintain}
+            </span>
+          </span>
+          <span className="z2f-guidance-legend-item">
+            <span className="z2f-guidance-swatch z2f-guidance-swatch--decay" />
+            <span>
+              <strong>Eases</strong> — the index starts to erode without a Zone 2 session.
+            </span>
+          </span>
         </div>
       </div>
 

@@ -6,6 +6,13 @@ import { buildMonthGrid, MONTH_NAMES, WEEKDAY_LABELS, type YMD } from '../hooks/
 import { modalityToDomain } from './modalityAccent'
 import './CalendarHeatmap.css'
 
+/** A forward-looking coaching annotation for a single day cell (Zone 2 tab). */
+export interface CalendarDayMarker {
+  kind: 'build' | 'maintain' | 'decay'
+  /** Accessible title / tooltip for the annotated cell. */
+  label: string
+}
+
 export interface CalendarHeatmapProps {
   year: number
   month: number // 1-12
@@ -14,6 +21,12 @@ export interface CalendarHeatmapProps {
   onSelectDay: (dateKey: string) => void
   onPrevMonth: () => void
   onNextMonth: () => void
+  /**
+   * Optional forward-looking guidance markers keyed by "YYYY-MM-DD". When
+   * provided, matching day cells get a small ring/dot + accessible title. Default
+   * undefined — the Sessions view passes nothing and is unaffected.
+   */
+  markers?: Record<string, CalendarDayMarker>
 }
 
 export function CalendarHeatmap({
@@ -23,7 +36,8 @@ export function CalendarHeatmap({
   daysByKey,
   onSelectDay,
   onPrevMonth,
-  onNextMonth
+  onNextMonth,
+  markers
 }: CalendarHeatmapProps): ReactElement {
   const cells = buildMonthGrid(year, month)
   const todayKey = `${today.year.toString().padStart(4, '0')}-${today.month.toString().padStart(2, '0')}-${today.day.toString().padStart(2, '0')}`
@@ -71,6 +85,11 @@ export function CalendarHeatmap({
           const isToday = cell.key === todayKey
           const hasWorkouts = !!bucket && bucket.workouts.length > 0
           const stepIndex = hasWorkouts ? durationStepIndex(bucket.totalDurationS) : -1
+          const marker = markers?.[cell.key]
+          const sessionLabel = hasWorkouts
+            ? `${cell.ymd.day}: ${bucket!.workouts.length} session${bucket!.workouts.length > 1 ? 's' : ''}`
+            : `${cell.ymd.day}: no sessions`
+          const cellLabel = marker ? `${sessionLabel}. ${marker.label}` : sessionLabel
 
           return (
             <button
@@ -79,16 +98,15 @@ export function CalendarHeatmap({
               className={
                 'calendar-heatmap-cell' +
                 (hasWorkouts ? ` calendar-heatmap-cell--step-${stepIndex}` : '') +
-                (isToday ? ' calendar-heatmap-cell--today' : '')
+                (isToday ? ' calendar-heatmap-cell--today' : '') +
+                (marker ? ` calendar-heatmap-cell--marker-${marker.kind}` : '')
               }
               disabled={!hasWorkouts}
               onClick={() => hasWorkouts && onSelectDay(cell.key)}
-              aria-label={
-                hasWorkouts
-                  ? `${cell.ymd.day}: ${bucket!.workouts.length} session${bucket!.workouts.length > 1 ? 's' : ''}`
-                  : `${cell.ymd.day}: no sessions`
-              }
+              aria-label={cellLabel}
+              title={marker ? marker.label : undefined}
             >
+              {marker && <span className="calendar-heatmap-marker" aria-hidden="true" />}
               <span className="calendar-heatmap-daynum">{cell.ymd.day}</span>
               {hasWorkouts && bucket!.modalities.length > 0 && (
                 <span className="calendar-heatmap-dots">

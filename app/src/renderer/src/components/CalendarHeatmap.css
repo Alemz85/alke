@@ -173,3 +173,42 @@
 .calendar-heatmap-dot--neutral {
   background: var(--color-text-tertiary);
 }
+
+/* ── Forward-looking coaching markers (Zone 2 tab; opt-in via `markers` prop) ──
+   Additive: a colored ring around the day cell + a small dot in the top-right
+   corner so the guidance reads even against a filled session cell. NEVER red —
+   the flag palette is reserved. Build = teal, Maintain = neutral, Decay-onset =
+   a dim amber (distinct from teal, clearly not the reserved red). */
+.calendar-heatmap-cell--marker-build {
+  box-shadow: inset 0 0 0 1.5px var(--color-aerobic);
+}
+.calendar-heatmap-cell--marker-maintain {
+  box-shadow: inset 0 0 0 1.5px var(--color-text-tertiary);
+}
+.calendar-heatmap-cell--marker-decay {
+  box-shadow: inset 0 0 0 1.5px rgba(217, 164, 65, 0.7);
+}
+[data-theme='light'] .calendar-heatmap-cell--marker-decay {
+  box-shadow: inset 0 0 0 1.5px rgba(180, 130, 30, 0.75);
+}
+
+.calendar-heatmap-marker {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+}
+.calendar-heatmap-cell--marker-build .calendar-heatmap-marker {
+  background: var(--color-aerobic);
+}
+.calendar-heatmap-cell--marker-maintain .calendar-heatmap-marker {
+  background: var(--color-text-tertiary);
+}
+.calendar-heatmap-cell--marker-decay .calendar-heatmap-marker {
+  background: rgba(217, 164, 65, 0.85);
+}
+[data-theme='light'] .calendar-heatmap-cell--marker-decay .calendar-heatmap-marker {
+  background: rgba(180, 130, 30, 0.9);
+}

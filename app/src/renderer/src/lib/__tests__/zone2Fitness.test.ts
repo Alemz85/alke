@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import {
+  DEFAULT_WARN_AFTER_DAYS,
   durableBandCaption,
   durableBandHalfWidth,
   evidenceReason,
+  formatGuidanceDate,
   hasMaintenanceFlag,
   indexBandHalfWidth,
   latestZone2Row,
@@ -13,6 +15,7 @@ import {
   stageLabel,
   TAU_FAST_DAYS,
   zone2BarGeometry,
+  zone2CalendarGuidance,
   zone2IndexValue,
   zone2ProjectionSeries
 } from '../zone2Fitness'
@@ -211,6 +214,89 @@ describe('sharpnessSparkline', () => {
       { i: 0, value: 30 },
       { i: 1, value: 40 }
     ])
+  })
+})
+
+describe('formatGuidanceDate', () => {
+  it('formats a date key as "Wkd D Mon" with the correct weekday', () => {
+    expect(formatGuidanceDate('2026-07-10')).toBe('Fri 10 Jul') // 2026-07-10 is a Friday
+    expect(formatGuidanceDate('2026-07-11')).toBe('Sat 11 Jul')
+    expect(formatGuidanceDate('2026-01-01')).toBe('Thu 1 Jan')
+  })
+})
+
+describe('zone2CalendarGuidance', () => {
+  const TODAY = '2026-07-10' // Friday
+
+  it('places markers off a RECENT session using the row warn window', () => {
+    // Last session 2 days ago; warn_after_days = 14.
+    const g = zone2CalendarGuidance({ warn_after_days: 14, maintenance_met: true }, ['2026-07-08'], TODAY)
+    expect(g.lastSession).toBe('2026-07-08')
+    // buildBy = max(today, lastSession + 3d) = max(07-10, 07-11) = 07-11
+    expect(g.buildBy).toBe('2026-07-11')
+    // decayFrom = max(today+1, lastSession + 14) = max(07-11, 07-22) = 07-22
+    expect(g.decayFrom).toBe('2026-07-22')
+    // maintainBy = decayFrom - 1
+    expect(g.maintainBy).toBe('2026-07-21')
+    // Marker record is keyed by date and carries the three kinds.
+    expect(g.markers['2026-07-11'].kind).toBe('build')
+    expect(g.markers['2026-07-21'].kind).toBe('maintain')
+    expect(g.markers['2026-07-22'].kind).toBe('decay')
+    // Summary uses real formatted dates.
+    expect(g.summary).toContain('Sat 11 Jul')
+    expect(g.summary).toContain('eases from Wed 22 Jul')
+  })
+
+  it('clamps every marker to today-or-later when the session is STALE', () => {
+    // Last session 40 days ago; warn window long past → all markers must land from today forward.
+    const g = zone2CalendarGuidance({ warn_after_days: 9, maintenance_met: false }, ['2026-05-31'], TODAY)
+    expect(g.lastSession).toBe('2026-05-31')
+    // buildBy = max(today, staleSession+3d) → today (nothing in the past)
+    expect(g.buildBy).toBe('2026-07-10')
+    // decayFrom = max(today+1, staleSession+9d) → today+1
+    expect(g.decayFrom).toBe('2026-07-11')
+    expect(g.maintainBy).toBe('2026-07-10')
+    // No marker is dated before today.
+    for (const key of Object.keys(g.markers)) {
+      expect(key >= TODAY).toBe(true)
+    }
+  })
+
+  it('falls back to the default warn window when warn_after_days is missing', () => {
+    // Recent session, null warn_after_days → DEFAULT_WARN_AFTER_DAYS (9).
+    const g = zone2CalendarGuidance({ warn_after_days: null, maintenance_met: null }, ['2026-07-08'], TODAY)
+    // decayFrom = max(today+1, lastSession + 9) = max(07-11, 07-17) = 07-17
+    expect(DEFAULT_WARN_AFTER_DAYS).toBe(9)
+    expect(g.decayFrom).toBe('2026-07-17')
+    expect(g.maintainBy).toBe('2026-07-16')
+  })
+
+  it('handles no sessions on record by anchoring on today', () => {
+    const g = zone2CalendarGuidance({ warn_after_days: 14, maintenance_met: false }, [], TODAY)
+    expect(g.lastSession).toBeNull()
+    expect(g.sessions7d).toBe(0)
+    // anchor = today → buildBy = today+3, decayFrom = today+14, maintainBy = decay-1
+    expect(g.buildBy).toBe('2026-07-13')
+    expect(g.decayFrom).toBe('2026-07-24')
+    expect(g.maintainBy).toBe('2026-07-23')
+  })
+
+  it('counts sessions in the trailing 7 days and ignores future-dated rows', () => {
+    // 07-04..07-10 inclusive is the window; 07-03 is out, 07-11 is future.
+    const g = zone2CalendarGuidance(
+      { warn_after_days: 14, maintenance_met: true },
+      ['2026-07-03', '2026-07-04', '2026-07-08', '2026-07-10', '2026-07-11'],
+      TODAY
+    )
+    expect(g.sessions7d).toBe(3) // 07-04, 07-08, 07-10
+    // A future-dated session is clamped to today, so lastSession never exceeds today.
+    expect(g.lastSession).toBe('2026-07-10')
+  })
+
+  it('exposes the fixed dose copy', () => {
+    const g = zone2CalendarGuidance({ warn_after_days: 14, maintenance_met: true }, ['2026-07-08'], TODAY)
+    expect(g.doses.build).toContain('3–4 Zone 2 sessions/wk')
+    expect(g.doses.maintain).toContain('2 Zone 2 sessions/wk')
   })
 })
 
