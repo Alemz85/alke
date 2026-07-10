@@ -21,6 +21,8 @@ const api: HealthApi = {
   chatSend: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message),
   chatStop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatStop, sessionId),
+  chatRename: (id: string, title: string) => ipcRenderer.invoke(IPC_CHANNELS.chatRename, id, title),
+  chatDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatDelete, id),
   onChatStream: (listener: (payload: never) => void) => {
     const wrapped = (_e: unknown, payload: never): void => listener(payload)
     ipcRenderer.on('chat:stream', wrapped as never)

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement } from 'react'
+import type { MouseEvent, ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Check, ChevronRight, Copy, Plus, Square } from 'lucide-react'
+import { ArrowUp, Check, ChevronRight, Copy, Pencil, Plus, Square, Trash2 } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMessage, ChatStreamEvent } from '@shared/types'
+import type { ChatMessage, ChatSessionMeta, ChatStreamEvent } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ButtonSoft } from '../components'
 import './ChatView.css'
@@ -14,6 +14,12 @@ interface StreamBlock {
   text: string
   name?: string
 }
+
+const SUGGESTED_PROMPTS = [
+  'Summarize my last 2 weeks',
+  'Is my swim efficiency improving?',
+  'Design next week given my current load'
+]
 
 export function ChatView(): ReactElement {
   const queryClient = useQueryClient()
@@ -92,8 +98,8 @@ export function ChatView(): ReactElement {
     setError(null)
   }
 
-  async function send(): Promise<void> {
-    const message = input.trim()
+  async function send(override?: string): Promise<void> {
+    const message = (override ?? input).trim()
     if (!message || busy) return
     setInput('')
     setError(null)
@@ -106,6 +112,11 @@ export function ChatView(): ReactElement {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
     }
+  }
+
+  function sendSuggestion(prompt: string): void {
+    setInput(prompt)
+    void send(prompt)
   }
 
   async function stop(): Promise<void> {
@@ -151,24 +162,36 @@ export function ChatView(): ReactElement {
             <Plus size={16} strokeWidth={1.5} /> New analysis
           </button>
           {sessions.map((s) => (
-            <button
+            <SessionRow
               key={s.id}
-              className={s.id === activeId ? 'chat-session-row chat-session-row--active' : 'chat-session-row'}
-              onClick={() => void openSession(s.id)}
-            >
-              <span className="chat-session-title">{s.title ?? 'Untitled analysis'}</span>
-              <span className="chat-session-date">{new Date(s.started_at).toLocaleDateString()}</span>
-            </button>
+              session={s}
+              active={s.id === activeId}
+              onOpen={() => void openSession(s.id)}
+              onRenamed={() => void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })}
+              onDeleted={() => {
+                void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+                if (s.id === activeId) newAnalysis()
+              }}
+            />
           ))}
         </aside>
 
         <div className="chat-panel">
           <div className="chat-messages" ref={scrollRef}>
             {messages.length === 0 && stream.length === 0 && (
-              <p className="chat-hint">
-                Ask anything about your data — &ldquo;summarize my last 2 weeks&rdquo;, &ldquo;is my swim
-                efficiency improving?&rdquo;. Answers are computed live from the database.
-              </p>
+              <>
+                <p className="chat-hint">
+                  Ask anything about your data — &ldquo;summarize my last 2 weeks&rdquo;, &ldquo;is my swim
+                  efficiency improving?&rdquo;. Answers are computed live from the database.
+                </p>
+                <div className="chat-suggestions">
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <button key={prompt} className="chip chat-suggestion-chip" onClick={() => sendSuggestion(prompt)}>
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
             {messages.map((m, i) =>
               m.role === 'user' ? (
@@ -226,6 +249,115 @@ export function ChatView(): ReactElement {
         </div>
       </div>
     </div>
+  )
+}
+
+function SessionRow({
+  session,
+  active,
+  onOpen,
+  onRenamed,
+  onDeleted
+}: {
+  session: ChatSessionMeta
+  active: boolean
+  onOpen: () => void
+  onRenamed: () => void
+  onDeleted: () => void
+}): ReactElement {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(session.title ?? '')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  function startEditing(e: MouseEvent): void {
+    e.stopPropagation()
+    setDraft(session.title ?? '')
+    setEditing(true)
+  }
+
+  async function saveEdit(): Promise<void> {
+    const title = draft.trim()
+    setEditing(false)
+    if (!title || title === (session.title ?? '')) return
+    await window.api.chatRename(session.id, title)
+    onRenamed()
+  }
+
+  function handleDeleteClick(e: MouseEvent): void {
+    e.stopPropagation()
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      confirmTimer.current = setTimeout(() => setConfirmingDelete(false), 3000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    setConfirmingDelete(false)
+    void window.api.chatDelete(session.id).then(onDeleted)
+  }
+
+  if (editing) {
+    return (
+      <div className="chat-session-row chat-session-row--editing">
+        <input
+          ref={inputRef}
+          className="chat-session-edit-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void saveEdit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setEditing(false)
+            }
+          }}
+          onBlur={() => setEditing(false)}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <button
+      className={active ? 'chat-session-row chat-session-row--active' : 'chat-session-row'}
+      onClick={onOpen}
+    >
+      <span className="chat-session-row-top">
+        <span className="chat-session-title">{session.title ?? 'Untitled analysis'}</span>
+        <span className="chat-session-actions">
+          <span className="chat-session-icon-btn" role="button" tabIndex={0} aria-label="Rename" onClick={startEditing}>
+            <Pencil size={14} strokeWidth={1.5} />
+          </span>
+          <span
+            className={
+              confirmingDelete ? 'chat-session-icon-btn chat-session-icon-btn--confirm' : 'chat-session-icon-btn'
+            }
+            role="button"
+            tabIndex={0}
+            aria-label="Delete"
+            title={confirmingDelete ? 'Click again to delete' : undefined}
+            onClick={handleDeleteClick}
+          >
+            <Trash2 size={14} strokeWidth={1.5} />
+          </span>
+        </span>
+      </span>
+      <span className="chat-session-date">{new Date(session.started_at).toLocaleDateString()}</span>
+    </button>
   )
 }
 

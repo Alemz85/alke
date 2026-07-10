@@ -19,12 +19,14 @@ import {
 } from '../hooks/useDashboardData'
 import {
   countSessionsForGoal,
+  daysBetweenDates,
   endOfIsoWeek,
   fmtDelta,
   fmtDistance,
   fmtDuration,
   fmtLocalDateTime,
   fmtNum,
+  fmtShortDate,
   humanizeWorkoutType,
   parseWeeklyMinSessions,
   startOfIsoWeek
@@ -96,6 +98,28 @@ export function DashboardView(): ReactElement {
   const latestRhrRow = [...sortedMetrics].reverse().find((m) => m.resting_hr !== null)
   const latestRhr = latestRhrRow?.resting_hr ?? null
   const rhrDev = latestComputed?.rhr_dev ?? null
+
+  // --- Body weight: latest reading + delta vs the previous one within 45 days ---
+  const weightRows = sortedMetrics.filter((m) => m.weight_kg !== null)
+  const latestWeightRow = weightRows.length > 0 ? weightRows[weightRows.length - 1] : undefined
+  const latestWeight = latestWeightRow?.weight_kg ?? null
+  const prevWeightRow = weightRows.length > 1 ? weightRows[weightRows.length - 2] : undefined
+  let weightCaption: string
+  if (latestWeightRow === undefined || latestWeight === null) {
+    weightCaption = EM_DASH
+  } else {
+    let deltaPart = ''
+    if (
+      prevWeightRow &&
+      prevWeightRow.weight_kg !== null &&
+      daysBetweenDates(prevWeightRow.date, latestWeightRow.date) <= 45
+    ) {
+      const delta = latestWeight - prevWeightRow.weight_kg
+      const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±'
+      deltaPart = ` · ${sign}${Math.abs(delta).toFixed(1)} kg vs ${fmtShortDate(prevWeightRow.date)}`
+    }
+    weightCaption = `as of ${fmtShortDate(latestWeightRow.date)}${deltaPart}`
+  }
 
   // --- CTL/ATL mini chart data (90d) ---
   const chartData = sortedComputed.map((r) => ({
@@ -182,7 +206,7 @@ export function DashboardView(): ReactElement {
           </div>
         </div>
 
-        <div className="dashboard-grid--span-4">
+        <div className="dashboard-grid--span-6">
           <MetricCard
             eyebrow="Resting heart rate"
             value={latestRhr === null ? EM_DASH : Math.round(latestRhr).toString()}
@@ -195,8 +219,17 @@ export function DashboardView(): ReactElement {
           />
         </div>
 
-        <div className="dashboard-grid--span-8">
-          <ChartCard title="CTL / ATL — 90 days" span={8}>
+        <div className="dashboard-grid--span-6">
+          <MetricCard
+            eyebrow="Body weight"
+            value={latestWeight === null ? EM_DASH : `${latestWeight.toFixed(1)} kg`}
+            caption={weightCaption}
+            domain="recovery"
+          />
+        </div>
+
+        <div className="dashboard-grid--span-12">
+          <ChartCard title="CTL / ATL — 90 days" span={12}>
             {hasChartData ? (
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>

@@ -21,7 +21,7 @@ if (envPath) {
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { IPC_CHANNELS, type UserConfigPatch } from '@shared/types'
+import { IPC_CHANNELS, type UserConfigPatch, type Flag } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
 
@@ -73,6 +73,25 @@ function createWindow(): void {
   }
 }
 
+const DOCK_BADGE_REFRESH_MS = 30 * 60 * 1000
+
+// Single source of truth for the dock badge: count of 'warn' severity flags only.
+// Info flags never badge — the product reserves alarm affordances for genuine warnings.
+function updateDockBadge(flags: Flag[]): void {
+  const warnCount = flags.filter((flag) => flag.severity === 'warn').length
+  app.dock?.setBadge(warnCount > 0 ? String(warnCount) : '')
+}
+
+async function refreshDockBadge(): Promise<void> {
+  try {
+    const flags = await db.getTodayFlags()
+    updateDockBadge(flags)
+  } catch (err) {
+    app.dock?.setBadge('')
+    console.error('[dock-badge] failed to refresh:', err instanceof Error ? err.message : err)
+  }
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getWorkouts, (_event, fromIso: string, toIso: string) =>
     db.getWorkouts(fromIso, toIso)
@@ -88,7 +107,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.updateUserConfig, (_event, patch: UserConfigPatch) =>
     db.updateUserConfig(patch)
   )
-  ipcMain.handle(IPC_CHANNELS.getTodayFlags, () => db.getTodayFlags())
+  ipcMain.handle(IPC_CHANNELS.getTodayFlags, async () => {
+    const flags = await db.getTodayFlags()
+    updateDockBadge(flags)
+    return flags
+  })
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
@@ -111,6 +134,9 @@ app.whenReady().then(() => {
 
   registerIpcHandlers()
   createWindow()
+
+  void refreshDockBadge()
+  setInterval(refreshDockBadge, DOCK_BADGE_REFRESH_MS)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

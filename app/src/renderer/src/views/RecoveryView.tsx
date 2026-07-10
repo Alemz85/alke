@@ -24,6 +24,7 @@ import {
   useRecoveryUserConfig
 } from '../hooks/useRecoveryData'
 import {
+  buildWeightSeries,
   daysAgo,
   fmtHoursAsHm,
   fmtHoursMinutes,
@@ -54,6 +55,8 @@ export function RecoveryView(): ReactElement {
   const [rhrRange, setRhrRange] = useState<ChipRange>('90d')
   const [hrvRange, setHrvRange] = useState<ChipRange>('90d')
   const [respRange, setRespRange] = useState<ChipRange>('90d')
+  // Weight is sparse — short ranges are useless, so only 90d/1y, default 1y.
+  const [weightRange, setWeightRange] = useState<ChipRange>('1y')
 
   const userConfigQuery = useRecoveryUserConfig()
   const flagsQuery = useRecoveryTodayFlags()
@@ -177,6 +180,11 @@ export function RecoveryView(): ReactElement {
     date: r.date,
     dev: r.wrist_temp_deviation_c
   }))
+
+  // --- Body weight: sparse scatter + 7-day-bridged trend line ---
+  const weightWindow = sliceLastNDays(allMetrics, RANGE_DAYS[weightRange])
+  const weightChartData = buildWeightSeries(weightWindow)
+  const hasWeightData = weightChartData.length > 0
 
   return (
     <div className="view">
@@ -567,6 +575,78 @@ export function RecoveryView(): ReactElement {
               domain="recovery"
             />
           )}
+        </div>
+
+        <div className="recovery-grid--span-12">
+          <ChartCard
+            title="Body weight"
+            span={12}
+            headerRight={<ChipFilter value={weightRange} onChange={setWeightRange} options={['90d', '1y']} />}
+          >
+            {hasWeightData ? (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={weightChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="var(--color-divider-soft)" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      type="category"
+                      tick={AXIS_TICK}
+                      axisLine={AXIS_LINE}
+                      tickLine={false}
+                      minTickGap={32}
+                      tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      allowDuplicatedCategory={false}
+                    />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={40}
+                      domain={['dataMin - 1', 'dataMax + 1']}
+                      allowDecimals={false}
+                      label={{ value: 'kg', position: 'insideTopLeft', fill: 'var(--color-text-tertiary)', fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
+                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      formatter={(value: number, name: string) => [
+                        `${value.toFixed(1)} kg`,
+                        name === 'trend' ? '7d trend' : 'Weight'
+                      ]}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="weight"
+                      name="weight"
+                      stroke="var(--color-recovery)"
+                      strokeWidth={0}
+                      dot={{ r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trend"
+                      name="trend"
+                      stroke="var(--color-recovery)"
+                      strokeWidth={1.5}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <p className="recovery-chart-caption">
+                  Sparse weigh-ins — the trend line only draws where readings cluster. Weigh in
+                  near-daily to activate the weight-trend insight.
+                </p>
+              </>
+            ) : (
+              <EmptyState message="No body-weight readings yet — weigh-ins will chart here once Apple Health exports them." />
+            )}
+          </ChartCard>
         </div>
       </div>
     </div>

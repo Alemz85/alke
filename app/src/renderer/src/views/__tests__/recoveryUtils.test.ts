@@ -31,6 +31,7 @@ function makeMetric(overrides: Partial<DailyMetric> & { date: string }): DailyMe
     steps: null,
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
+    weight_kg: overrides.weight_kg ?? null,
     state_of_mind: null
   }
 }

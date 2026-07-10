@@ -80,6 +80,27 @@ export function fmtLocalDateTime(iso: string, timezone: string | null | undefine
   return `${datePart} · ${timePart}`
 }
 
+/**
+ * Formats a "YYYY-MM-DD" daily-metric date as "Jun 28" (UTC-anchored — the
+ * stored value is already the user's local calendar date with no time part, so
+ * re-projecting through a named zone could shift the day).
+ */
+export function fmtShortDate(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00Z`)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'short'
+  }).format(date)
+}
+
+/** Whole days between two "YYYY-MM-DD" strings (UTC-anchored, b - a). */
+export function daysBetweenDates(a: string, b: string): number {
+  const ta = new Date(`${a}T00:00:00Z`).getTime()
+  const tb = new Date(`${b}T00:00:00Z`).getTime()
+  return Math.round((tb - ta) / 86_400_000)
+}
+
 /** Reads weekly_min_sessions as a Record<string, number>, tolerating unknown/absent shapes. */
 export function parseWeeklyMinSessions(config: UserConfig | undefined): Record<string, number> {
   const raw = config?.weekly_min_sessions

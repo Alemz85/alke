@@ -83,7 +83,8 @@ const DAILY_METRIC_NUMERIC_KEYS: (keyof DailyMetric)[] = [
   'vo2max',
   'steps',
   'active_energy_kcal',
-  'wrist_temp_deviation_c'
+  'wrist_temp_deviation_c',
+  'weight_kg'
 ]
 
 const COMPUTED_DAILY_NUMERIC_KEYS: (keyof ComputedDaily)[] = [
@@ -125,7 +126,7 @@ const COMPUTED_WORKOUT_COLUMNS =
   'workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60, computed_at'
 
 const DAILY_METRIC_COLUMNS =
-  'date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, state_of_mind'
+  'date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, weight_kg, state_of_mind'
 
 const COMPUTED_DAILY_COLUMNS =
   'date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags, computed_at'
@@ -402,4 +403,14 @@ export async function updateChatSession(
 ): Promise<void> {
   const { error } = await getClient().from('chat_sessions').update(patch).eq('id', id)
   if (error) throw new Error(`updateChatSession: ${error.message}`)
+}
+
+export async function renameChatSession(id: string, title: string): Promise<void> {
+  const { error } = await getClient().from('chat_sessions').update({ title }).eq('id', id)
+  if (error) throw new Error(`renameChatSession: ${error.message}`)
+}
+
+export async function deleteChatSession(id: string): Promise<void> {
+  const { error } = await getClient().from('chat_sessions').delete().eq('id', id)
+  if (error) throw new Error(`deleteChatSession: ${error.message}`)
 }

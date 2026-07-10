@@ -172,3 +172,10 @@ export function stopMessage(sessionId: string): boolean {
 // Registered here (not main/index.ts, which is owned by another surface)
 // so the stop button has an IPC channel to call.
 ipcMain.handle(IPC_CHANNELS.chatStop, (_event, sessionId: string) => stopMessage(sessionId))
+
+// Registered here (not main/index.ts, which is owned by another surface)
+// so session rename/delete have IPC channels to call.
+ipcMain.handle(IPC_CHANNELS.chatRename, (_event, id: string, title: string) =>
+  db.renameChatSession(id, title)
+)
+ipcMain.handle(IPC_CHANNELS.chatDelete, (_event, id: string) => db.deleteChatSession(id))

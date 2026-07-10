@@ -55,6 +55,7 @@ export interface DailyMetric {
   steps: number | null
   active_energy_kcal: number | null
   wrist_temp_deviation_c: number | null
+  weight_kg: number | null
   state_of_mind: Record<string, unknown> | null
 }
 
@@ -101,7 +102,7 @@ export type UserConfigPatch = Partial<
 export interface Flag {
   type: string
   message: string
-  severity?: 'info' | 'warning' | 'critical'
+  severity?: 'info' | 'warn'
   [key: string]: unknown
 }
 
@@ -127,6 +128,8 @@ export interface HealthApi {
   chatGetSession(id: string): Promise<ChatSession | null>
   chatSend(sessionId: string | null, message: string): Promise<{ sessionId: string }>
   chatStop(sessionId: string): Promise<boolean>
+  chatRename(id: string, title: string): Promise<void>
+  chatDelete(id: string): Promise<void>
   onChatStream(listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void): () => void
 }
 
@@ -146,7 +149,9 @@ export const IPC_CHANNELS = {
   chatGetSession: 'chat:getSession',
   chatSend: 'chat:send',
   // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
-  chatStop: 'chat:stop'
+  chatStop: 'chat:stop',
+  chatRename: 'chat:rename',
+  chatDelete: 'chat:delete'
 } as const
 
 export interface InsightCorrelation {

@@ -160,4 +160,58 @@ export function weeklyMedianByDate(
   return out
 }
 
+/** Whole days between two "YYYY-MM-DD" strings (UTC-anchored, b - a). */
+function daysBetween(a: string, b: string): number {
+  const ta = new Date(`${a}T00:00:00Z`).getTime()
+  const tb = new Date(`${b}T00:00:00Z`).getTime()
+  return Math.round((tb - ta) / 86_400_000)
+}
+
+export interface WeightPoint {
+  date: string
+  /** The actual weigh-in (null on days with no reading). */
+  weight: number | null
+  /**
+   * 7-day-bridged rolling-mean trend, nulled out wherever the reading is more
+   * than `maxGapDays` from its predecessor — so the trend line (connectNulls
+   * false) only draws across densely-sampled stretches and leaves the big gaps
+   * honestly blank, like the VO₂max scatter.
+   */
+  trend: number | null
+}
+
+/**
+ * Builds the body-weight chart series from sparse weigh-ins. Only rows with a
+ * non-null `weight_kg` become points (there is one point per weigh-in, not one
+ * per calendar day). Each point carries a trailing rolling mean over the prior
+ * `windowDays` of *readings*; that trend is set to null whenever the gap to the
+ * previous reading exceeds `maxGapDays`, breaking the line across long gaps.
+ */
+export function buildWeightSeries(
+  rows: DailyMetric[],
+  windowDays = 7,
+  maxGapDays = 7
+): WeightPoint[] {
+  const readings = rows
+    .filter((r): r is DailyMetric & { weight_kg: number } => r.weight_kg !== null)
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  return readings.map((r, i) => {
+    // Rolling mean over readings whose date is within windowDays of this one.
+    const windowVals: number[] = []
+    for (let j = i; j >= 0; j--) {
+      if (daysBetween(readings[j].date, r.date) > windowDays - 1) break
+      windowVals.push(readings[j].weight_kg)
+    }
+    const rollingMean =
+      windowVals.length > 0 ? windowVals.reduce((s, v) => s + v, 0) / windowVals.length : null
+
+    // Break the trend line where this reading is too far from the previous one.
+    const prevGap = i > 0 ? daysBetween(readings[i - 1].date, r.date) : 0
+    const trend = i > 0 && prevGap > maxGapDays ? null : rollingMean
+
+    return { date: r.date, weight: r.weight_kg, trend }
+  })
+}
+
 export { EM_DASH }
