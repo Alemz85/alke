@@ -125,6 +125,9 @@ export interface Injury {
   updated_at: string | null
 }
 
+export const INJURY_CONTEXTS = ['during_workout', 'post_workout', 'at_rest', 'on_waking'] as const
+export type InjuryNoteContext = (typeof INJURY_CONTEXTS)[number]
+
 export interface InjuryLogEntry {
   id: number
   injury_id: string
@@ -133,6 +136,38 @@ export interface InjuryLogEntry {
   source: string | null
   note: string
   pain_level: number | null
+  context: string[] | null
+  workout_id: string | null
+}
+
+// User quick log from the Injuries tab (source is set to 'user' by the main
+// process — not caller-controlled).
+export interface NewInjuryLog {
+  injury_id: string
+  note: string
+  pain_level: number | null
+  context: InjuryNoteContext[]
+  workout_id?: string | null
+  entry_date?: string // YYYY-MM-DD, defaults to today
+}
+
+export interface RecoveryPlanItem {
+  id: string
+  injury_id: string
+  name: string
+  kind: 'exercise' | 'habit' | 'constraint'
+  weekly_target: number | null
+  note: string | null
+  active: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface PlanItemCheck {
+  id: number
+  item_id: string
+  done_date: string
+  source: string
 }
 
 // The typed surface exposed on window.api by the preload script.
@@ -146,6 +181,10 @@ export interface HealthApi {
   getTodayFlags(): Promise<Flag[]>
   getInjuries(): Promise<Injury[]>
   getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]>
+  addInjuryLog(entry: NewInjuryLog): Promise<InjuryLogEntry>
+  getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]>
+  getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
+  setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<void>
   getDbStatus(): Promise<DbStatus>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
@@ -169,6 +208,10 @@ export const IPC_CHANNELS = {
   getTodayFlags: 'db:getTodayFlags',
   getInjuries: 'db:getInjuries',
   getInjuryLog: 'db:getInjuryLog',
+  addInjuryLog: 'db:addInjuryLog',
+  getInjuryPlan: 'db:getInjuryPlan',
+  getInjuryPlanChecks: 'db:getInjuryPlanChecks',
+  setPlanItemCheck: 'db:setPlanItemCheck',
   getDbStatus: 'db:getDbStatus',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',
