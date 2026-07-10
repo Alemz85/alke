@@ -9,6 +9,9 @@ import pytest
 
 from metrics.models import (
     Z2_ANCHOR_BETA0,
+    Z2_RHR_POP_BASELINE,
+    Z2_SWC_MIN_POINTS,
+    Z2_VO2MAX_POP_BASELINE,
     ZONE2_DURABLE_CEILING,
     ZONE2_FAST_CEILING,
     ZONE2_FAST_SAT,
@@ -16,15 +19,21 @@ from metrics.models import (
     ZONE2_MAINTENANCE_MESSAGE,
     anchor_beta,
     base_consolidation,
+    blended_baseline,
+    decay_onset_days,
+    durable_base_series,
     durable_floor_score,
     durable_level_score,
     durable_score_from_percentile,
     ewma_alpha,
     fast_score_from_load,
     fuse_inverse_variance,
+    personal_baseline_weight,
+    project_index,
+    signal_elevation_score,
+    swc_from_index,
     tau_slow,
     vo2max_to_score,
-    warn_after_days,
     z2_durable_sharpness_series,
     z2_trimp_from_zones,
     zone2_maintenance_flag,
@@ -227,16 +236,112 @@ def test_fuse_inverse_variance_none_when_no_usable():
     assert fuse_inverse_variance([(1.0, 0.0)]) is None
 
 
-# ---------------------------------------------------------------------------
-# §5b — warn_after_days bands
-# ---------------------------------------------------------------------------
-def test_warn_after_days_bands():
-    assert warn_after_days(0.0) == 9  # thin base (the user today) -> tight window
-    assert warn_after_days(0.32) == 9
-    assert warn_after_days(0.33) == 14  # boundary belongs to the moderate band
-    assert warn_after_days(0.5) == 14
-    assert warn_after_days(0.66) == 24  # well-banked
-    assert warn_after_days(0.9) == 24
+# ===========================================================================
+# v3 — PROJECTION-DERIVED decay_onset (docs v3 pt6). REPLACES the warn_after_days
+# 7/12/21 band lookup. The horizon is a CONTINUOUS function of the model's own
+# projection (D, F, floor, τ_slow) + a data-derived SWC — verified to move
+# continuously (thin < banked), NOT as a step function.
+# ===========================================================================
+
+# ---- SWC is DATA-DERIVED from the user's own index variability (0.5×CV) ----
+def test_swc_from_index_is_half_cv_scale():
+    # A series with a known SD: SWC = 0.5 * SD (= 0.5 * CV * mean, since CV=SD/mean).
+    vals = [40.0, 42.0, 44.0, 46.0, 48.0]  # sample SD = sqrt(10) ≈ 3.162
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+    sd = math.sqrt(var)
+    assert swc_from_index(vals) == pytest.approx(max(Z2_SWC_MIN_POINTS, 0.5 * sd))
+
+
+def test_swc_floored_when_index_flat():
+    # A pathologically-flat index (CV≈0) still yields a finite floor, not 0.
+    assert swc_from_index([50.0] * 40) == pytest.approx(Z2_SWC_MIN_POINTS)
+    assert swc_from_index([]) == pytest.approx(Z2_SWC_MIN_POINTS)
+    assert swc_from_index([50.0]) == pytest.approx(Z2_SWC_MIN_POINTS)
+
+
+# ---- project_index: fast decays at τ_fast, durable toward floor at τ_slow ----
+def test_project_index_t0_is_current_and_decays_toward_floor():
+    D, F, floor, tau_slow_days = 40.0, 10.0, 15.0, 60.0
+    assert project_index(D, F, floor, tau_slow_days, 0.0) == pytest.approx(D + F)
+    # far future: F→0, D→floor, so I→floor
+    assert project_index(D, F, floor, tau_slow_days, 1e6) == pytest.approx(floor)
+    # fast layer alone at one τ_fast: F·(1/e) contribution
+    i_at_tau_fast = project_index(D, 0.0, floor, tau_slow_days, 14.0, tau_fast=14.0)
+    d_only = floor + (D - floor) * math.exp(-14.0 / tau_slow_days)
+    assert i_at_tau_fast == pytest.approx(d_only)
+
+
+# ---- decay_onset_days: thin base SHORT, banked base LONG, emergent + continuous ----
+def test_decay_onset_thin_base_shorter_than_banked_base():
+    swc = 1.0
+    # THIN base: small durable near a ~0 floor, fast layer dominates -> falls at
+    # ~τ_fast -> a SHORT horizon.
+    thin = decay_onset_days(durable=8.0, fast=12.0, floor=0.0, tau_slow_days=45.0, swc=swc)
+    # BANKED base: large durable, high floor, small fast layer -> falls at ~τ_slow
+    # -> a LONG horizon.
+    banked = decay_onset_days(durable=60.0, fast=4.0, floor=45.0, tau_slow_days=90.0, swc=swc)
+    assert thin < banked
+    assert thin > 0.0  # a real, finite horizon
+
+
+def _banked_horizon(frac: float, swc: float = 1.0) -> float:
+    """Map a base-consolidation fraction (0=thin, 1=banked) to a projection-derived
+    decay-onset horizon. As a base banks, ALL of its state co-moves: durable rises,
+    the erodable gap (D−floor) shrinks (an elevated floor), the fast layer shrinks,
+    and τ_slow lengthens. The horizon emerges from decay_onset_days on that state."""
+    d = 8.0 + frac * (66.0 - 8.0)          # durable 8 -> 66
+    gap = (1.0 - frac) * d * 0.8 + 0.5     # erodable gap shrinks as the base banks
+    floor = max(0.0, d - gap)
+    fast = 14.0 * (1.0 - frac) + 1.0       # fast layer 15 -> 1
+    tau_slow_days = 45.0 + 45.0 * frac     # 45 -> 90
+    return decay_onset_days(
+        durable=d, fast=fast, floor=floor, tau_slow_days=tau_slow_days, swc=swc
+    )
+
+
+def test_decay_onset_moves_continuously_thin_shorter_than_banked():
+    # Sweep the base from thin to banked; the horizon must move CONTINUOUSLY and be
+    # SHORT for a thin base, LONG for a banked one — emergent from the projection,
+    # NOT the old 9/14/24 step lookup.
+    horizons = [_banked_horizon(f) for f in [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0]]
+    # thin < banked, strictly increasing the whole way (a real trend, not 3 bands).
+    assert all(b > a for a, b in zip(horizons, horizons[1:]))
+    assert horizons[0] < horizons[-1]
+    # NOT a step function: 8 inputs -> 8 distinct horizons (a band lookup collapses
+    # them onto ~3 levels).
+    assert len({round(h, 3) for h in horizons}) == len(horizons)
+
+
+def test_decay_onset_is_lipschitz_continuous_not_a_step():
+    # The definitive continuity proof. For a CONTINUOUS function, halving the input
+    # step halves the output jump around a point. A STEP function (the old band
+    # lookup) instead keeps a CONSTANT jump when a step straddles a band boundary
+    # and a ZERO jump otherwise — never this smooth halving.
+    f0 = 0.5
+    jumps = [
+        abs(_banked_horizon(f0 + s) - _banked_horizon(f0 - s))
+        for s in (0.08, 0.04, 0.02, 0.01)
+    ]
+    # each halving of the step roughly halves the jump (ratio ~0.5), the signature
+    # of a smooth (locally-linear) function, not a piecewise-constant one.
+    for big, small in zip(jumps, jumps[1:]):
+        assert small == pytest.approx(big / 2.0, rel=0.15)
+    # and the jump vanishes as the step -> 0 (a step function's would not).
+    assert jumps[-1] < jumps[0]
+
+
+def test_decay_onset_smaller_swc_gives_shorter_horizon():
+    # A tighter SWC (a more stable index) trips the warning sooner — continuous in SWC.
+    args = dict(durable=40.0, fast=8.0, floor=20.0, tau_slow_days=60.0)
+    assert decay_onset_days(swc=0.5, **args) < decay_onset_days(swc=3.0, **args)
+
+
+def test_decay_onset_caps_when_base_holds():
+    # F≈0 and D already at floor: the index can't fall a full SWC -> capped at max.
+    assert decay_onset_days(
+        durable=20.0, fast=0.0, floor=20.0, tau_slow_days=90.0, swc=2.0, max_days=120.0
+    ) == pytest.approx(120.0)
 
 
 # ---------------------------------------------------------------------------
@@ -447,3 +552,159 @@ def test_durable_floor_rescaled_into_ceiling_space():
     assert floor_d == pytest.approx(0.55 * ZONE2_DURABLE_CEILING)
     assert 0.0 <= floor_d <= ZONE2_DURABLE_CEILING
     assert durable_score_from_percentile(durable_floor_score(0.0)) == pytest.approx(0.0)
+
+
+# ===========================================================================
+# v3 DYNAMIC — locked amendments (docs/zone2-fitness-model.md "v3 — locked").
+# X-intercept elevation w/ personal baselines, load-driven decaying durable,
+# projection-derived guidance. Everything a continuous function of the data.
+# ===========================================================================
+
+# ---- v3 pt5: PERSONAL baseline used when history present; POPULATION prior when
+# absent; the blend is MONOTONE in the quantity of personal data. ----
+def test_personal_baseline_weight_monotone_in_data_quantity():
+    # 0 personal days -> 0 weight on personal (pure population prior).
+    assert personal_baseline_weight(0) == pytest.approx(0.0)
+    # weight increases monotonically with valid days and asymptotes to 1.
+    ws = [personal_baseline_weight(d) for d in [0, 10, 30, 60, 120, 365, 10_000]]
+    assert all(b > a for a, b in zip(ws, ws[1:]))  # strictly increasing
+    assert ws[-1] == pytest.approx(1.0, abs=1e-2)  # -> personal as data -> ∞
+    # at the halflife day-count, personal gets exactly half the weight.
+    assert personal_baseline_weight(60, halflife_days=60.0) == pytest.approx(0.5)
+
+
+def test_blended_baseline_population_prior_when_history_absent():
+    # No personal baseline (None) OR zero valid days -> exactly the population prior;
+    # no fabricated personal extreme.
+    assert blended_baseline(None, Z2_RHR_POP_BASELINE, valid_days=200) == pytest.approx(
+        Z2_RHR_POP_BASELINE
+    )
+    assert blended_baseline(55.0, Z2_RHR_POP_BASELINE, valid_days=0) == pytest.approx(
+        Z2_RHR_POP_BASELINE
+    )
+
+
+def test_blended_baseline_shifts_to_personal_as_data_accrues():
+    # With a personal RHR baseline of 58 vs population 68: thin history stays near
+    # 68, thick history moves to 58 — a CONTINUOUS shift, monotone in data.
+    personal, pop = 58.0, Z2_RHR_POP_BASELINE
+    thin = blended_baseline(personal, pop, valid_days=5)
+    mid = blended_baseline(personal, pop, valid_days=60)
+    thick = blended_baseline(personal, pop, valid_days=1000)
+    assert pop > thin > mid > thick > personal - 1e-6  # strictly toward personal
+    assert thin == pytest.approx(pop, abs=1.0)  # thin history ~ population prior
+    assert thick == pytest.approx(personal, abs=0.6)  # thick history ~ personal
+    # the population prior's influence -> 0 as data -> ∞ (no fixed 68 once real).
+    assert abs(thick - personal) < abs(thin - personal)
+
+
+# ---- v3 pt2: signal scored as ELEVATION above baseline; baseline->0, top->C_D ----
+def test_signal_elevation_baseline_is_zero_top_is_ceiling():
+    # higher_is_fitter (VO2max/EF): at baseline -> 0, at top-amateur -> C_D.
+    assert signal_elevation_score(32.0, baseline=32.0, top_amateur=62.0) == pytest.approx(0.0)
+    assert signal_elevation_score(62.0, baseline=32.0, top_amateur=62.0) == pytest.approx(
+        ZONE2_DURABLE_CEILING
+    )
+    # midpoint maps to half the ceiling (linear elevation).
+    assert signal_elevation_score(47.0, baseline=32.0, top_amateur=62.0) == pytest.approx(
+        ZONE2_DURABLE_CEILING / 2.0
+    )
+
+
+def test_signal_elevation_lower_is_fitter_for_rhr():
+    # RHR: lower is fitter. baseline (untrained, high) -> 0; top (fit, low) -> C_D.
+    assert signal_elevation_score(
+        68.0, baseline=68.0, top_amateur=48.0, higher_is_fitter=False
+    ) == pytest.approx(0.0)
+    assert signal_elevation_score(
+        48.0, baseline=68.0, top_amateur=48.0, higher_is_fitter=False
+    ) == pytest.approx(ZONE2_DURABLE_CEILING)
+    # a detrained (high) RHR sits at ~0, a mid RHR at ~half C_D.
+    assert signal_elevation_score(
+        58.0, baseline=68.0, top_amateur=48.0, higher_is_fitter=False
+    ) == pytest.approx(ZONE2_DURABLE_CEILING / 2.0)
+
+
+def test_signal_elevation_clamps_and_handles_degenerate():
+    # Below baseline clamps to 0; above top clamps to the ceiling.
+    assert signal_elevation_score(25.0, baseline=32.0, top_amateur=62.0) == pytest.approx(0.0)
+    assert signal_elevation_score(80.0, baseline=32.0, top_amateur=62.0) == pytest.approx(
+        ZONE2_DURABLE_CEILING
+    )
+    # missing value or degenerate span -> None (signal drops out of the fusion).
+    assert signal_elevation_score(None, baseline=32.0, top_amateur=62.0) is None
+    assert signal_elevation_score(50.0, baseline=50.0, top_amateur=50.0) is None
+
+
+def test_signal_elevation_uses_personal_baseline_when_present():
+    # The SAME VO2max reading scores DIFFERENTLY against a personal detrained
+    # baseline than against the population prior — proving the personal baseline is
+    # actually used, not the fixed 32 (docs v3 pt5).
+    v = 50.0
+    against_pop = signal_elevation_score(v, baseline=Z2_VO2MAX_POP_BASELINE, top_amateur=62.0)
+    against_personal = signal_elevation_score(v, baseline=42.0, top_amateur=62.0)
+    assert against_pop != pytest.approx(against_personal)
+    # a HIGHER personal baseline (less detrained) means the same reading is LESS of
+    # an elevation -> a lower score.
+    assert against_personal < against_pop
+
+
+# ---- v3 pt1 ACCEPTANCE: a zero-load stretch decays DURABLE toward the floor even
+# with favorable CONSTANT elevation (RHR/EF/VO2max) inputs. The durable base is
+# LOAD-DRIVEN + DECAYING (dominant behavior); the elevation only calibrates height.
+def test_v3_durable_decays_toward_floor_on_zero_load_despite_favorable_signals():
+    # Build a base with load, then a long zero-load stretch. The elevation
+    # calibration (calib_score) is held HIGH and CONSTANT — a favorable RHR/EF —
+    # yet the durable base must fall toward the floor during the gap.
+    floor_load = 6.0
+    loads = [40.0] * 60 + [0.0] * 240   # 2 months building, 8 months off
+    series = z2_durable_sharpness_series(
+        loads, tau_fast=14.0, tau_slow_days=45.0, floor_load=floor_load
+    )
+    durable_load_track = [d for d, _ in series]
+
+    floor_d = 10.0  # the earned floor in D-space
+    # FAVORABLE, CONSTANT elevation calibration: a high durable score at the ref.
+    calib_load = 40.0
+    calib_score = 60.0  # a top-ish elevation — held constant across the whole run
+
+    D = durable_base_series(
+        durable_load_track, floor_d=floor_d, ceiling=ZONE2_DURABLE_CEILING,
+        calib_load=calib_load, calib_score=calib_score, floor_load=floor_load,
+    )
+    peak = max(D[:60])
+    end = D[-1]
+    # DURABLE built up during training...
+    assert peak > floor_d + 5.0
+    # ...and DECAYED back toward the floor through the zero-load stretch, despite
+    # the elevation calibration staying favorable and constant the entire time.
+    assert end < peak
+    assert end == pytest.approx(floor_d, abs=2.0)
+    # monotone-ish decay through the gap: strictly below peak and never under floor.
+    assert all(d >= floor_d - 1e-9 for d in D)
+    assert D[-1] < D[80]  # still falling well into the gap
+
+
+def test_v3_durable_base_series_is_load_driven_monotone():
+    # D is a monotone-increasing function of the durable load track: more load ->
+    # higher D. Two constant-load tracks; the higher load yields the higher D.
+    lo_track = [10.0] * 50
+    hi_track = [30.0] * 50
+    d_lo = durable_base_series(lo_track, floor_d=5.0, calib_load=30.0, calib_score=50.0)
+    d_hi = durable_base_series(hi_track, floor_d=5.0, calib_load=30.0, calib_score=50.0)
+    assert d_hi[-1] > d_lo[-1]
+    # calibration point maps the calib_load to ~calib_score (above the floor).
+    assert d_hi[-1] == pytest.approx(50.0, abs=1e-6)  # 30 load -> 50 score at calib
+    # everything stays within [floor, ceiling].
+    for d in d_lo + d_hi:
+        assert 5.0 <= d <= ZONE2_DURABLE_CEILING
+
+
+def test_v3_durable_base_series_falls_back_without_calibration():
+    # No calibration (no aerobic signal): D still maps the load track onto
+    # [floor, ceiling] via the range, and still decays with the load.
+    track = [30.0] * 30 + [0.0] * 5  # the plain EWMA won't zero this fast, but the
+    # top of the range anchors to the ceiling; a lower load -> lower D.
+    D = durable_base_series(track, floor_d=8.0, calib_load=None, calib_score=None)
+    assert all(8.0 <= d <= ZONE2_DURABLE_CEILING for d in D)
+    assert max(D) == pytest.approx(ZONE2_DURABLE_CEILING)  # peak load -> ceiling

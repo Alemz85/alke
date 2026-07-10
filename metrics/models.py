@@ -183,7 +183,22 @@ def flags_for_day(
 # ---------------------------------------------------------------------------
 
 # Literature defaults (spec "Locked constants"; overridable via zone2_fitness_params).
+#
+# ── LITERATURE PRIOR vs DATA-DERIVED-CONTINUOUS (v3 DYNAMIC principle, docs §v3) ──
+# The governing rule (docs "DYNAMIC, not hardcoded"): constants that describe the
+# USER'S state or timing must be CONTINUOUS FUNCTIONS of the actual data. Only
+# IRREDUCIBLE physiological priors stay literature constants while data is thin,
+# and each is marked [LITERATURE PRIOR] with why it cannot be fit from this user.
+#
+# [LITERATURE PRIOR] τ_fast: enzyme/plasma-volume turnover half-life. Molecular,
+# training-age independent, and NOT identifiable from thin gap data (docs §7
+# staged personalization + "τ_fast=14 stays a literature PRIOR; do NOT fit from
+# thin data"). Stays 14 d until many gap→return episodes exist.
 Z2_TAU_FAST_DAYS = 14.0
+# [LITERATURE PRIOR, B-scaled] τ_slow(B): capillary/mito regression window. Its
+# B-dependence is the model's softest constant (docs §3, Zheng 2022 contested);
+# B itself IS data-derived (base_consolidation of the user's weekly Z2 minutes),
+# so τ_slow becomes continuous in the user's data THROUGH B.
 Z2_TAU_SLOW_MIN_DAYS = 45.0
 Z2_TAU_SLOW_MAX_DAYS = 90.0
 Z2_F_MAX = 0.55
@@ -191,6 +206,27 @@ Z2_FLOOR_P = 1.5
 Z2_B_REF_MIN_PER_WK = 200.0
 Z2_ANCHOR_VO2_100 = 62.0
 Z2_ANCHOR_BETA0 = 0.7
+
+# ── v3 x-intercept population priors (docs v3 pt2/pt5) ──
+# Population untrained baselines, used ONLY to seed a signal's elevation baseline
+# when the user's OWN history is too thin; the blend shifts fully to the user's
+# personal detrained extreme as valid days accrue. NEVER a fixed offset when the
+# user's own data exists (docs v3 pt5: "No fixed 68/32").
+Z2_RHR_POP_BASELINE = 68.0     # untrained resting HR (docs v3 pt2)
+Z2_VO2MAX_POP_BASELINE = 32.0  # sedentary VO2max floor, FRIEND ~10th pct (docs v3 pt2)
+# Valid-day count at which the personal baseline fully replaces the population
+# prior. A saturating blend (data_days / (data_days + this)) reaches ~half weight
+# here; grounded in the ~50-60 valid-day floor the confidence gates use (docs §6d
+# "<20 valid days -> insufficient"; a personal extreme needs ~a season to be real).
+Z2_PERSONAL_BASELINE_HALFLIFE_DAYS = 60.0
+# ── v3 projection / decay-onset (docs v3 pt6) ──
+# [LITERATURE PRIOR] SWC floor: the smallest index move we will ever call
+# meaningful, in index points. SWC itself is data-derived (0.5×CV of the user's
+# own recent index); this floors it so a pathologically-flat index (CV≈0) still
+# yields a finite horizon instead of an infinite one. 0.5 pt ≈ sub-integer noise.
+Z2_SWC_MIN_POINTS = 0.5
+Z2_SWC_CV_FRACTION = 0.5       # SWC = 0.5 × CV (Plews/Buchheit, docs §6d)
+Z2_DECAY_ONSET_MAX_DAYS = 120.0  # projection horizon we bother to search (4 mo)
 Z2_ANCHOR_BETA_TAU_DAYS = 45.0
 
 # ---- v2 fixed-ceiling amendment (docs/zone2-fitness-model.md "v2 — locked
@@ -382,6 +418,82 @@ def durable_floor_score(
     return f_max * 100.0 * (bc ** p)
 
 
+# ---------------------------------------------------------------------------
+# v3 — x-intercept elevation with PERSONAL baselines (docs v3 pt2 + pt5).
+# Each fitness signal is scored as its ELEVATION above the USER'S OWN detrained
+# baseline, not an absolute percentile. baseline → 0, top-amateur → C_D(70). The
+# baseline blends from a population prior toward the user's personal detrained
+# extreme as valid days accrue — NO fixed 68/32 once the user's own data exists.
+# ---------------------------------------------------------------------------
+
+def personal_baseline_weight(
+    valid_days: int,
+    halflife_days: float = Z2_PERSONAL_BASELINE_HALFLIFE_DAYS,
+) -> float:
+    """Weight ∈ [0,1] on the user's OWN detrended baseline vs the population prior
+    (docs v3 pt5). A saturating function of how much personal history exists:
+
+        w_personal = valid_days / (valid_days + halflife_days)
+
+    valid_days=0 → 0 (pure population prior; the user has no history yet).
+    valid_days→∞ → 1 (pure personal baseline). Monotone-increasing in valid_days
+    so the baseline shifts CONTINUOUSLY from population to personal as data accrues
+    — never a step, never a fixed 68/32 once personal data exists. DATA-DERIVED."""
+    vd = max(0, valid_days)
+    hl = max(1e-9, halflife_days)
+    return vd / (vd + hl)
+
+
+def blended_baseline(
+    personal_baseline: float | None,
+    population_prior: float,
+    valid_days: int,
+    halflife_days: float = Z2_PERSONAL_BASELINE_HALFLIFE_DAYS,
+) -> float:
+    """The detrained baseline a signal is scored against (docs v3 pt2/pt5). Blends
+    the user's OWN most-detrained extreme toward the population prior, weighted by
+    how much personal history exists:
+
+        baseline = w·personal + (1−w)·population,  w = personal_baseline_weight(...)
+
+    When personal history is absent (personal_baseline is None, or valid_days=0)
+    this returns the population prior. As valid days accrue it shifts continuously
+    to the personal extreme. When personal data exists the population prior's
+    influence decays away — satisfying "no fixed 68/32 when the user's own data
+    exists" (the pop prior's weight → 0 as valid_days → ∞)."""
+    if personal_baseline is None:
+        return population_prior
+    w = personal_baseline_weight(valid_days, halflife_days)
+    return w * float(personal_baseline) + (1.0 - w) * float(population_prior)
+
+
+def signal_elevation_score(
+    value: float | None,
+    baseline: float,
+    top_amateur: float,
+    ceiling: float = ZONE2_DURABLE_CEILING,
+    higher_is_fitter: bool = True,
+) -> float | None:
+    """Score one fitness signal as its ELEVATION above the detrained baseline,
+    mapped baseline→0 and top-amateur→`ceiling` (docs v3 pt2). Continuous and
+    clamped to [0, ceiling]:
+
+        higher_is_fitter (VO2max, EF):  frac = (value − baseline)/(top − baseline)
+        lower_is_fitter  (RHR):         frac = (baseline − value)/(baseline − top)
+
+    A detrained value sits at ~0; a top-decile-amateur value sits at `ceiling`
+    (=C_D, 70). Returns None when the value is missing or the baseline/top span is
+    degenerate (caller then drops this signal from the fusion). No band lookup, no
+    fixed offset — a pure continuous elevation."""
+    if value is None:
+        return None
+    span = (top_amateur - baseline) if higher_is_fitter else (baseline - top_amateur)
+    if abs(span) < 1e-9:
+        return None
+    frac = ((value - baseline) if higher_is_fitter else (baseline - value)) / span
+    return max(0.0, min(ceiling, frac * ceiling))
+
+
 def z2_durable_sharpness_series(
     daily_z2_load: list[float],
     tau_fast: float = Z2_TAU_FAST_DAYS,
@@ -418,6 +530,55 @@ def z2_durable_sharpness_series(
     return out
 
 
+def durable_base_series(
+    durable_load_track: list[float],
+    floor_d: float,
+    ceiling: float = ZONE2_DURABLE_CEILING,
+    calib_load: float | None = None,
+    calib_score: float | None = None,
+    floor_load: float = 0.0,
+) -> list[float]:
+    """v3 pt1 — durable D ∈ [floor_d, ceiling] as a LOAD-DRIVEN, DECAYING series.
+
+    The durable base tracks the load-driven durable_load compartment (which builds
+    with Z2 load and decays toward its floor `floor_load` during gaps — see
+    z2_durable_sharpness_series); the x-intercept ELEVATION signals only CALIBRATE
+    the load→score scale, they do NOT pin D flat. Because D is a strictly
+    increasing function of durable_load, and durable_load decays toward floor_load
+    during a zero-load stretch, D DECAYS TOWARD floor_d during that stretch — even
+    if the elevation inputs are held constant favorable (docs v3 pt1 acceptance).
+
+    Calibration (docs v3 pt2/pt5) is an AFFINE load→score map pinned at two points:
+        floor_load → floor_d     (a fully-detrained load reads the earned floor)
+        calib_load → calib_score (the current load reads the elevation-implied height)
+
+        slope = (calib_score − floor_d) / (calib_load − floor_load)
+        D(t)  = clamp( floor_d + slope·(load(t) − floor_load), floor_d, ceiling )
+
+    When the load track sits at its floor, D = floor_d exactly — so a gap decays D
+    to the earned floor, not to some residual above it. Falls back to a
+    range-anchored map (max load → ceiling) when no calibration is supplied."""
+    track = [float(x) for x in durable_load_track]
+    if not track:
+        return []
+    fl = float(floor_load)
+    if (
+        calib_load is not None
+        and calib_score is not None
+        and (float(calib_load) - fl) > 1e-9
+    ):
+        # affine map pinned at (floor_load -> floor_d) and (calib_load -> calib_score).
+        slope = (float(calib_score) - floor_d) / (float(calib_load) - fl)
+    else:
+        ref = max((x for x in track), default=fl)
+        slope = ((ceiling - floor_d) / (ref - fl)) if (ref - fl) > 1e-9 else 0.0
+    out: list[float] = []
+    for load in track:
+        d = floor_d + slope * (load - fl)
+        out.append(max(floor_d, min(ceiling, d)))
+    return out
+
+
 def anchor_beta(
     days_since_vo2max: int | None,
     vo2max_confidence: float,
@@ -451,14 +612,99 @@ def fuse_inverse_variance(estimates: list[tuple[float, float]]) -> tuple[float, 
     return mean, posterior_sd
 
 
-def warn_after_days(b: float) -> int:
-    """Level-dependent degradation-warning window (spec §5b): a thinner base
-    reverses faster, so it gets a tighter window. B<0.33→9, <0.66→14, else 24."""
-    if b < 0.33:
-        return 9
-    if b < 0.66:
-        return 14
-    return 24
+# ---------------------------------------------------------------------------
+# v3 — PROJECTION-DERIVED decay_onset (docs v3 pt6). REPLACES the warn_after_days
+# B-band lookup (7/12/21) ENTIRELY. The horizon is computed from the model's OWN
+# forward projection and a data-derived SWC — the bands EMERGE from the math:
+#   F_proj(t) = F·exp(−t/τ_fast)
+#   D_proj(t) = floor + (D−floor)·exp(−t/τ_slow(B))
+#   I(t)      = D_proj(t) + F_proj(t)
+#   decay_onset = smallest t where I(0) − I(t) ≥ SWC
+# A thin base (F dominates, small D/floor → I falls at ~τ_fast) yields a SHORT
+# horizon; a banked base (large D + high floor → I falls at ~τ_slow) yields a
+# LONG one. Continuous in D, F, floor, τ_slow — NOT a step function.
+# ---------------------------------------------------------------------------
+
+def swc_from_index(
+    recent_index: list[float],
+    cv_fraction: float = Z2_SWC_CV_FRACTION,
+    swc_min: float = Z2_SWC_MIN_POINTS,
+) -> float:
+    """Smallest worthwhile change (index points), DATA-DERIVED from the user's own
+    index variability (docs v3 pt6, Plews/Buchheit): SWC ≈ 0.5 × CV of the recent
+    index, expressed in the index's own points (CV·mean = SD-scale), floored at a
+    small minimum so a pathologically-flat index still yields a finite horizon.
+
+        SWC = max( cv_fraction × CV × mean , swc_min )
+            = max( cv_fraction × SD , swc_min )     [since CV = SD/mean]
+
+    A noisy index (large CV) demands a larger real move before we call it decay; a
+    stable one lets a small move count. Grounded in the user's OWN signal, not a
+    constant. Empty/degenerate history falls back to the floor."""
+    vals = [float(v) for v in recent_index if v is not None]
+    if len(vals) < 2:
+        return swc_min
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+    sd = math.sqrt(max(0.0, var))
+    return max(swc_min, cv_fraction * sd)
+
+
+def project_index(
+    durable: float,
+    fast: float,
+    floor: float,
+    tau_slow_days: float,
+    t: float,
+    tau_fast: float = Z2_TAU_FAST_DAYS,
+) -> float:
+    """The model's forward index projection I(t) if training stops now (docs v3
+    pt6). Fast layer decays to 0 at τ_fast; durable layer decays toward its floor
+    at τ_slow(B). Every input is the user's CURRENT state — no fixed offsets."""
+    f_proj = fast * math.exp(-t / max(1e-9, tau_fast))
+    d_proj = floor + (durable - floor) * math.exp(-t / max(1e-9, tau_slow_days))
+    return d_proj + f_proj
+
+
+def decay_onset_days(
+    durable: float,
+    fast: float,
+    floor: float,
+    tau_slow_days: float,
+    swc: float,
+    tau_fast: float = Z2_TAU_FAST_DAYS,
+    max_days: float = Z2_DECAY_ONSET_MAX_DAYS,
+) -> float:
+    """PROJECTION-DERIVED decay-onset horizon in days (docs v3 pt6): the smallest
+    t where the projected index has fallen by at least one SWC,
+    I(0) − I(t) ≥ swc. Solved on the continuous projection (bisection on the
+    monotone drop), so the horizon moves CONTINUOUSLY with D, F, floor and τ_slow
+    — it is NOT the old 7/12/21 step lookup.
+
+    Emergent behavior (verified by test): a thin base (F dominates a small D near
+    a ~0 floor → I falls fast at ~τ_fast) gives a SHORT horizon; a banked base
+    (large D, high floor → the drop is bounded by (I(0)−floor)·(fast decay) plus
+    slow durable erosion) gives a LONG one. If the index can never fall by a full
+    SWC within max_days (e.g. F≈0 and D already at floor), returns max_days."""
+    i0 = project_index(durable, fast, floor, tau_slow_days, 0.0, tau_fast=tau_fast)
+    drop_at = lambda t: i0 - project_index(durable, fast, floor, tau_slow_days, t, tau_fast=tau_fast)
+
+    # I(t) is monotone non-increasing (both exponentials decay toward >=0 targets
+    # with I(0) above them), so the drop is monotone non-decreasing in t. If even
+    # the full horizon can't reach one SWC, the base holds past max_days.
+    if drop_at(max_days) < swc:
+        return max_days
+    if drop_at(0.0) >= swc:  # degenerate: already at/over SWC at t=0
+        return 0.0
+
+    lo, hi = 0.0, max_days
+    for _ in range(60):  # ~1e-18 resolution on [0, max_days]; continuous result
+        mid = (lo + hi) / 2.0
+        if drop_at(mid) >= swc:
+            hi = mid
+        else:
+            lo = mid
+    return hi
 
 
 ZONE2_MAINTENANCE_MESSAGE = (

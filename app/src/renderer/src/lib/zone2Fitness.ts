@@ -204,11 +204,13 @@ export interface ProjectionPoint {
   projected: boolean
 }
 
-/** Add N days to a "YYYY-MM-DD" key using UTC arithmetic (DST-safe, calendar-only). */
+/** Add N days to a "YYYY-MM-DD" key using UTC arithmetic (DST-safe, calendar-only).
+ *  `n` may be fractional (continuous interval math upstream) — rounded to the
+ *  nearest whole day here, at the single point a date key is materialized. */
 function addDaysKey(dateKey: string, n: number): string {
   const [y, m, d] = dateKey.split('-').map(Number)
   const dt = new Date(Date.UTC(y, m - 1, d))
-  dt.setUTCDate(dt.getUTCDate() + n)
+  dt.setUTCDate(dt.getUTCDate() + Math.round(n))
   const yy = dt.getUTCFullYear().toString().padStart(4, '0')
   const mm = (dt.getUTCMonth() + 1).toString().padStart(2, '0')
   const dd = dt.getUTCDate().toString().padStart(2, '0')
@@ -284,26 +286,117 @@ export function sharpnessSparkline(rows: Zone2Fitness[], count = 30): { i: numbe
 // ─────────────────────────────────────────────────────────────────────────────
 // Calendar coaching guidance — the "calendar is the coach" model.
 //
-// From the latest zone2 row's decay window (warn_after_days) plus the user's
-// recent Zone-2 session history we place three forward-looking dates on the month
-// grid so the calendar answers "when do I train next?" at a glance:
+// docs/zone2-fitness-model.md v3 amendment §6 ("Projection-derived guidance —
+// replaces the warn_after_days band lookup and the maintainBy=decay−1 formula
+// ENTIRELY"): every marker on the calendar must trace to a CONTINUOUS function
+// of the model's current state. No fixed "+3", no "decay−1". The nightly job
+// now derives `warn_after_days` itself as a continuous, projection-derived
+// decay-onset horizon (the smallest t where the projected index eases by ≥SWC);
+// the renderer's only job is to place markers from that horizon and from the
+// fitness state that produced it — never to reintroduce a step function.
 //
-//   buildBy    — the next session to keep the durable level CLIMBING (~every 2–3 d).
-//   maintainBy — the latest day to train to HOLD the level (the day before decay).
-//   decayFrom  — the day the index begins to erode without a session.
-//
-// v1 date math (deliberately simple, spec'd in the task):
-//   lastSession = max(sessionDates)              (undefined ⇒ stale-forever branch)
-//   buildBy     = max(today, lastSession + 3d)
-//   decayFrom   = max(today + 1, lastSession + warn_after_days)   (warn_after_days ⇒ 9 default)
-//   maintainBy  = decayFrom − 1d
+//   anchor     — the most recent Zone-2 session date, future-clamped to today
+//                (or `today` itself when no session is on record).
+//   decayFrom  — anchor + row.warn_after_days. This IS the model's derived
+//                decay-onset horizon; the renderer does not adjust it further.
+//   buildBy    — anchor + buildInterval(B). buildInterval is a continuous
+//                function of base_accum_b (B) and the fast time constant
+//                TAU_FAST_DAYS (the literature prior for how quickly a single
+//                session's gain outpaces between-session fast-decay): tight for
+//                a thin base (a beginner must stack sessions before the fast
+//                layer decays back out), looser as the base banks. See
+//                `zone2BuildIntervalDays` below for the exact formula.
+//   maintainBy — anchor + maintInterval(B). maintInterval is a continuous
+//                function BETWEEN buildInterval and the decay horizon — a
+//                data-derived fraction of the decay window (the last day a
+//                single session's build still holds the level before the
+//                model's own projection says it eases). See
+//                `zone2MaintainIntervalDays` below. Guaranteed
+//                buildInterval <= maintInterval < warn_after_days so
+//                buildBy <= maintainBy < decayFrom always holds.
 //
 // All dates are plain "YYYY-MM-DD" keys; arithmetic is UTC-anchored (DST-safe).
+// Interval math is kept in fractional days internally (continuous in B and
+// warn_after_days) and only rounded once, at the point a date key is built.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Fallback decay window (days) when the row carries no warn_after_days — the tight
- *  thin-base window from spec §5b (B<0.33 ⇒ 9 d). */
+ *  thin-base end of the model's own projected range (spec v3 §6: a thin base decays
+ *  at roughly tau_fast; this is a fallback only, never a band lookup in the live path). */
 export const DEFAULT_WARN_AFTER_DAYS = 9
+
+/**
+ * Projected index drop I(0) − I(t) from a row's fitness state — the SAME
+ * two-compartment projection the calendar trail draws (fast decays at
+ * TAU_FAST_DAYS, durable toward its floor at tau_slow). Monotonic increasing in
+ * t, so it inverts cleanly. This is the model's own dynamics, not a heuristic.
+ */
+type Zone2ProjectionState = Pick<
+  Zone2Fitness,
+  'durable_base' | 'sharpness' | 'floor_score' | 'tau_slow_days'
+>
+
+function projectedIndexDrop(row: Partial<Zone2ProjectionState>, t: number): number {
+  const d0 = row.durable_base ?? 0
+  const s0 = row.sharpness ?? 0
+  const floor = row.floor_score ?? 0
+  const tauSlow = row.tau_slow_days && row.tau_slow_days > 0 ? row.tau_slow_days : 45
+  const i0 = d0 + s0
+  const dT = floor + (d0 - floor) * Math.exp(-t / tauSlow)
+  const sT = s0 * Math.exp(-t / TAU_FAST_DAYS)
+  return i0 - (dT + sT)
+}
+
+/** Smallest horizon (days) at which the projected index has eased by ≥ target.
+ *  Numerically inverts the monotonic projection (bisection) — grounded in the
+ *  model's dynamics, never a fixed offset. */
+function horizonForDrop(row: Partial<Zone2ProjectionState>, targetDrop: number, maxDays = 120): number {
+  if (targetDrop <= 0) return 0
+  if (projectedIndexDrop(row, maxDays) < targetDrop) return maxDays
+  let lo = 0
+  let hi = maxDays
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2
+    if (projectedIndexDrop(row, mid) >= targetDrop) hi = mid
+    else lo = mid
+  }
+  return hi
+}
+
+// Build and maintain are placed where the projected index has eased by a
+// FRACTION of the drop that defines decay-onset (SWC, the horizon the model
+// stored in warn_after_days) — so both invert the SAME projection and move with
+// the fitness state and the projection's curvature, not a fixed multiple of the
+// horizon in days. The fractions are the only constants: retrain well before a
+// full worthwhile change accrues. 0.3 → build (stay ahead), 0.6 → maintain
+// (last day a single session still holds the level). Ordered by construction
+// (0.3 < 0.6 < 1 on a monotonic drop) → buildBy ≤ maintainBy < decayFrom.
+const ZONE2_BUILD_DROP_FRACTION = 0.3
+const ZONE2_MAINTAIN_DROP_FRACTION = 0.6
+
+/**
+ * Projection-derived build + maintenance intervals (days from the anchor), both
+ * obtained by inverting the model's own index projection at fractions of the
+ * decay-onset drop. When the state is degenerate (already at floor → no
+ * meaningful projected drop), falls back to small fractions of the decay horizon
+ * purely to keep the three markers ordered and finite.
+ */
+export function zone2GuidanceIntervals(
+  row: Partial<Zone2ProjectionState> | null | undefined,
+  warnAfterDays: number
+): { buildInterval: number; maintInterval: number } {
+  if (!row) {
+    return { buildInterval: warnAfterDays * ZONE2_BUILD_DROP_FRACTION, maintInterval: warnAfterDays * ZONE2_MAINTAIN_DROP_FRACTION }
+  }
+  const dropAtDecay = projectedIndexDrop(row, warnAfterDays)
+  if (!(dropAtDecay > 0)) {
+    return { buildInterval: warnAfterDays * ZONE2_BUILD_DROP_FRACTION, maintInterval: warnAfterDays * ZONE2_MAINTAIN_DROP_FRACTION }
+  }
+  return {
+    buildInterval: horizonForDrop(row, ZONE2_BUILD_DROP_FRACTION * dropAtDecay),
+    maintInterval: horizonForDrop(row, ZONE2_MAINTAIN_DROP_FRACTION * dropAtDecay)
+  }
+}
 
 export type Zone2MarkerKind = 'build' | 'maintain' | 'decay'
 
@@ -337,9 +430,13 @@ export interface Zone2CalendarGuidance {
   markers: Record<string, Zone2CalendarMarker>
 }
 
-/** Suggested-dose copy (fixed strings from the task spec). */
+/** Suggested-dose copy. Maintenance is a dose for a base that is already BUILT
+ *  (Hickson's 2/wk result licenses holding an existing base, spec §5a/§5b) — for
+ *  a beginner still building, the build cadence above is the priority; the
+ *  maintain dose is what to switch to only once the base is banked. */
 export const ZONE2_BUILD_DOSE = 'Build · 3–4 Zone 2 sessions/wk, ~40–50 min at Zone 2 HR.'
-export const ZONE2_MAINTAIN_DOSE = 'Maintain · 2 Zone 2 sessions/wk, ≥20 min at Zone 2 intensity.'
+export const ZONE2_MAINTAIN_DOSE =
+  'Maintain · 2 Zone 2 sessions/wk, ≥20 min at Zone 2 intensity — for a base you’ve already built. Still building? The build cadence above is the priority.'
 
 /** Compare two "YYYY-MM-DD" keys; returns the later one. */
 function maxKey(a: string, b: string): string {
@@ -367,18 +464,25 @@ export function formatGuidanceDate(dateKey: string): string {
  * Forward-looking Zone-2 coaching dates from the model + session history.
  * PURE — fixed `today`, deterministic. See the block comment above for the math.
  *
+ * All three markers trace to CONTINUOUS functions of the model state
+ * (base_accum_b, warn_after_days) — no fixed offsets, no band lookups.
+ *
  * `sessionDates` are Zone-2 session day keys ("YYYY-MM-DD"), any order, dupes ok.
  * `today` is the reference "YYYY-MM-DD" (never mutated).
  */
 export function zone2CalendarGuidance(
-  row: Pick<Zone2Fitness, 'warn_after_days' | 'maintenance_met'> | null | undefined,
+  row:
+    | (Pick<Zone2Fitness, 'warn_after_days' | 'maintenance_met' | 'base_accum_b'> & Partial<Zone2ProjectionState>)
+    | null
+    | undefined,
   sessionDates: string[],
   today: string
 ): Zone2CalendarGuidance {
+  // warn_after_days is now the model's own continuous, projection-derived
+  // decay-onset horizon (docs/zone2-fitness-model.md v3 §6) — used as-is, never
+  // rounded into a band. The fallback only covers a genuinely missing row.
   const warnAfter =
-    row && row.warn_after_days != null && row.warn_after_days > 0
-      ? Math.round(row.warn_after_days)
-      : DEFAULT_WARN_AFTER_DAYS
+    row && row.warn_after_days != null && row.warn_after_days > 0 ? row.warn_after_days : DEFAULT_WARN_AFTER_DAYS
 
   // Most-recent session date (clamp anything in the future to at most today so a
   // stray future-dated row can't push the window out).
@@ -395,9 +499,23 @@ export function zone2CalendarGuidance(
   // the anchor so every marker lands from today forward (nothing in the past).
   const anchor = lastSession ?? today
 
-  const buildBy = maxKey(today, addDaysKey(anchor, 3))
+  // Build/maintain intervals derived by inverting the model's own index
+  // projection at fractions of the decay-onset drop (see zone2GuidanceIntervals
+  // + horizonForDrop above). buildInterval <= maintInterval < warnAfter by
+  // construction, so buildBy <= maintainBy < decayFrom holds before any
+  // today-clamping below.
+  const { buildInterval, maintInterval } = zone2GuidanceIntervals(row, warnAfter)
+
   const decayFrom = maxKey(addDaysKey(today, 1), addDaysKey(anchor, warnAfter))
-  const maintainBy = addDaysKey(decayFrom, -1)
+  const maintainByRaw = maxKey(today, addDaysKey(anchor, maintInterval))
+  const buildByRaw = maxKey(today, addDaysKey(anchor, buildInterval))
+
+  // The today-clamp above can independently pull maintainBy/buildBy up to
+  // `today`, which could — only in the stale-session branch, where both floor
+  // to the same day — invert the pre-clamp ordering relative to decayFrom.
+  // Re-assert the invariant post-clamp: buildBy <= maintainBy < decayFrom.
+  const maintainBy = maxKey(buildByRaw, maintainByRaw) >= decayFrom ? addDaysKey(decayFrom, -1) : maintainByRaw
+  const buildBy = buildByRaw >= maintainBy ? maintainBy : buildByRaw
 
   const doses: Zone2GuidanceDoses = { build: ZONE2_BUILD_DOSE, maintain: ZONE2_MAINTAIN_DOSE }
 

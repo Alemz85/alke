@@ -323,28 +323,28 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
         print("insight_models: skipped (fewer than 40 EF observations)")
 
 
-def _percentile_of(value: float | None, sorted_pool: list[float], invert: bool = False) -> float | None:
-    """Percentile-style [0,100] rank of `value` within a sorted reference pool.
-    invert=True ranks LOWER values higher (e.g. RHR: a lower resting HR is better).
-    Returns None on missing value / empty pool. Used to put each own-sports signal
-    on the common percentile scale the level blend expects (docs v2 Re-anchoring)."""
-    if value is None or not sorted_pool:
-        return None
-    below = sum(1 for x in sorted_pool if x < value)
-    equal = sum(1 for x in sorted_pool if x == value)
-    pct = (below + 0.5 * equal) / len(sorted_pool) * 100.0
-    return (100.0 - pct) if invert else max(0.0, min(100.0, pct))
-
-
 def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now) -> None:
-    """Zone 2 fitness model v2 (docs/zone2-fitness-model.md "v2 — locked amendments").
-    The headline index I = D + F, two FIXED-ceiling components summed:
-      - D = durable base ∈ [0, C_D] (C_D=durable_ceiling, default 70), re-anchored
-        to the user's OWN swim/bike efficiency + RHR/HRV, NOT the watch VO2max.
-      - F = fast layer ∈ [0, C_F] (C_F=fast_ceiling, default 30), a SATURATING map
-        of the fast-EWMA load.
-    D is stored in durable_base, F in sharpness; the band cols are the INDEX band.
-    Uses only existing columns (spec §8) and does NOT touch the computed_daily chain."""
+    """Zone 2 fitness model v3 DYNAMIC (docs/zone2-fitness-model.md "v3 — locked
+    amendments"). The headline index I = D + F, two FIXED-ceiling components:
+      - D = durable base ∈ [floor, C_D]. LOAD-DRIVEN + DECAYING (v3 pt1): D tracks
+        the slow load EWMA (builds with Z2 load, decays toward the training-age
+        floor during gaps). The x-intercept ELEVATION signals — each scored as
+        elevation above the USER'S OWN detrained baseline (v3 pt2/pt5) — only
+        CALIBRATE the load→score height; they do NOT pin D flat.
+      - F = fast layer ∈ [0, C_F], a SATURATING map of the fast-EWMA load.
+    Guidance (v3 pt6): decay_onset is PROJECTION-DERIVED from the model's own
+    forward projection + a data-derived SWC — NOT a warn_after_days band lookup.
+    D is stored in durable_base, F in sharpness; band cols are the INDEX band.
+    Uses only existing columns (spec §8) and does NOT touch the computed_daily chain.
+
+    ── DATA-DERIVED-CONTINUOUS vs LITERATURE PRIOR (v3 DYNAMIC principle) ──
+    Data-derived-continuous: B (from weekly Z2 minutes), τ_slow(B), floor(B), the
+    load track + its decay, every x-intercept baseline (RHR trailing-max, VO2max
+    trailing-min, EF earliest-detrained; blended from pop prior → personal by
+    valid-day count), the elevation calibration score, SWC (0.5×CV of the user's
+    own index), and decay_onset (bisection on the projection). Literature priors
+    (marked, personalize only with more data): τ_fast=14, C_D/C_F=70/30, f_max,
+    the SWC floor, and the pop-prior anchors (68/32) used ONLY while history is thin."""
     from metrics import models
 
     params = db.fetch_zone2_fitness_params(sb)
@@ -353,15 +353,15 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         val = params.get(key) if params else None
         return float(val) if val is not None else default
 
-    tau_fast = param("tau_fast_days", models.Z2_TAU_FAST_DAYS)
+    tau_fast = param("tau_fast_days", models.Z2_TAU_FAST_DAYS)  # [LITERATURE PRIOR]
     tau_slow_min = param("tau_slow_min_days", models.Z2_TAU_SLOW_MIN_DAYS)
     tau_slow_max = param("tau_slow_max_days", models.Z2_TAU_SLOW_MAX_DAYS)
     f_max = param("f_max", models.Z2_F_MAX)
     floor_p = param("floor_p", models.Z2_FLOOR_P)
     b_ref = param("b_ref_min_per_wk", models.Z2_B_REF_MIN_PER_WK)
-    # v2 fixed ceilings + fast saturation reference (fall back to 70/30/26).
-    c_durable = param("durable_ceiling", models.ZONE2_DURABLE_CEILING)
-    c_fast = param("fast_ceiling", models.ZONE2_FAST_CEILING)
+    # fixed ceilings + fast saturation reference (fall back to 70/30/26).
+    c_durable = param("durable_ceiling", models.ZONE2_DURABLE_CEILING)  # [LITERATURE PRIOR]
+    c_fast = param("fast_ceiling", models.ZONE2_FAST_CEILING)           # [LITERATURE PRIOR]
     fast_sat = param("fast_sat", models.ZONE2_FAST_SAT)
     stage = (params.get("stage") if params else None) or "literature"
 
@@ -388,16 +388,20 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
 
     daily_z2_load = [w_by_date.get(d, 0.0) for d in days]
 
-    # ---- B, tau_slow, floor (spec §3) — resolved from full weekly history ----
+    # ---- B, tau_slow, floor (spec §3) — DATA-DERIVED from full weekly history ----
     weekly_series = [weekly_z2_min[k] for k in sorted(weekly_z2_min)]
     b = models.base_consolidation(weekly_series, b_ref=b_ref)
     tau_slow_days = models.tau_slow(b, tau_min=tau_slow_min, tau_max=tau_slow_max)
-    # floor as a percentile-style share; the D-space floor is the same share of C_D.
+    # floor as a [0,100] share; the D-space floor is the same share of C_D.
     floor_pct = models.durable_floor_score(b, f_max=f_max, p=floor_p)
     floor_d = models.durable_score_from_percentile(floor_pct, durable_ceiling=c_durable)
 
-    # ---- v2 re-anchored durable LEVEL (Thread 2): own swim/bike EF + RHR/HRV;
-    # watch VO2max is low-weight, refresh-day-only calibration, NEVER the cap. ----
+    # =====================================================================
+    # v3 X-INTERCEPT ELEVATION with PERSONAL baselines (v3 pt2 + pt5).
+    # Each signal scored as elevation above the USER'S OWN detrained baseline,
+    # blending toward a population prior ONLY while personal history is thin.
+    # baseline → 0, top-amateur → C_D. Aerobic-specific signals lead (v3 pt3).
+    # =====================================================================
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     swim_efs: list[float] = []
     bike_efs: list[float] = []
@@ -410,48 +414,88 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             swim_efs.append(float(perf["ef"]))
         elif "cycl" in wtype or "bik" in wtype:
             bike_efs.append(float(perf["ef"]))
-    swim_ef_sorted = sorted(swim_efs)
-    bike_ef_sorted = sorted(bike_efs)
-    latest_swim_ef = swim_efs[-1] if swim_efs else None  # workouts arrive time-ordered
-    latest_bike_ef = bike_efs[-1] if bike_efs else None
+    latest_bike_ef = bike_efs[-1] if bike_efs else None  # workouts arrive time-ordered
 
-    # RHR / HRV levels: rank the latest deviation against its own trailing pool.
-    # rhr_dev up = worse (invert); hrv_dev up = better (higher = fitter).
-    rhr_devs = [r["rhr_dev"] for r in daily_rows if r.get("rhr_dev") is not None]
-    hrv_devs = [r["hrv_dev"] for r in daily_rows if r.get("hrv_dev") is not None]
-    rhr_dev_sorted = sorted(rhr_devs)
-    hrv_dev_sorted = sorted(hrv_devs)
-    latest_rhr_dev = rhr_devs[-1] if rhr_devs else None
-    latest_hrv_dev = hrv_devs[-1] if hrv_devs else None
+    # Raw per-date RHR / VO2max for personal detrained extremes (trailing ~180d).
+    rhr_series = [
+        (date.fromisoformat(r["date"]), float(r["resting_hr"]))
+        for r in daily_metrics if r.get("resting_hr") is not None
+    ]
+    vo2_series = [
+        (date.fromisoformat(r["date"]), float(r["vo2max"]))
+        for r in daily_metrics if r.get("vo2max") is not None
+    ]
+    today = days[-1]
+    window_start = today - timedelta(days=180)
+    rhr_window = [v for d, v in rhr_series if d >= window_start]
+    vo2_window = [v for d, v in vo2_series if d >= window_start]
 
-    swim_ef_pct = _percentile_of(latest_swim_ef, swim_ef_sorted)
-    bike_ef_pct = _percentile_of(latest_bike_ef, bike_ef_sorted)
-    rhr_pct = _percentile_of(latest_rhr_dev, rhr_dev_sorted, invert=True)
-    hrv_pct = _percentile_of(latest_hrv_dev, hrv_dev_sorted)
+    # PERSONAL baselines = the user's OWN most-detrained extreme (v3 pt5):
+    #   RHR baseline  = trailing-180d MAX  (highest resting HR = most detrained)
+    #   VO2max baseline = trailing MIN     (lowest VO2max = most detrained)
+    #   EF baseline   = earliest/most-detrained EF (first bike EF observed)
+    rhr_personal_baseline = max(rhr_window) if rhr_window else None
+    vo2_personal_baseline = min(vo2_window) if vo2_window else None
+    bike_ef_personal_baseline = bike_efs[0] if bike_efs else None
 
-    # Watch VO2max — demoted to occasional low-weight calibration (docs v2 Thread 2).
-    vo2_by_date = {
-        date.fromisoformat(r["date"]): float(r["vo2max"])
-        for r in daily_metrics
-        if r.get("vo2max") is not None
-    }
-    latest_vo2_date = max(vo2_by_date) if vo2_by_date else None
-    latest_vo2 = vo2_by_date[latest_vo2_date] if latest_vo2_date else None
-    vo2max_pct = models.vo2max_to_score(latest_vo2) if latest_vo2 is not None else None
-    vo2max_anchor_score = vo2max_pct  # stored for provenance/audit (0-100 percentile)
+    # Population priors, used ONLY to seed the baseline while history is thin; their
+    # weight → 0 as valid days accrue (v3 pt5: no fixed 68/32 once own data exists).
+    rhr_baseline = models.blended_baseline(
+        rhr_personal_baseline, models.Z2_RHR_POP_BASELINE, valid_days=len(rhr_window)
+    )
+    vo2_baseline = models.blended_baseline(
+        vo2_personal_baseline, models.Z2_VO2MAX_POP_BASELINE, valid_days=len(vo2_window)
+    )
+
+    # Latest values for each signal (the current elevation reading).
+    latest_rhr = rhr_series[-1][1] if rhr_series else None
+    latest_vo2 = vo2_series[-1][1] if vo2_series else None
+    latest_vo2_date = vo2_series[-1][0] if vo2_series else None
+
+    # "Top-amateur" targets that map elevation to C_D (v3 pt2: top-amateur → C_D):
+    #   RHR: a fit resting HR (untrained 68 → ~48 fit); span baseline→target.
+    #   VO2max: the 90th-pct anchor 62 (top-decile amateur, docs §4a).
+    #   Bike EF: top-amateur EF ≈ 1.6× the user's own detrained baseline (economy
+    #            improves ~40-60% baseline→trained; a personal, not fixed, target).
+    RHR_TOP_AMATEUR = 48.0
+    VO2_TOP_AMATEUR = models.Z2_ANCHOR_VO2_100  # 62
+    ef_top_amateur = (bike_ef_personal_baseline * 1.6) if bike_ef_personal_baseline else None
+
+    # Elevation scores in D-space [0, C_D] — aerobic-specific first (v3 pt3).
+    bike_ef_elev = models.signal_elevation_score(
+        latest_bike_ef, bike_ef_personal_baseline, ef_top_amateur, ceiling=c_durable
+    ) if ef_top_amateur is not None else None
+    rhr_elev = models.signal_elevation_score(
+        latest_rhr, rhr_baseline, RHR_TOP_AMATEUR, ceiling=c_durable, higher_is_fitter=False
+    )
+    vo2_elev = models.signal_elevation_score(
+        latest_vo2, vo2_baseline, VO2_TOP_AMATEUR, ceiling=c_durable
+    )
+
+    # ---- fuse the elevation scores into the durable CALIBRATION height (v3 pt3):
+    # EF (bike) leads + is most trusted; RHR weak corroborator; watch VO2max
+    # low-weight/occasional. Swim EF WITHHELD (technique confound, docs §6). ----
+    # variance = lower is more trusted; inverse-variance weights them (spec §6c).
+    W_BIKE_EF, W_RHR, W_VO2 = 1.0, 4.0, 9.0  # variances → weights 1.0, 0.25, 0.11
+    elev_estimates: list[tuple[float, float]] = []
+    if bike_ef_elev is not None:
+        elev_estimates.append((bike_ef_elev, W_BIKE_EF))
+    if rhr_elev is not None:
+        elev_estimates.append((rhr_elev, W_RHR))
+    if vo2_elev is not None:
+        elev_estimates.append((vo2_elev, W_VO2))
+    fused = models.fuse_inverse_variance(elev_estimates)
+    calib_score = fused[0] if fused is not None else None  # D-space height, or None
+    vo2max_anchor_score = models.vo2max_to_score(latest_vo2) if latest_vo2 is not None else None
 
     # ---- the two EWMA compartments (spec §2). durable_load carries the durable
-    # MOVEMENT; the LEVEL is set by the own-sports blend below. sharp_load feeds the
-    # v2 saturating F. Floor is in LOAD units — invert the percentile→load ref. ----
+    # MOVEMENT (build + decay-to-floor); sharp_load feeds the saturating F. ----
     positive = sorted(w for w in daily_z2_load if w > 0)
     load_ref = 1.0
     if positive:
         idx = min(len(positive) - 1, int(round(0.9 * (len(positive) - 1))))
         load_ref = max(positive[idx], 1.0)
-    floor_load = floor_pct / 100.0 * load_ref  # percentile-share of the load ref
-
-    def load_to_pct(load: float) -> float:
-        return max(0.0, min(100.0, load / load_ref * 100.0))
+    floor_load = floor_pct / 100.0 * load_ref  # [0,100]-share of the load ref
 
     series = models.z2_durable_sharpness_series(
         daily_z2_load,
@@ -459,8 +503,21 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         tau_slow_days=tau_slow_days,
         floor_load=floor_load,
     )
+    durable_load_track = [d for d, _ in series]
 
-    warn_window = models.warn_after_days(b)
+    # ---- v3 pt1: DURABLE D as a LOAD-DRIVEN, DECAYING series. The elevation
+    # fusion CALIBRATES the load→score height at the calibration point (the day of
+    # the most recent load, ~today's load ref); motion is load-driven, so a gap
+    # decays D toward floor_d even with the elevation signals held favorable. ----
+    calib_load = load_ref
+    durable_base_track = models.durable_base_series(
+        durable_load_track,
+        floor_d=floor_d,
+        ceiling=c_durable,
+        calib_load=calib_load if calib_score is not None else None,
+        calib_score=calib_score,
+        floor_load=floor_load,  # load track's floor maps to the earned D-floor
+    )
 
     # ---- injury / plan hold suppression (spec §5c.4) ----
     holds = db.fetch_active_injury_holds(sb)
@@ -470,85 +527,79 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     def maintenance_met_for(day: date) -> bool:
         return sum(z2_session_dates.get(day - timedelta(days=j), 0) for j in range(7)) >= 2
 
-    # anchor index within `days` where the durable load track equals the LEVEL.
-    idx_at_level = _index_on_or_before(days, latest_vo2_date, len(days) - 1) if latest_vo2_date else (len(days) - 1)
+    # ---- pre-compute the FULL index track so SWC is DATA-DERIVED from the user's
+    # OWN recent index variability (v3 pt6), not a constant. ----
+    index_track: list[float] = []
+    for i in range(len(days)):
+        d_i = durable_base_track[i]
+        f_i = models.fast_score_from_load(series[i][1], fast_ceiling=c_fast, fast_sat=fast_sat)
+        index_track.append(d_i + f_i)
+    recent_index = index_track[-60:]  # trailing ~2 months of the user's own index
+    swc = models.swc_from_index(recent_index)
 
     # ---- per-day rows ----
     rows = []
     unmet_run = 0  # consecutive maintenance-unmet days ending at each day
     for i, day in enumerate(days):
         durable_load, sharp_load = series[i]
+        durable_base = durable_base_track[i]
 
         met = maintenance_met_for(day)
         unmet_run = 0 if met else unmet_run + 1
 
-        # ---- DURABLE D ∈ [0, C_D]: own-sports LEVEL sets the height; durable-load
-        # MOVEMENT carries the trajectory between calibrations (docs v2). ----
-        vo2_refreshed = latest_vo2_date is not None and day == latest_vo2_date
-        level_pct = models.durable_level_score(
-            swim_ef_pct=swim_ef_pct,
-            bike_ef_pct=bike_ef_pct,
-            rhr_pct=rhr_pct,
-            hrv_pct=hrv_pct,
-            vo2max_pct=vo2max_pct,
-            vo2max_refreshed=vo2_refreshed,
-        )
-        days_since = (day - latest_vo2_date).days if latest_vo2_date is not None else None
-        if level_pct is not None:
-            # delta engine: durable-load motion since the level was placed, on top
-            # of the own-sports level. Anchored at idx_at_level, then drifts.
-            level_d = models.durable_score_from_percentile(level_pct, durable_ceiling=c_durable)
-            move_pct = load_to_pct(durable_load) - load_to_pct(series[idx_at_level][0])
-            move_d = move_pct / 100.0 * c_durable
-            durable_base = level_d + move_d
-            beta = None  # v2 has no single VO2max beta; provenance kept via contributing
-        else:
-            # No own-sports signal: fall back to pure load dynamics, WIDE band.
-            durable_base = models.durable_score_from_percentile(
-                load_to_pct(durable_load), durable_ceiling=c_durable
-            )
-            beta = None
-        # never below the earned floor, never above the fixed ceiling C_D.
-        durable_base = max(floor_d, min(c_durable, durable_base))
-
-        # ---- FAST F ∈ [0, C_F]: saturating map of the fast-EWMA load (docs v2). ----
+        # ---- FAST F ∈ [0, C_F]: saturating map of the fast-EWMA load. ----
         sharpness = models.fast_score_from_load(sharp_load, fast_ceiling=c_fast, fast_sat=fast_sat)
-
         index = durable_base + sharpness  # I = D + F ∈ [0, 100]
 
-        # ---- confidence + evidence_state (spec §6d, defensible v2) ----
+        # ---- v3 pt6: PROJECTION-DERIVED decay_onset horizon (continuous), from
+        # the model's OWN projection of THIS day's (D, F, floor, τ_slow) + the
+        # data-derived SWC. Replaces the warn_after_days band lookup entirely. ----
+        decay_onset = models.decay_onset_days(
+            durable=durable_base,
+            fast=sharpness,
+            floor=floor_d,
+            tau_slow_days=tau_slow_days,
+            swc=swc,
+            tau_fast=tau_fast,
+        )
+        warn_window = int(round(decay_onset))  # stored on the int column; continuity is in the math
+
+        days_since = (day - latest_vo2_date).days if latest_vo2_date is not None else None
+
+        # ---- confidence + evidence_state (spec §6d, v3). ----
         drow = daily_rows[i]
         load_moved = any(w > 0 for w in daily_z2_load[max(0, i - 6): i + 1])
         valid_signals = 0
         if load_moved:
             valid_signals += 1
-        if swim_ef_pct is not None or bike_ef_pct is not None:
-            valid_signals += 1  # own-sports efficiency present
+        if bike_ef_elev is not None:
+            valid_signals += 1  # aerobic-specific efficiency present (leads)
         if drow.get("rhr_dev") is not None:
             valid_signals += 1
         if drow.get("hrv_dev") is not None:
             valid_signals += 1
 
-        own_level = level_pct is not None
-        vo2_only = (not own_level) and vo2_refreshed
-        if not own_level and valid_signals < 2:
+        vo2_refreshed = latest_vo2_date is not None and day == latest_vo2_date
+        has_calib = calib_score is not None
+        vo2_only = (not has_calib) and vo2_refreshed
+        if not has_calib and valid_signals < 2:
             evidence_state = "insufficient"
         elif vo2_only:
-            evidence_state = "low_confidence"  # only the watch moved, no own signal
+            evidence_state = "low_confidence"  # only the watch moved, no aerobic signal
         elif valid_signals < 2:
             evidence_state = "insufficient"
         else:
             evidence_state = "ok"
 
         confidence = max(0.0, min(1.0, valid_signals / 4.0))
-        # band is on the INDEX (docs v2 Storage note); widens when signals are
-        # sparse — a WIDE, honest band, no fabricated precision.
+        # band on the INDEX (docs Storage note); widens when signals are sparse.
         half_width = 6.0 + (1.0 - confidence) * 18.0
         band_lo = max(0.0, index - half_width)
         band_hi = min(models.ZONE2_INDEX_CEILING, index + half_width)
 
         # ---- zone2_maintenance flag firing rule (spec §5c): read the two numbers'
-        # relationship (F fading faster than D), never their sum. ----
+        # relationship (F fading faster than D), never their sum. Fires only after
+        # the projection-derived decay_onset horizon of consecutive unmet days. ----
         flags = models.zone2_maintenance_flag(
             maintenance_met=met,
             consecutive_unmet_days=unmet_run,
@@ -561,12 +612,12 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         rows.append(
             {
                 "date": day.isoformat(),
-                "durable_base": round(durable_base, 2),   # D ∈ [0, C_D]
+                "durable_base": round(durable_base, 2),   # D ∈ [floor, C_D]
                 "durable_band_lo": round(band_lo, 2),     # INDEX band
                 "durable_band_hi": round(band_hi, 2),
                 "sharpness": round(sharpness, 2),         # F ∈ [0, C_F]
                 "vo2max_anchor_score": round(vo2max_anchor_score, 2) if vo2max_anchor_score is not None else None,
-                "anchor_beta": round(beta, 4) if beta is not None else None,
+                "anchor_beta": None,  # v3 has no single VO2max beta; provenance via contributing
                 "days_since_vo2max": days_since,
                 "durable_load": round(durable_load, 4),
                 "sharp_load": round(sharp_load, 4),
@@ -576,16 +627,17 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                 "confidence": round(confidence, 3),
                 "evidence_state": evidence_state,
                 "contributing": {
-                    "swim_ef": models.ZONE2_LEVEL_W_SWIM_EF if swim_ef_pct is not None else 0.0,
-                    "bike_ef": models.ZONE2_LEVEL_W_BIKE_EF if bike_ef_pct is not None else 0.0,
-                    "rhr": models.ZONE2_LEVEL_W_RHR if rhr_pct is not None else 0.0,
-                    "hrv": models.ZONE2_LEVEL_W_HRV if hrv_pct is not None else 0.0,
-                    "vo2max": models.ZONE2_LEVEL_W_VO2MAX if vo2_refreshed else 0.0,
+                    # v3 elevation weights actually fused (0 when the signal is absent).
+                    "bike_ef": round(1.0 / W_BIKE_EF, 3) if bike_ef_elev is not None else 0.0,
+                    "rhr": round(1.0 / W_RHR, 3) if rhr_elev is not None else 0.0,
+                    "vo2max": round(1.0 / W_VO2, 3) if vo2_elev is not None else 0.0,
+                    "swim_ef": 0.0,  # WITHHELD (technique confound, docs §6)
+                    "hrv": 0.0,      # weak corroborator; not in the durable calibration
                     "load": 1.0 if load_moved else 0.0,
                 },
                 "stage": stage,
                 "maintenance_met": met,
-                "warn_after_days": warn_window,
+                "warn_after_days": warn_window,  # PROJECTION-DERIVED decay_onset (v3 pt6)
                 "flags": flags,
                 "computed_at": now.isoformat(),
             }
@@ -594,21 +646,9 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     db.upsert_computed_zone2_fitness(sb, rows)
     print(
         f"computed_zone2_fitness: {len(rows)} rows "
-        f"(B={b:.2f}, τ_slow={tau_slow_days:.0f}d, C_D={c_durable:.0f}, C_F={c_fast:.0f}, hold={hold_active})"
+        f"(B={b:.2f}, τ_slow={tau_slow_days:.0f}d, C_D={c_durable:.0f}, C_F={c_fast:.0f}, "
+        f"SWC={swc:.2f}, hold={hold_active})"
     )
-
-
-def _index_on_or_before(days: list[date], target: date, fallback_idx: int) -> int:
-    """Index of the latest day <= target within `days`; fallback if none precede."""
-    lo, hi, found = 0, len(days) - 1, None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if days[mid] <= target:
-            found = mid
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return found if found is not None else fallback_idx
 
 
 def run_goals(sb) -> None:
