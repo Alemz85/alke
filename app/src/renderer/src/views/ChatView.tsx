@@ -57,7 +57,7 @@ export function ChatView(): ReactElement {
         const text = prev
           .filter((b) => b.kind === 'text')
           .map((b) => b.text)
-          .join('')
+          .join('\n\n')
         if (text.trim()) {
           setMessages((m) => [...m, { role: 'assistant', content: text, ts: new Date().toISOString() }])
         }

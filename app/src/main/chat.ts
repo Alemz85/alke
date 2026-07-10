@@ -71,6 +71,7 @@ export async function sendMessage(
       const content = (event.message as { content?: unknown[] } | undefined)?.content ?? []
       for (const block of content as Record<string, unknown>[]) {
         if (block.type === 'text' && typeof block.text === 'string') {
+          if (assistantText && !assistantText.endsWith('\n')) assistantText += '\n\n'
           assistantText += block.text
           emit({ kind: 'text', text: block.text })
         } else if (block.type === 'tool_use') {
