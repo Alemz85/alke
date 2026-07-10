@@ -14,19 +14,19 @@
 }
 
 .hero-metric-eyebrow--aerobic {
-  color: var(--color-aerobic);
+  color: var(--color-aerobic-text);
 }
 .hero-metric-eyebrow--load {
-  color: var(--color-load);
+  color: var(--color-load-text);
 }
 .hero-metric-eyebrow--recovery {
-  color: var(--color-recovery);
+  color: var(--color-recovery-text);
 }
 .hero-metric-eyebrow--sessions {
-  color: var(--color-sessions);
+  color: var(--color-sessions-text);
 }
 .hero-metric-eyebrow--flag {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
 }
 
 .hero-metric-row {
@@ -62,19 +62,19 @@
   color: var(--color-text-tertiary);
 }
 .hero-metric-delta--aerobic {
-  color: var(--color-aerobic);
+  color: var(--color-aerobic-text);
 }
 .hero-metric-delta--load {
-  color: var(--color-load);
+  color: var(--color-load-text);
 }
 .hero-metric-delta--recovery {
-  color: var(--color-recovery);
+  color: var(--color-recovery-text);
 }
 .hero-metric-delta--sessions {
-  color: var(--color-sessions);
+  color: var(--color-sessions-text);
 }
 .hero-metric-delta--flag {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
 }
 
 @media (max-width: 1099px) and (min-width: 760px) {

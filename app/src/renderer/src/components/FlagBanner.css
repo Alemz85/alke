@@ -15,7 +15,7 @@
 }
 
 .flag-banner-icon {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
   flex-shrink: 0;
 }
 

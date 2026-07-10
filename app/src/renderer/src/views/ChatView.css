@@ -143,7 +143,7 @@
 }
 
 .chat-error {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
   font-family: var(--font-body);
   font-size: 13px;
   white-space: pre-wrap;
@@ -220,7 +220,7 @@
   border: none;
   border-radius: var(--radius-full);
   background: var(--color-text);
-  color: #000000;
+  color: var(--color-on-emphasis);
   display: flex;
   align-items: center;
   justify-content: center;

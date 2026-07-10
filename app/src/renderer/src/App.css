@@ -25,6 +25,21 @@
 .content-area-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Icon-only variant of button-soft: square, no label padding. Used by the
+   theme toggle. Stays within the 32-44px hit-area rule. */
+.button-soft--icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  color: var(--color-text-secondary);
+}
+
+.button-soft--icon:hover {
+  color: var(--color-text);
 }
 
 .view {

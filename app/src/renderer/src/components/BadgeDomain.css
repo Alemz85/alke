@@ -14,25 +14,25 @@
 
 .badge-domain--aerobic {
   background: var(--color-aerobic-dim);
-  color: var(--color-aerobic);
+  color: var(--color-aerobic-text);
 }
 
 .badge-domain--load {
   background: var(--color-load-dim);
-  color: var(--color-load);
+  color: var(--color-load-text);
 }
 
 .badge-domain--recovery {
   background: var(--color-recovery-dim);
-  color: var(--color-recovery);
+  color: var(--color-recovery-text);
 }
 
 .badge-domain--sessions {
   background: var(--color-sessions-dim);
-  color: var(--color-sessions);
+  color: var(--color-sessions-text);
 }
 
 .badge-domain--flag {
   background: var(--color-flag-dim);
-  color: var(--color-flag);
+  color: var(--color-flag-text);
 }

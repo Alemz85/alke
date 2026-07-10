@@ -81,7 +81,7 @@
   font-weight: var(--type-heading-lg-weight);
   line-height: var(--type-heading-lg-line-height);
   letter-spacing: var(--type-heading-lg-letter-spacing);
-  color: var(--color-load);
+  color: var(--color-load-text);
 }
 
 /* Session adherence card */
@@ -110,7 +110,7 @@
 .dashboard-sessions-row-value {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
-  color: var(--color-sessions);
+  color: var(--color-sessions-text);
   font-weight: 600;
 }
 

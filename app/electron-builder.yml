@@ -2,16 +2,29 @@ appId: com.healthanalytics.app
 productName: Health Analytics
 directories:
   buildResources: build
+  output: release
 files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintignore,.eslintrc.cjs,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+# asar stays enabled (electron-builder default). Packaging note: the main
+# process resolves `app/.env` and `../chatctx` relative to __dirname, which
+# inside a packaged app sits at Contents/Resources/app.asar/out/main — those
+# relative paths no longer reach a real .env or the chatctx directory once
+# packaged. This is a known limitation (not fixed here — see README); the
+# app still launches and falls back to its designed DB-error state.
+asar: true
 mac:
+  icon: build/icon.icns
+  identity: null
+  category: public.app-category.healthcare-fitness
   entitlementsInherit: build/entitlements.mac.plist
   target:
     - target: dmg
       arch:
         - arm64
-        - x64
+    - target: zip
+      arch:
+        - arm64

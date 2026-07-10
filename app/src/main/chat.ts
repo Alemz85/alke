@@ -36,7 +36,14 @@ export async function sendMessage(
     if (!window.isDestroyed()) window.webContents.send('chat:stream', { sessionId: session!.id, event })
   }
 
-  const args = ['-p', message, '--output-format', 'stream-json', '--verbose']
+  const args = [
+    '-p',
+    message,
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--include-partial-messages'
+  ]
   if (session.claude_session_id) args.push('--resume', session.claude_session_id)
 
   const child = spawn('claude', args, { cwd: CHATCTX_DIR, env: process.env })
@@ -67,14 +74,37 @@ export async function sendMessage(
       session!.claude_session_id = event.session_id
       return
     }
+    if (type === 'stream_event') {
+      const inner = event.event as Record<string, unknown> | undefined
+      if (!inner) return
+      const innerType = inner.type
+      if (innerType === 'content_block_start') {
+        const block = inner.content_block as Record<string, unknown> | undefined
+        if (block?.type === 'text' && assistantText && !assistantText.endsWith('\n')) {
+          assistantText += '\n\n'
+        }
+        return
+      }
+      if (innerType === 'content_block_delta') {
+        const delta = inner.delta as Record<string, unknown> | undefined
+        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+          assistantText += delta.text
+          emit({ kind: 'text', text: delta.text })
+        }
+        return
+      }
+      // Unknown stream_event types (message_start, content_block_stop,
+      // message_delta, message_stop, etc.) are ignored.
+      return
+    }
     if (type === 'assistant') {
+      // With --include-partial-messages, text is already emitted/accumulated
+      // via stream_event text deltas above. Only extract tool_use blocks here
+      // to avoid double-counting/duplicating text.
       const content = (event.message as { content?: unknown[] } | undefined)?.content ?? []
       for (const block of content as Record<string, unknown>[]) {
-        if (block.type === 'text' && typeof block.text === 'string') {
+        if (block.type === 'tool_use') {
           if (assistantText && !assistantText.endsWith('\n')) assistantText += '\n\n'
-          assistantText += block.text
-          emit({ kind: 'text', text: block.text })
-        } else if (block.type === 'tool_use') {
           const input = JSON.stringify(block.input ?? {})
           emit({
             kind: 'tool',

@@ -23,7 +23,14 @@ body {
   line-height: var(--type-body-md-line-height);
   letter-spacing: var(--type-body-md-letter-spacing);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+}
+
+/* Accent-neutral selection wash — the aerobic -dim reads the same restrained
+   note in both themes. */
+::selection {
+  background: var(--color-aerobic-dim);
 }
 
 #root {
@@ -67,9 +74,16 @@ a:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* Thin, restrained scrollbars — a hairline thumb on a transparent track so
+   the native bright bars never glare against the true-black canvas. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -77,10 +91,27 @@ a:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-surface-elevated);
+  background: var(--color-hairline);
   border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-surface-hover);
+  background: var(--color-text-tertiary);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* DESIGN.md motion law: animation is intentionally minimal. Honor the OS
+   reduced-motion preference by dropping transitions/animations everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -10,6 +10,7 @@ const api: HealthApi = {
   getComputedDaily: (fromDate, toDate) =>
     ipcRenderer.invoke(IPC_CHANNELS.getComputedDaily, fromDate, toDate),
   getUserConfig: () => ipcRenderer.invoke(IPC_CHANNELS.getUserConfig),
+  updateUserConfig: (patch) => ipcRenderer.invoke(IPC_CHANNELS.updateUserConfig, patch),
   getTodayFlags: () => ipcRenderer.invoke(IPC_CHANNELS.getTodayFlags),
   getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus),
   getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),

@@ -11,7 +11,7 @@
 }
 
 .db-error-state-icon {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
 }
 
 .db-error-state-title {

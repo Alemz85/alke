@@ -7,7 +7,7 @@ loadEnv({ path: join(__dirname, '../../.env') })
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { IPC_CHANNELS } from '@shared/types'
+import { IPC_CHANNELS, type UserConfigPatch } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
 
@@ -58,6 +58,9 @@ function registerIpcHandlers(): void {
     db.getComputedDaily(fromDate, toDate)
   )
   ipcMain.handle(IPC_CHANNELS.getUserConfig, () => db.getUserConfig())
+  ipcMain.handle(IPC_CHANNELS.updateUserConfig, (_event, patch: UserConfigPatch) =>
+    db.updateUserConfig(patch)
+  )
   ipcMain.handle(IPC_CHANNELS.getTodayFlags, () => db.getTodayFlags())
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())

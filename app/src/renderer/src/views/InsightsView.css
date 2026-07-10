@@ -35,7 +35,7 @@
 
 .chip--active {
   background: var(--color-text);
-  color: #000000;
+  color: var(--color-on-emphasis);
 }
 
 .insights-heatmap {
@@ -87,7 +87,7 @@
 }
 
 .insights-cell--selected {
-  outline: 1px solid rgba(255, 255, 255, 0.4);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 

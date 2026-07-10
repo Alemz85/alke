@@ -1,5 +1,9 @@
 /* DESIGN.md tokens as CSS custom properties.
-   Components must reference these variables only — never raw hex/px values. */
+   Components must reference these variables only — never raw hex/px values.
+
+   :root is the DARK theme (default). [data-theme='light'] overrides only the
+   theme-dependent (color) variables — typography, spacing, shapes, motion are
+   theme-invariant and live once on :root. See DESIGN.md → "Light theme". */
 
 :root {
   /* Canvas & surfaces */
@@ -15,9 +19,15 @@
   --color-text-secondary: rgba(255, 255, 255, 0.72);
   --color-text-tertiary: rgba(255, 255, 255, 0.48);
   --color-text-disabled: rgba(255, 255, 255, 0.3);
+  /* Text on a solid DOMAIN-ACCENT surface (e.g. heatmap step-3, badges over
+     accent). Dark digit in both themes — accents are light enough. */
   --color-text-on-accent: #0a0a0a;
+  /* Label on the loudest NEUTRAL surface (button-primary / chip--active /
+     chat-send), which is painted with --color-text. Always the inverse of
+     --color-text so the label reads. */
+  --color-on-emphasis: #000000;
 
-  /* Semantic accents */
+  /* Semantic accents — base hue used for chart lines, fills, dots, cells. */
   --color-aerobic: #2dd4bf;
   --color-aerobic-dim: rgba(45, 212, 191, 0.15);
   --color-load: #6366f1;
@@ -28,6 +38,40 @@
   --color-sessions-dim: rgba(251, 146, 60, 0.15);
   --color-flag: #ef4444;
   --color-flag-dim: rgba(239, 68, 68, 0.15);
+
+  /* Accent-as-TEXT variants — used wherever an accent paints small digits or
+     labels (hero eyebrow/delta, metric-card value, badges, deltas). In dark
+     they equal the base accent; in light they darken to clear ~4.5:1 on white
+     without changing hue. Chart geometry keeps the base accent. */
+  --color-aerobic-text: var(--color-aerobic);
+  --color-load-text: var(--color-load);
+  --color-recovery-text: var(--color-recovery);
+  --color-sessions-text: var(--color-sessions);
+  --color-flag-text: var(--color-flag);
+
+  /* Sessions calendar heatmap duration ramp (dim → solid accent). Derived so
+     the ramp holds against either canvas. */
+  --color-sessions-step-0: rgba(251, 146, 60, 0.15);
+  --color-sessions-step-1: rgba(251, 146, 60, 0.4);
+  --color-sessions-step-2: rgba(251, 146, 60, 0.7);
+  --color-sessions-step-3: var(--color-sessions);
+
+  /* Neutral zone fills for the time-in-zone stack — Z2 keeps the accent, the
+     other zones step up in neutral opacity so color still reads as "Z2". */
+  --color-zone-neutral-1: rgba(255, 255, 255, 0.1);
+  --color-zone-neutral-2: rgba(255, 255, 255, 0.22);
+  --color-zone-neutral-3: rgba(255, 255, 255, 0.34);
+  --color-zone-neutral-4: rgba(255, 255, 255, 0.46);
+
+  /* Insight correlation heatmap poles (sign = direction, not judgement). */
+  --color-corr-positive: 45, 212, 191; /* aerobic teal RGB triplet */
+  --color-corr-negative: 167, 139, 250; /* recovery violet RGB triplet */
+
+  /* Faint chart cursor/hover wash over the plot. */
+  --color-chart-cursor: rgba(255, 255, 255, 0.04);
+
+  /* Scrim behind modal drawers. */
+  --color-scrim: rgba(0, 0, 0, 0.5);
 
   /* Typography — font families */
   --font-display: 'Space Grotesk', sans-serif;
@@ -122,4 +166,62 @@
   /* Focus ring */
   --focus-ring-color: rgba(255, 255, 255, 0.4);
   --focus-ring-offset: 2px;
+}
+
+/* ── Light theme ──────────────────────────────────────────────────────────
+   Inverts the surface ladder onto a true-white canvas. Elevation is still
+   luminance + hairline only — no shadows (the no-shadow law holds in both
+   themes). Text is black at graded opacities; hairlines are black at low
+   opacity. Accents keep their hues; where an accent is TEXT it uses the
+   darkened -text variant so small digits/labels stay legible on white.
+   -dim fills drop to 12% opacity per DESIGN.md. */
+:root[data-theme='light'] {
+  /* Canvas & surfaces — inverted ladder */
+  --color-canvas: #ffffff; /* true white */
+  --color-surface: #f4f5f7; /* subtle inset well */
+  --color-surface-elevated: #fbfbfc; /* cards: near-white, set apart by hairline + luminance */
+  --color-surface-hover: #eef0f2; /* interactive hover */
+  --color-hairline: rgba(0, 0, 0, 0.1);
+  --color-divider-soft: rgba(0, 0, 0, 0.06);
+
+  /* Text — black at graded opacities */
+  --color-text: #000000;
+  --color-text-secondary: rgba(0, 0, 0, 0.66);
+  --color-text-tertiary: rgba(0, 0, 0, 0.46);
+  --color-text-disabled: rgba(0, 0, 0, 0.3);
+  --color-text-on-accent: #0a0a0a; /* dark digit on solid accent — accents are bright */
+  --color-on-emphasis: #ffffff; /* label on the black emphasis surface */
+
+  /* Semantic accents — same hues; -dim re-derived at 12% on white */
+  --color-aerobic-dim: rgba(45, 212, 191, 0.12);
+  --color-load-dim: rgba(99, 102, 241, 0.12);
+  --color-recovery-dim: rgba(167, 139, 250, 0.12);
+  --color-sessions-dim: rgba(251, 146, 60, 0.12);
+  --color-flag-dim: rgba(239, 68, 68, 0.12);
+
+  /* Accent-as-text — darkened for ~4.5:1 on white, hue preserved */
+  --color-aerobic-text: #0f766e; /* teal-700 */
+  --color-load-text: #4f46e5; /* indigo-600 */
+  --color-recovery-text: #7c3aed; /* violet-600 */
+  --color-sessions-text: #c2410c; /* orange-700 */
+  --color-flag-text: #dc2626; /* red-600 */
+
+  /* Sessions heatmap ramp re-derived at 12% start on white */
+  --color-sessions-step-0: rgba(251, 146, 60, 0.18);
+  --color-sessions-step-1: rgba(251, 146, 60, 0.45);
+  --color-sessions-step-2: rgba(251, 146, 60, 0.72);
+  --color-sessions-step-3: var(--color-sessions);
+
+  /* Neutral zone fills become black-on-white steps */
+  --color-zone-neutral-1: rgba(0, 0, 0, 0.08);
+  --color-zone-neutral-2: rgba(0, 0, 0, 0.18);
+  --color-zone-neutral-3: rgba(0, 0, 0, 0.3);
+  --color-zone-neutral-4: rgba(0, 0, 0, 0.44);
+
+  /* Chart cursor wash and scrim invert */
+  --color-chart-cursor: rgba(0, 0, 0, 0.04);
+  --color-scrim: rgba(0, 0, 0, 0.32);
+
+  /* Focus ring — black on white */
+  --focus-ring-color: rgba(0, 0, 0, 0.45);
 }

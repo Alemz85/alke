@@ -19,6 +19,7 @@ import type {
   DbStatus,
   Flag,
   UserConfig,
+  UserConfigPatch,
   Workout,
   WorkoutDetail,
   WorkoutHrSample
@@ -101,7 +102,20 @@ const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
   'hr_max',
   'swim_hr_offset',
   'zone2_low_frac',
-  'zone2_high_frac'
+  'zone2_high_frac',
+  'zone2_weekly_target_min'
+]
+
+// Whitelist of user_config columns that may be modified via updateUserConfig.
+// `id` is intentionally excluded — it is fixed at 1.
+const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
+  'hr_max',
+  'swim_hr_offset',
+  'zone2_low_frac',
+  'zone2_high_frac',
+  'zone2_weekly_target_min',
+  'weekly_min_sessions',
+  'timezone'
 ]
 
 const WORKOUT_COLUMNS =
@@ -117,7 +131,7 @@ const COMPUTED_DAILY_COLUMNS =
   'date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
-  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, weekly_min_sessions, timezone'
+  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, weekly_min_sessions, timezone'
 
 export async function getWorkouts(fromIso: string, toIso: string): Promise<Workout[]> {
   const supabase = getClient()
@@ -235,6 +249,75 @@ export async function getUserConfig(): Promise<UserConfig> {
     .single()
 
   if (error) throw new Error(`getUserConfig: ${error.message}`)
+
+  return normalizeNumeric(data as UserConfig, USER_CONFIG_NUMERIC_KEYS)
+}
+
+export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConfig> {
+  const supabase = getClient()
+
+  // Whitelist-filter: only editable keys pass through, `id` can never be
+  // targeted (it's fixed at 1 by the table's check constraint anyway).
+  const update: Record<string, unknown> = {}
+  for (const key of USER_CONFIG_EDITABLE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      update[key] = (patch as Record<string, unknown>)[key]
+    }
+  }
+
+  const numericFields: (keyof UserConfigPatch)[] = [
+    'hr_max',
+    'swim_hr_offset',
+    'zone2_low_frac',
+    'zone2_high_frac',
+    'zone2_weekly_target_min'
+  ]
+  for (const field of numericFields) {
+    if (field in update) {
+      const value = update[field]
+      if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
+        throw new Error(`updateUserConfig: ${field} must be a finite number or null`)
+      }
+    }
+  }
+
+  if ('timezone' in update) {
+    const tz = update.timezone
+    if (tz !== null) {
+      if (typeof tz !== 'string' || !Intl.supportedValuesOf('timeZone').includes(tz)) {
+        throw new Error(`updateUserConfig: timezone "${String(tz)}" is not a recognized IANA timezone`)
+      }
+    }
+  }
+
+  if ('weekly_min_sessions' in update) {
+    const sessions = update.weekly_min_sessions
+    if (sessions !== null) {
+      if (typeof sessions !== 'object' || Array.isArray(sessions)) {
+        throw new Error('updateUserConfig: weekly_min_sessions must be an object')
+      }
+      for (const [k, v] of Object.entries(sessions as Record<string, unknown>)) {
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
+          throw new Error(
+            `updateUserConfig: weekly_min_sessions.${k} must be a non-negative integer`
+          )
+        }
+      }
+    }
+  }
+
+  if (Object.keys(update).length === 0) {
+    return getUserConfig()
+  }
+
+  const { data, error } = await supabase
+    .from('user_config')
+    .update(update)
+    .eq('id', 1)
+    .select(USER_CONFIG_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateUserConfig: ${error.message}`)
 
   return normalizeNumeric(data as UserConfig, USER_CONFIG_NUMERIC_KEYS)
 }

@@ -79,9 +79,24 @@ export interface UserConfig {
   swim_hr_offset: number | null
   zone2_low_frac: number | null
   zone2_high_frac: number | null
+  zone2_weekly_target_min: number
   weekly_min_sessions: Record<string, unknown> | null
   timezone: string | null
 }
+
+// Editable subset of UserConfig — excludes `id`, which is fixed at 1.
+export type UserConfigPatch = Partial<
+  Pick<
+    UserConfig,
+    | 'hr_max'
+    | 'swim_hr_offset'
+    | 'zone2_low_frac'
+    | 'zone2_high_frac'
+    | 'zone2_weekly_target_min'
+    | 'weekly_min_sessions'
+    | 'timezone'
+  >
+>
 
 export interface Flag {
   type: string
@@ -102,6 +117,7 @@ export interface HealthApi {
   getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
   getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
   getUserConfig(): Promise<UserConfig>
+  updateUserConfig(patch: UserConfigPatch): Promise<UserConfig>
   getTodayFlags(): Promise<Flag[]>
   getDbStatus(): Promise<DbStatus>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
@@ -119,6 +135,7 @@ export const IPC_CHANNELS = {
   getDailyMetrics: 'db:getDailyMetrics',
   getComputedDaily: 'db:getComputedDaily',
   getUserConfig: 'db:getUserConfig',
+  updateUserConfig: 'db:updateUserConfig',
   getTodayFlags: 'db:getTodayFlags',
   getDbStatus: 'db:getDbStatus',
   getInsightCorrelations: 'db:getInsightCorrelations',

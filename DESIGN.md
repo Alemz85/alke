@@ -11,7 +11,7 @@
 
 This system adapts Revolut's design language from a marketing site to a **desktop data dashboard**. Three deliberate departures from the source:
 
-1. **Dark-only.** Revolut alternates black storytelling bands with white catalogue bands. A dashboard is one continuous surface, so this app lives permanently on the dark canvas (`{colors.canvas}` — `#000000`, true black, never near-black). Elevation comes from surface luminance steps, never from shadows.
+1. **Dark-first, one continuous surface.** Revolut alternates black storytelling bands with white catalogue bands. A dashboard is one continuous surface, so this app defaults to the dark canvas (`{colors.canvas}` — `#000000`, true black, never near-black). Elevation comes from surface luminance steps, never from shadows. A light theme (see "Light theme") inverts the ladder onto true white for bright rooms; both obey the no-shadow and grayscale-clean laws.
 2. **Free fonts.** Aeonik Pro (proprietary) is replaced by **Space Grotesk** for all display/heading sizes; **Inter** remains for body, labels, and data. Space Grotesk at weight 500 with tight negative tracking preserves the compressed, confident display character.
 3. **Semantic accents.** Revolut's accent palette is decorative (illustrations only). Here the accent palette is **informational**: five color families, each permanently bound to one metric domain. Color = meaning. After a week of use, a glance at hue tells the user which system of their body a number belongs to.
 
@@ -225,9 +225,47 @@ Touch targets are irrelevant (desktop pointer app), but all interactive elements
 4. If a view starts accumulating accent colors, audit domain bindings — the fix is removing an element, not adding a hue.
 5. Default any new text to `{typography.body-md}`; reach for Space Grotesk only when the element is a heading or a metric.
 
+## Light theme
+
+The app ships both themes. Dark is the default and the design's home; light is a faithful inversion for bright rooms, reached by the Sun/Moon toggle (a `button-soft` icon button, 40px, in the top-bar toolbar beside Refresh). The choice persists to `localStorage('theme')` and is applied to `document.documentElement` (`data-theme='light'`) before first paint — an inline script in `index.html` reads the stored value ahead of the bundle, so there is no flash on launch.
+
+Light inverts the surface ladder onto a true-white canvas. The two laws that define the system hold unchanged in both themes: **no drop shadows** (elevation is luminance + hairline only) and **grayscale-clean chrome** (desaturate a screenshot and only data elements lose color).
+
+### Derived palette (`[data-theme='light']` overrides)
+
+| Token | Light value | Note |
+| --- | --- | --- |
+| `{colors.canvas}` | `#FFFFFF` | True white. |
+| `{colors.surface}` | `#F4F5F7` | Subtle inset well (chart plots, chat input). |
+| `{colors.surface-elevated}` | `#FBFBFC` | Cards — near-white, set apart from canvas by luminance **and** a hairline, never a shadow. |
+| `{colors.surface-hover}` | `#EEF0F2` | Interactive hover. |
+| `{colors.hairline}` | `rgba(0,0,0,0.10)` | 1px dividers, card outlines. |
+| `{colors.divider-soft}` | `rgba(0,0,0,0.06)` | Grid lines, row separators. |
+| `{colors.text}` | `#000000` | Primary text, hero digits. |
+| `{colors.text-secondary}` | `rgba(0,0,0,0.66)` | |
+| `{colors.text-tertiary}` | `rgba(0,0,0,0.46)` | Axis labels, captions. |
+| `{colors.text-disabled}` | `rgba(0,0,0,0.30)` | |
+
+The five accent **hues are unchanged** — teal still means aerobic. Their `-dim` fill variants drop to **12% opacity on white** (dark uses 15%): `aerobic-dim rgba(45,212,191,0.12)`, `load-dim rgba(99,102,241,0.12)`, `recovery-dim rgba(167,139,250,0.12)`, `sessions-dim rgba(251,146,60,0.12)`, `flag-dim rgba(239,68,68,0.12)`.
+
+### `-text` accent variants (the contrast rule)
+
+The base accent hues are tuned for a black canvas; several are too light to read as small text on white. So every place an accent paints **text or small digits** — hero eyebrow, hero delta, `metric-card` value, `badge-domain` label, dashboard stat values, flag icon/text — references a `{colors.<domain>-text}` variable instead of the base accent. In dark these equal the base accent; in light they darken enough to clear ~4.5:1 on white while keeping the hue:
+
+| Token | Light value |
+| --- | --- |
+| `{colors.aerobic-text}` | `#0F766E` (teal-700) |
+| `{colors.load-text}` | `#4F46E5` (indigo-600) |
+| `{colors.recovery-text}` | `#7C3AED` (violet-600) |
+| `{colors.sessions-text}` | `#C2410C` (orange-700) |
+| `{colors.flag-text}` | `#DC2626` (red-600) |
+
+**Chart geometry keeps the base accent** — lines, bars, scatter dots, calendar cells and area fills sit on inset `{colors.surface}`, not raw white, and stay vivid. Only text switches to the `-text` variant. Two more neutral-surface labels use `{colors.on-emphasis}` (the inverse of `{colors.text}`: black in dark, white in light) for the label painted on the loudest neutral surface — `button-primary`, `chip-filter` active, chat send. `{colors.text-on-accent}` stays a dark digit in both themes for text sitting on a solid domain-accent fill (heatmap step-3).
+
+The keyboard focus ring is theme-aware: `rgba(255,255,255,0.4)` on dark, `rgba(0,0,0,0.45)` on light, 1px / 2px offset in both.
+
 ## Known Gaps
 
-- Light mode is out of scope for v1. If added later, invert the surface ladder and re-derive `-dim` variants at 12% opacity on white.
 - Print/export styling for AI reports is undefined.
 - Animation is intentionally minimal: 150ms ease-out on hover/active surface changes, 300ms ease on chart range transitions; nothing else. Chart-drawing animations are permitted but must respect `prefers-reduced-motion`.
 - Icon set undefined: use Lucide, 1.5px stroke, sized 16/20px, `{colors.text-secondary}` default, domain accent only when marking domain-bound data.

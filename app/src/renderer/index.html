@@ -11,6 +11,17 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      // Apply the persisted theme before first paint to avoid a flash.
+      // Default is dark (:root); light is opt-in via data-theme.
+      try {
+        if (localStorage.getItem('theme') === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      } catch (e) {
+        /* localStorage unavailable — stay on default dark */
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

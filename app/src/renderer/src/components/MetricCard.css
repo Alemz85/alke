@@ -27,19 +27,19 @@
 }
 
 .metric-card-value--aerobic {
-  color: var(--color-aerobic);
+  color: var(--color-aerobic-text);
 }
 .metric-card-value--load {
-  color: var(--color-load);
+  color: var(--color-load-text);
 }
 .metric-card-value--recovery {
-  color: var(--color-recovery);
+  color: var(--color-recovery-text);
 }
 .metric-card-value--sessions {
-  color: var(--color-sessions);
+  color: var(--color-sessions-text);
 }
 .metric-card-value--flag {
-  color: var(--color-flag);
+  color: var(--color-flag-text);
 }
 
 .metric-card-sparkline {

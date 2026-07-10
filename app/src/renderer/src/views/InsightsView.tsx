@@ -33,8 +33,10 @@ const LAGS = [0, 1, 2, 3]
 
 function cellColor(r: number): string {
   const alpha = 0.06 + Math.min(Math.abs(r), 1) * 0.8
-  // positive = aerobic teal, negative = recovery violet — sign is direction, not judgement
-  return r >= 0 ? `rgba(45, 212, 191, ${alpha})` : `rgba(167, 139, 250, ${alpha})`
+  // positive = aerobic teal, negative = recovery violet — sign is direction, not judgement.
+  // RGB triplets come from tokens so the poles track the theme's accent palette.
+  const triplet = r >= 0 ? 'var(--color-corr-positive)' : 'var(--color-corr-negative)'
+  return `rgba(${triplet}, ${alpha})`
 }
 
 const tooltipStyle = {

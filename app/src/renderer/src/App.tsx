@@ -1,6 +1,6 @@
-import { useState, type ReactElement } from 'react'
+import { useCallback, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { Moon, RefreshCw, Sun } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import type { TabId } from './tabs'
 import { ButtonSoft } from './components'
@@ -23,14 +23,38 @@ const VIEWS: Record<TabId, () => ReactElement> = {
   chat: ChatView
 }
 
+type Theme = 'dark' | 'light'
+
+function readInitialTheme(): Theme {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
+}
+
 function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard')
+  const [theme, setTheme] = useState<Theme>(readInitialTheme)
   const queryClient = useQueryClient()
   const dbStatus = useDbStatus()
 
   const handleRefresh = (): void => {
     queryClient.invalidateQueries()
   }
+
+  const toggleTheme = useCallback((): void => {
+    setTheme((prev) => {
+      const next: Theme = prev === 'dark' ? 'light' : 'dark'
+      if (next === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light')
+      } else {
+        document.documentElement.removeAttribute('data-theme')
+      }
+      try {
+        localStorage.setItem('theme', next)
+      } catch {
+        /* localStorage unavailable — theme still applies for this session */
+      }
+      return next
+    })
+  }, [])
 
   const ActiveView = VIEWS[activeTab]
   const showDbError = dbStatus.isSuccess && dbStatus.data && !dbStatus.data.connected
@@ -41,6 +65,18 @@ function App(): ReactElement {
       <main className="content-area">
         <div className="content-area-inner">
           <div className="content-area-toolbar">
+            <ButtonSoft
+              className="button-soft--icon"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            >
+              {theme === 'dark' ? (
+                <Sun size={18} strokeWidth={1.5} />
+              ) : (
+                <Moon size={18} strokeWidth={1.5} />
+              )}
+            </ButtonSoft>
             <ButtonSoft onClick={handleRefresh} aria-label="Refresh">
               <RefreshCw size={16} strokeWidth={1.5} />
               Refresh

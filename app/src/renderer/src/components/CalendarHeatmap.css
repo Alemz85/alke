@@ -110,28 +110,28 @@
    as total session duration for the day increases. Four steps per the
    calendar-heatmap spec: <30m, 30-60m, 60-90m, >90m. */
 .calendar-heatmap-cell--step-0 {
-  background: rgba(251, 146, 60, 0.15);
+  background: var(--color-sessions-step-0);
 }
 .calendar-heatmap-cell--step-0 .calendar-heatmap-daynum {
   color: var(--color-text-secondary);
 }
 
 .calendar-heatmap-cell--step-1 {
-  background: rgba(251, 146, 60, 0.4);
+  background: var(--color-sessions-step-1);
 }
 .calendar-heatmap-cell--step-1 .calendar-heatmap-daynum {
   color: var(--color-text);
 }
 
 .calendar-heatmap-cell--step-2 {
-  background: rgba(251, 146, 60, 0.7);
+  background: var(--color-sessions-step-2);
 }
 .calendar-heatmap-cell--step-2 .calendar-heatmap-daynum {
   color: var(--color-text);
 }
 
 .calendar-heatmap-cell--step-3 {
-  background: var(--color-sessions);
+  background: var(--color-sessions-step-3);
 }
 .calendar-heatmap-cell--step-3 .calendar-heatmap-daynum {
   color: var(--color-text-on-accent);

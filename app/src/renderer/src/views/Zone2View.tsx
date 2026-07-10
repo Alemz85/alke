@@ -28,12 +28,13 @@ const GRID = 'var(--color-divider-soft)'
 const WEEKLY_TARGET_MIN = 90 // modest default per spec; editable in user_config later
 // Z2 carries the domain accent; other zones are neutral grays so color = Z2.
 const ZONE_FILLS = [
-  'rgba(255,255,255,0.10)',
+  'var(--color-zone-neutral-1)',
   AEROBIC,
-  'rgba(255,255,255,0.22)',
-  'rgba(255,255,255,0.34)',
-  'rgba(255,255,255,0.46)'
+  'var(--color-zone-neutral-2)',
+  'var(--color-zone-neutral-3)',
+  'var(--color-zone-neutral-4)'
 ]
+const CHART_CURSOR = 'var(--color-chart-cursor)'
 
 function z2Seconds(w: Workout): number {
   const tiz = w.computed?.time_in_zones as Record<string, number> | null | undefined
@@ -184,7 +185,7 @@ export function Zone2View(): ReactElement {
                 <CartesianGrid stroke={GRID} vertical={false} />
                 <XAxis dataKey="week" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: CHART_CURSOR }} />
                 <ReferenceLine
                   y={WEEKLY_TARGET_MIN}
                   stroke={TERTIARY}
@@ -266,7 +267,7 @@ export function Zone2View(): ReactElement {
                 <CartesianGrid stroke={GRID} vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: CHART_CURSOR }} />
                 {(['z1', 'z2', 'z3', 'z4', 'z5'] as const).map((z, i) => (
                   <Bar key={z} dataKey={z} stackId="tiz" fill={ZONE_FILLS[i]} maxBarSize={32} />
                 ))}

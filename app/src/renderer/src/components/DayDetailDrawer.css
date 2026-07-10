@@ -1,7 +1,7 @@
 .day-drawer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-scrim);
   display: flex;
   justify-content: flex-end;
   z-index: 100;
