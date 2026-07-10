@@ -21,7 +21,7 @@ if (envPath) {
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { IPC_CHANNELS, type UserConfigPatch, type Flag } from '@shared/types'
+import { IPC_CHANNELS, type UserConfigPatch, type Flag, type NewInjuryLog } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
 
@@ -114,6 +114,16 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.getInjuries, () => db.getInjuries())
   ipcMain.handle(IPC_CHANNELS.getInjuryLog, (_event, injuryId: string) => db.getInjuryLog(injuryId))
+  ipcMain.handle(IPC_CHANNELS.addInjuryLog, (_event, entry: NewInjuryLog) => db.addInjuryLog(entry))
+  ipcMain.handle(IPC_CHANNELS.getInjuryPlan, (_event, injuryId: string) => db.getInjuryPlan(injuryId))
+  ipcMain.handle(IPC_CHANNELS.getInjuryPlanChecks, (_event, injuryId: string, fromDate: string) =>
+    db.getInjuryPlanChecks(injuryId, fromDate)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.setPlanItemCheck,
+    (_event, itemId: string, doneDate: string, done: boolean) =>
+      db.setPlanItemCheck(itemId, doneDate, done)
+  )
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())

@@ -14,6 +14,12 @@ const api: HealthApi = {
   getTodayFlags: () => ipcRenderer.invoke(IPC_CHANNELS.getTodayFlags),
   getInjuries: () => ipcRenderer.invoke(IPC_CHANNELS.getInjuries),
   getInjuryLog: (injuryId) => ipcRenderer.invoke(IPC_CHANNELS.getInjuryLog, injuryId),
+  addInjuryLog: (entry) => ipcRenderer.invoke(IPC_CHANNELS.addInjuryLog, entry),
+  getInjuryPlan: (injuryId) => ipcRenderer.invoke(IPC_CHANNELS.getInjuryPlan, injuryId),
+  getInjuryPlanChecks: (injuryId, fromDate) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getInjuryPlanChecks, injuryId, fromDate),
+  setPlanItemCheck: (itemId, doneDate, done) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setPlanItemCheck, itemId, doneDate, done),
   getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus),
   getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),
   getInsightModels: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightModels),

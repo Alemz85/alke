@@ -7,24 +7,28 @@ if (typeof globalThis.WebSocket === 'undefined') {
 }
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import type {
-  InsightCorrelation,
-  InsightModel,
-  ChatMessage,
-  ChatSession,
-  ChatSessionMeta,
-  ComputedDaily,
-  ComputedWorkout,
-  DailyMetric,
-  DbStatus,
-  Flag,
-  Injury,
-  InjuryLogEntry,
-  UserConfig,
-  UserConfigPatch,
-  Workout,
-  WorkoutDetail,
-  WorkoutHrSample
+import {
+  INJURY_CONTEXTS,
+  type InsightCorrelation,
+  type InsightModel,
+  type ChatMessage,
+  type ChatSession,
+  type ChatSessionMeta,
+  type ComputedDaily,
+  type ComputedWorkout,
+  type DailyMetric,
+  type DbStatus,
+  type Flag,
+  type Injury,
+  type InjuryLogEntry,
+  type NewInjuryLog,
+  type PlanItemCheck,
+  type RecoveryPlanItem,
+  type UserConfig,
+  type UserConfigPatch,
+  type Workout,
+  type WorkoutDetail,
+  type WorkoutHrSample
 } from '@shared/types'
 
 let client: SupabaseClient | null = null
@@ -344,7 +348,28 @@ export async function getTodayFlags(): Promise<Flag[]> {
 const INJURY_COLUMNS =
   'id, name, body_area, status, severity, started_at, resolved_at, summary, recovery_plan, created_at, updated_at'
 
-const INJURY_LOG_COLUMNS = 'id, injury_id, entry_date, noted_at, source, note, pain_level'
+const INJURY_LOG_COLUMNS =
+  'id, injury_id, entry_date, noted_at, source, note, pain_level, context, workout_id'
+
+const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
+
+const RECOVERY_PLAN_ITEM_COLUMNS =
+  'id, injury_id, name, kind, weekly_target, note, active, created_at, updated_at'
+
+const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = ['weekly_target']
+
+const PLAN_ITEM_CHECK_COLUMNS = 'id, item_id, done_date, source'
+
+const UUID_RE_GENERIC = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+function assertUuid(id: unknown, label: string): void {
+  if (typeof id !== 'string' || !UUID_RE_GENERIC.test(id)) throw new Error(`invalid ${label}`)
+}
+
+function assertDate(date: unknown, label: string): void {
+  if (typeof date !== 'string' || !DATE_RE.test(date)) throw new Error(`invalid ${label}`)
+}
 
 // Read-only: injuries/injury_notes are written exclusively by the chat agent's
 // separate injuries.py helper (chatctx/injuries.py), not by the app.
@@ -372,7 +397,142 @@ export async function getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]> 
 
   if (error) throw new Error(`getInjuryLog: ${error.message}`)
 
-  return (data ?? []) as InjuryLogEntry[]
+  return (data ?? []).map((row) => normalizeNumeric(row as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS))
+}
+
+export async function addInjuryLog(entry: NewInjuryLog): Promise<InjuryLogEntry> {
+  const supabase = getClient()
+
+  assertUuid(entry.injury_id, 'injury_id')
+
+  if (typeof entry.note !== 'string' || entry.note.trim().length === 0 || entry.note.length > 2000) {
+    throw new Error('invalid note')
+  }
+
+  if (
+    entry.pain_level !== null &&
+    (typeof entry.pain_level !== 'number' ||
+      !Number.isInteger(entry.pain_level) ||
+      entry.pain_level < 0 ||
+      entry.pain_level > 10)
+  ) {
+    throw new Error('invalid pain_level')
+  }
+
+  if (
+    !Array.isArray(entry.context) ||
+    !entry.context.every((c) => (INJURY_CONTEXTS as readonly string[]).includes(c))
+  ) {
+    throw new Error('invalid context')
+  }
+
+  if (entry.workout_id !== null && entry.workout_id !== undefined) {
+    assertUuid(entry.workout_id, 'workout_id')
+  }
+
+  if (entry.entry_date !== undefined) {
+    assertDate(entry.entry_date, 'entry_date')
+  }
+
+  const row: Record<string, unknown> = {
+    injury_id: entry.injury_id,
+    note: entry.note,
+    pain_level: entry.pain_level,
+    context: entry.context,
+    workout_id: entry.workout_id ?? null,
+    source: 'user'
+  }
+  if (entry.entry_date !== undefined) {
+    row.entry_date = entry.entry_date
+  }
+
+  const { data, error } = await supabase
+    .from('injury_notes')
+    .insert(row)
+    .select(INJURY_LOG_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`addInjuryLog: ${error.message}`)
+
+  return normalizeNumeric(data as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
+}
+
+export async function getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]> {
+  const supabase = getClient()
+
+  assertUuid(injuryId, 'injury_id')
+
+  const { data, error } = await supabase
+    .from('recovery_plan_items')
+    .select(RECOVERY_PLAN_ITEM_COLUMNS)
+    .eq('injury_id', injuryId)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(`getInjuryPlan: ${error.message}`)
+
+  return (data ?? []).map((row) =>
+    normalizeNumeric(row as RecoveryPlanItem, RECOVERY_PLAN_ITEM_NUMERIC_KEYS)
+  )
+}
+
+export async function getInjuryPlanChecks(
+  injuryId: string,
+  fromDate: string
+): Promise<PlanItemCheck[]> {
+  const supabase = getClient()
+
+  assertUuid(injuryId, 'injury_id')
+  assertDate(fromDate, 'fromDate')
+
+  const { data: items, error: itemsError } = await supabase
+    .from('recovery_plan_items')
+    .select('id')
+    .eq('injury_id', injuryId)
+
+  if (itemsError) throw new Error(`getInjuryPlanChecks (items): ${itemsError.message}`)
+  if (!items || items.length === 0) return []
+
+  const itemIds = items.map((item) => item.id)
+
+  const { data: checks, error: checksError } = await supabase
+    .from('plan_item_checks')
+    .select(PLAN_ITEM_CHECK_COLUMNS)
+    .in('item_id', itemIds)
+    .gte('done_date', fromDate)
+
+  if (checksError) throw new Error(`getInjuryPlanChecks: ${checksError.message}`)
+
+  return (checks ?? []) as PlanItemCheck[]
+}
+
+export async function setPlanItemCheck(
+  itemId: string,
+  doneDate: string,
+  done: boolean
+): Promise<void> {
+  const supabase = getClient()
+
+  assertUuid(itemId, 'item_id')
+  assertDate(doneDate, 'doneDate')
+
+  if (done) {
+    const { error } = await supabase
+      .from('plan_item_checks')
+      .upsert(
+        { item_id: itemId, done_date: doneDate, source: 'user' },
+        { onConflict: 'item_id,done_date', ignoreDuplicates: true }
+      )
+
+    if (error) throw new Error(`setPlanItemCheck: ${error.message}`)
+  } else {
+    const { error } = await supabase
+      .from('plan_item_checks')
+      .delete()
+      .eq('item_id', itemId)
+      .eq('done_date', doneDate)
+
+    if (error) throw new Error(`setPlanItemCheck: ${error.message}`)
+  }
 }
 
 export async function getDbStatus(): Promise<DbStatus> {

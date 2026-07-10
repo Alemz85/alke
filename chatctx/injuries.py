@@ -3,15 +3,21 @@
 
 `db.py` is read-only (SELECT via RPC); this is the write path, hitting the
 PostgREST REST API directly with the service key. Table names are hardcoded
-(injuries, injury_notes). Stdlib only; credentials come from ./.env when
-present, else the process environment (same resolution as db.py).
+(injuries, injury_notes, recovery_plan_items, plan_item_checks). Stdlib only;
+credentials come from ./.env when present, else the process environment (same
+resolution as db.py).
 
 Subcommands:
-  list                                 list all injuries as a markdown table
-  add    --name ... [options]          create an injury, prints its id
-  update <id> [options]                patch an injury (only given fields)
-  note   <injury_id> --note ... [opts] append a dated progress note
-  notes  <injury_id>                   list an injury's notes, newest first
+  list                                     list all injuries as a markdown table
+  add        --name ... [options]          create an injury, prints its id
+  update     <id> [options]                patch an injury (only given fields)
+  note       <injury_id> --note ... [opts] append a dated progress note
+  notes      <injury_id>                   list an injury's notes, newest first
+  plan-list  <injury_id>                   list an injury's recovery plan items
+  plan-add   <injury_id> --name ... [opts] create a recovery plan item, prints its id
+  plan-update <item_id> [options]          patch a recovery plan item (only given fields)
+  plan-remove <item_id>                    hard-delete a recovery plan item (cascades checks)
+  check      <item_id> [--date ..]         mark a plan item done for a day (source=chat)
 """
 
 import argparse
@@ -24,6 +30,7 @@ import urllib.parse
 import urllib.request
 
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
+VALID_CONTEXTS = ("during_workout", "post_workout", "at_rest", "on_waking")
 
 
 def load_env() -> dict:
@@ -48,11 +55,14 @@ def load_env() -> dict:
 
 
 def _request(method: str, path: str, *, params: dict | None = None, body: dict | None = None,
-             prefer: str | None = None) -> list[dict]:
+             prefer: str | None = None, on_conflict: str | None = None) -> list[dict]:
     env = load_env()
     url = f"{env['SUPABASE_URL']}/rest/v1/{path}"
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
+    all_params = dict(params or {})
+    if on_conflict:
+        all_params["on_conflict"] = on_conflict
+    if all_params:
+        url += "?" + urllib.parse.urlencode(all_params)
     key = env["SUPABASE_SERVICE_KEY"]
     headers = {
         "apikey": key,
@@ -122,6 +132,14 @@ def cmd_note(args) -> None:
         body["pain_level"] = args.pain
     if args.date is not None:
         body["entry_date"] = args.date
+    if args.context is not None:
+        tags = [t.strip() for t in args.context.split(",") if t.strip()]
+        invalid = [t for t in tags if t not in VALID_CONTEXTS]
+        if invalid:
+            sys.exit(f"invalid --context value(s): {', '.join(invalid)} — valid: {', '.join(VALID_CONTEXTS)}")
+        body["context"] = tags
+    if args.workout is not None:
+        body["workout_id"] = args.workout
     _request("POST", "injury_notes", body=body, prefer="return=minimal")
     print(f"logged note on injury {args.injury_id}")
 
@@ -141,6 +159,73 @@ def cmd_notes(args) -> None:
         pain = "" if r.get("pain_level") is None else r["pain_level"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
         print(f"| {r.get('entry_date') or ''} | {r.get('source') or ''} | {pain} | {note} |")
+
+
+def cmd_plan_list(args) -> None:
+    rows = _request("GET", "recovery_plan_items", params={
+        "injury_id": f"eq.{args.injury_id}",
+        "select": "id,name,kind,weekly_target,note,active",
+        "order": "active.desc,kind,name",
+    })
+    if not rows:
+        print("_no recovery plan items_")
+        return
+    print("| id | name | kind | weekly_target | note | active |")
+    print("| --- | --- | --- | --- | --- | --- |")
+    for r in rows:
+        target = "" if r.get("weekly_target") is None else r["weekly_target"]
+        note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
+        print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | {target} | "
+              f"{note} | {r.get('active')} |")
+
+
+def cmd_plan_add(args) -> None:
+    body = {"injury_id": args.injury_id, "name": args.name}
+    for field, value in (("kind", args.kind), ("weekly_target", args.target), ("note", args.note)):
+        if value is not None:
+            body[field] = value
+    rows = _request("POST", "recovery_plan_items", body=body, prefer="return=representation")
+    print(f"created plan item {rows[0]['id']}")
+
+
+def cmd_plan_update(args) -> None:
+    body = {"updated_at": "now()"}
+    for field, value in (("name", args.name), ("kind", args.kind), ("note", args.note)):
+        if value is not None:
+            body[field] = value
+    if args.target is not None:
+        if args.target == "none":
+            body["weekly_target"] = None
+        else:
+            try:
+                target = int(args.target)
+            except ValueError:
+                target = -1
+            if not 1 <= target <= 14:
+                sys.exit(f"invalid --target {args.target!r} — must be 1-14 or 'none'")
+            body["weekly_target"] = target
+    if args.active is not None:
+        body["active"] = args.active == "true"
+    _request("PATCH", "recovery_plan_items", params={"id": f"eq.{args.id}"}, body=body, prefer="return=minimal")
+    print(f"updated plan item {args.id}")
+
+
+def cmd_plan_remove(args) -> None:
+    _request("DELETE", "recovery_plan_items", params={"id": f"eq.{args.id}"}, prefer="return=minimal")
+    print(f"removed plan item {args.id}")
+
+
+def cmd_check(args) -> None:
+    body = {"item_id": args.item_id, "source": "chat"}
+    if args.date is not None:
+        body["done_date"] = args.date
+    rows = _request("POST", "plan_item_checks", body=body,
+                     prefer="return=representation,resolution=ignore-duplicates",
+                     on_conflict="item_id,done_date")
+    if rows:
+        print(f"checked item {args.item_id}")
+    else:
+        print(f"already checked item {args.item_id}")
 
 
 def main() -> None:
@@ -177,11 +262,43 @@ def main() -> None:
     p_note.add_argument("--pain", type=int, choices=range(0, 11), metavar="0-10")
     p_note.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
     p_note.add_argument("--source", default="chat", choices=["chat", "user"])
+    p_note.add_argument("--context", help="comma-separated: " + ",".join(VALID_CONTEXTS))
+    p_note.add_argument("--workout", help="workout id this note relates to")
     p_note.set_defaults(func=cmd_note)
 
     p_notes = sub.add_parser("notes", help="List an injury's notes")
     p_notes.add_argument("injury_id")
     p_notes.set_defaults(func=cmd_notes)
+
+    p_plan_list = sub.add_parser("plan-list", help="List an injury's recovery plan items")
+    p_plan_list.add_argument("injury_id")
+    p_plan_list.set_defaults(func=cmd_plan_list)
+
+    p_plan_add = sub.add_parser("plan-add", help="Create a recovery plan item")
+    p_plan_add.add_argument("injury_id")
+    p_plan_add.add_argument("--name", required=True)
+    p_plan_add.add_argument("--kind", choices=["exercise", "habit", "constraint"])
+    p_plan_add.add_argument("--target", type=int, choices=range(1, 15), metavar="1-14")
+    p_plan_add.add_argument("--note")
+    p_plan_add.set_defaults(func=cmd_plan_add)
+
+    p_plan_upd = sub.add_parser("plan-update", help="Update an existing recovery plan item")
+    p_plan_upd.add_argument("id")
+    p_plan_upd.add_argument("--name")
+    p_plan_upd.add_argument("--kind", choices=["exercise", "habit", "constraint"])
+    p_plan_upd.add_argument("--target", help="1-14, or 'none' to clear")
+    p_plan_upd.add_argument("--note")
+    p_plan_upd.add_argument("--active", choices=["true", "false"])
+    p_plan_upd.set_defaults(func=cmd_plan_update)
+
+    p_plan_rm = sub.add_parser("plan-remove", help="Hard-delete a recovery plan item")
+    p_plan_rm.add_argument("id")
+    p_plan_rm.set_defaults(func=cmd_plan_remove)
+
+    p_check = sub.add_parser("check", help="Mark a plan item done for a day")
+    p_check.add_argument("item_id")
+    p_check.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
+    p_check.set_defaults(func=cmd_check)
 
     args = parser.parse_args()
     args.func(args)
