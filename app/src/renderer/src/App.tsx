@@ -11,6 +11,7 @@ import { Zone2View } from './views/Zone2View'
 import { SessionsView } from './views/SessionsView'
 import { RecoveryView } from './views/RecoveryView'
 import { InsightsView } from './views/InsightsView'
+import { InjuriesView } from './views/InjuriesView'
 import { ChatView } from './views/ChatView'
 import { SettingsView } from './views/SettingsView'
 import './App.css'
@@ -21,6 +22,7 @@ const VIEWS: Record<TabId, () => ReactElement> = {
   sessions: SessionsView,
   recovery: RecoveryView,
   insights: InsightsView,
+  injuries: InjuriesView,
   chat: ChatView,
   settings: SettingsView
 }

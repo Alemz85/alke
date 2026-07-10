@@ -5,6 +5,7 @@ import {
   ListChecks,
   Moon,
   Sparkles,
+  Bandage,
   MessageSquare,
   Settings
 } from 'lucide-react'
@@ -23,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'sessions', label: 'Sessions', icon: ListChecks },
   { id: 'recovery', label: 'Recovery', icon: Moon },
   { id: 'insights', label: 'Insights', icon: Sparkles },
+  { id: 'injuries', label: 'Injuries', icon: Bandage },
   { id: 'chat', label: 'Chat', icon: MessageSquare }
 ]
 

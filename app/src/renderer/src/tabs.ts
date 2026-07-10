@@ -4,5 +4,6 @@ export type TabId =
   | 'sessions'
   | 'recovery'
   | 'insights'
+  | 'injuries'
   | 'chat'
   | 'settings'
