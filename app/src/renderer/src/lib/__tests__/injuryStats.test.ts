@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest'
 import type { InjuryLogEntry, PlanItemCheck, RecoveryPlanItem } from '@shared/types'
 import {
   adherencePct,
+  adherenceRating,
   buildTimeline,
+  dailyPainSeries,
+  dayScore,
   daysBetween,
   flareStats,
   humanizeDuration,
   isoWeekStart,
   shiftYMD,
   weeklyAdherence,
+  weeklyMatrix,
   weeklyProgress
 } from '../injuryStats'
 
@@ -85,6 +89,40 @@ describe('isoWeekStart', () => {
   })
 })
 
+// ── dailyPainSeries ──────────────────────────────────────────────────────────
+
+describe('dailyPainSeries', () => {
+  it('collapses multiple entries on a day to that day-s max pain', () => {
+    const entries = [
+      entry({ entry_date: '2026-07-10', pain_level: 2 }),
+      entry({ entry_date: '2026-07-10', pain_level: 6 }), // later flare same day
+      entry({ entry_date: '2026-07-10', pain_level: 4 })
+    ]
+    expect(dailyPainSeries(entries)).toEqual([{ date: '2026-07-10', pain: 6 }])
+  })
+
+  it('treats a fine-then-flare day as a flare day at the flare value', () => {
+    // "fine at 18:00, flare at night → flare day"
+    const entries = [
+      entry({ entry_date: '2026-07-10', pain_level: 0 }),
+      entry({ entry_date: '2026-07-10', pain_level: 5 })
+    ]
+    expect(dailyPainSeries(entries)).toEqual([{ date: '2026-07-10', pain: 5 }])
+  })
+
+  it('ignores entries without a pain level and sorts oldest first', () => {
+    const entries = [
+      entry({ entry_date: '2026-07-12', pain_level: 3 }),
+      entry({ entry_date: '2026-07-11', pain_level: null, note: 'AI note' }),
+      entry({ entry_date: '2026-07-10', pain_level: 1 })
+    ]
+    expect(dailyPainSeries(entries)).toEqual([
+      { date: '2026-07-10', pain: 1 },
+      { date: '2026-07-12', pain: 3 }
+    ])
+  })
+})
+
 // ── flareStats ───────────────────────────────────────────────────────────────
 
 describe('flareStats', () => {
@@ -103,8 +141,8 @@ describe('flareStats', () => {
     expect(s.lastFlare).toBeNull() // pain 0 is not a flare
   })
 
-  it('counts flares/week over the 30d window', () => {
-    // 3 flares within last 30 days → 3 / (30/7) = 0.7
+  it('counts flare DAYS/week over the 30d window', () => {
+    // 3 flare days within last 30 days → 3 / (30/7) = 0.7
     const entries = [
       entry({ entry_date: shiftYMD(TODAY, -1), pain_level: 4 }),
       entry({ entry_date: shiftYMD(TODAY, -10), pain_level: 5 }),
@@ -112,6 +150,28 @@ describe('flareStats', () => {
     ]
     const s = flareStats(entries, NOW)
     expect(s.perWeek30d).toBeCloseTo(3 / (30 / 7), 5)
+    expect(s.avgIntensity30d).toBeCloseTo(5, 5)
+  })
+
+  it('counts two flares on the same day once, at the day-max', () => {
+    // Both on day -1: one flare day, day-max = 7.
+    const entries = [
+      entry({ entry_date: shiftYMD(TODAY, -1), pain_level: 3 }),
+      entry({ entry_date: shiftYMD(TODAY, -1), pain_level: 7 })
+    ]
+    const s = flareStats(entries, NOW)
+    expect(s.perWeek30d).toBeCloseTo(1 / (30 / 7), 5)
+    expect(s.avgIntensity30d).toBeCloseTo(7, 5)
+    expect(s.lastFlare).toEqual({ daysAgo: 1, pain: 7 })
+  })
+
+  it('treats a fine+flare same day as a single flare day at the flare value', () => {
+    const entries = [
+      entry({ entry_date: shiftYMD(TODAY, -1), pain_level: 0 }),
+      entry({ entry_date: shiftYMD(TODAY, -1), pain_level: 5 })
+    ]
+    const s = flareStats(entries, NOW)
+    expect(s.perWeek30d).toBeCloseTo(1 / (30 / 7), 5)
     expect(s.avgIntensity30d).toBeCloseTo(5, 5)
   })
 
@@ -235,6 +295,62 @@ describe('adherencePct', () => {
     // Only 'a' counts; it has 0 checks → 0%.
     expect(adherencePct(items, checks, TODAY, 7)).toBe(0)
   })
+
+  it('counts only kind=exercise items — activities and habits are excluded', () => {
+    const items = [
+      item({ id: 'a', kind: 'exercise', weekly_target: 2 }),
+      item({ id: 'b', kind: 'activity', weekly_target: 2 }),
+      item({ id: 'c', kind: 'habit', weekly_target: 2 })
+    ]
+    // 'a' fully met; 'b'/'c' would drag it down if counted, but they are excluded.
+    const checks = [check('a', TODAY), check('a', shiftYMD(TODAY, -1))]
+    expect(adherencePct(items, checks, TODAY, 7)).toBe(100)
+  })
+})
+
+// ── dayScore ─────────────────────────────────────────────────────────────────
+
+describe('dayScore', () => {
+  it('counts checked exercise items over total active exercise items for a day', () => {
+    const items = [
+      item({ id: 'a', kind: 'exercise' }),
+      item({ id: 'b', kind: 'exercise' }),
+      item({ id: 'c', kind: 'exercise' })
+    ]
+    const checks = [check('a', TODAY), check('b', TODAY), check('a', shiftYMD(TODAY, -1))]
+    expect(dayScore(items, checks, TODAY)).toEqual({ done: 2, total: 3 })
+  })
+
+  it('excludes activities, habits and constraints from both done and total', () => {
+    const items = [
+      item({ id: 'a', kind: 'exercise' }),
+      item({ id: 'b', kind: 'activity' }),
+      item({ id: 'c', kind: 'habit' }),
+      item({ id: 'd', kind: 'constraint' })
+    ]
+    // Checking the activity does not add to done; total stays 1 (only the exercise).
+    const checks = [check('b', TODAY), check('a', TODAY)]
+    expect(dayScore(items, checks, TODAY)).toEqual({ done: 1, total: 1 })
+  })
+
+  it('ignores inactive exercise items', () => {
+    const items = [
+      item({ id: 'a', kind: 'exercise' }),
+      item({ id: 'b', kind: 'exercise', active: false })
+    ]
+    expect(dayScore(items, [check('a', TODAY)], TODAY)).toEqual({ done: 1, total: 1 })
+  })
+
+  it('returns total 0 when there are no active exercise items', () => {
+    const items = [item({ id: 'b', kind: 'activity' })]
+    expect(dayScore(items, [check('b', TODAY)], TODAY)).toEqual({ done: 0, total: 0 })
+  })
+
+  it('counts a check only once even with duplicate check rows', () => {
+    const items = [item({ id: 'a', kind: 'exercise' })]
+    const checks = [check('a', TODAY), check('a', TODAY)]
+    expect(dayScore(items, checks, TODAY)).toEqual({ done: 1, total: 1 })
+  })
 })
 
 // ── weeklyAdherence ──────────────────────────────────────────────────────────
@@ -275,6 +391,106 @@ describe('weeklyProgress', () => {
       check('a', shiftYMD(weekStart, -1)) // last week → excluded
     ]
     expect(weeklyProgress(it_, checks, TODAY)).toEqual({ done: 2, target: 3 })
+  })
+})
+
+// ── adherenceRating ──────────────────────────────────────────────────────────
+
+describe('adherenceRating', () => {
+  it('is untargeted when target is null or non-positive, regardless of done', () => {
+    expect(adherenceRating(0, null)).toBe('untargeted')
+    expect(adherenceRating(5, null)).toBe('untargeted')
+    expect(adherenceRating(2, 0)).toBe('untargeted')
+  })
+
+  it('is none when done is 0 against a real target', () => {
+    expect(adherenceRating(0, 3)).toBe('none')
+    expect(adherenceRating(0, 1)).toBe('none')
+  })
+
+  it('is low below the 0.75 ratio', () => {
+    expect(adherenceRating(1, 2)).toBe('low') // 0.5
+    expect(adherenceRating(2, 3)).toBe('low') // 0.667
+    expect(adherenceRating(74, 100)).toBe('low') // just below the boundary
+  })
+
+  it('is met at exactly 0.75 and above (including over-done)', () => {
+    expect(adherenceRating(3, 4)).toBe('met') // exactly 0.75
+    expect(adherenceRating(75, 100)).toBe('met')
+    expect(adherenceRating(3, 3)).toBe('met')
+    expect(adherenceRating(5, 3)).toBe('met')
+  })
+})
+
+// ── weeklyMatrix ─────────────────────────────────────────────────────────────
+
+describe('weeklyMatrix', () => {
+  it('excludes the current week, orders newest first, labels across month boundaries', () => {
+    // TODAY 2026-07-10 (Fri) → current week starts Mon 2026-07-06.
+    const rows = weeklyMatrix([item({ id: 'a', weekly_target: 3 })], [], TODAY, 2)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].weekStart).toBe('2026-06-29')
+    expect(rows[0].weekEnd).toBe('2026-07-05')
+    expect(rows[0].label).toBe('Jun 29 – Jul 5')
+    expect(rows[1].weekStart).toBe('2026-06-22')
+    expect(rows[1].weekEnd).toBe('2026-06-28')
+    expect(rows[1].label).toBe('Jun 22 – Jun 28')
+  })
+
+  it('buckets checks into their ISO week and ignores current-week checks', () => {
+    const items = [item({ id: 'a', weekly_target: 3 })]
+    const checks = [
+      check('a', '2026-06-29'), // last week (Mon)
+      check('a', '2026-07-05'), // last week (Sun)
+      check('a', '2026-07-06'), // current week Monday → excluded
+      check('a', '2026-06-28') // week before last (Sun)
+    ]
+    const rows = weeklyMatrix(items, checks, TODAY, 2)
+    expect(rows[0].perItem).toEqual([{ itemId: 'a', done: 2, target: 3 }])
+    expect(rows[1].perItem[0].done).toBe(1)
+  })
+
+  it('overallPct averages capped ratios across targeted exercise items only', () => {
+    const items = [
+      item({ id: 'a', kind: 'exercise', weekly_target: 2 }),
+      item({ id: 'b', kind: 'exercise', weekly_target: 4 }),
+      item({ id: 'c', kind: 'activity', weekly_target: 2 }), // excluded from overall
+      item({ id: 'd', kind: 'exercise', weekly_target: null }) // untargeted → excluded
+    ]
+    const wk = '2026-06-29'
+    const checks = [
+      // a: 3 checks vs target 2 → capped at 1
+      check('a', wk),
+      check('a', shiftYMD(wk, 1)),
+      check('a', shiftYMD(wk, 2)),
+      // b: 1/4 = 0.25
+      check('b', wk),
+      // c: activity checks must not affect the overall
+      check('c', wk),
+      check('c', shiftYMD(wk, 1))
+    ]
+    const rows = weeklyMatrix(items, checks, TODAY, 1)
+    expect(rows[0].overallPct).toBe(63) // (1 + 0.25) / 2 = 0.625 → 63
+    // per-item counts still reported for every active item, in input order
+    expect(rows[0].perItem).toEqual([
+      { itemId: 'a', done: 3, target: 2 },
+      { itemId: 'b', done: 1, target: 4 },
+      { itemId: 'c', done: 2, target: 2 },
+      { itemId: 'd', done: 0, target: null }
+    ])
+  })
+
+  it('overallPct is null when no targeted exercise items exist', () => {
+    const items = [item({ id: 'c', kind: 'activity', weekly_target: 2 })]
+    const rows = weeklyMatrix(items, [check('c', '2026-06-29')], TODAY, 1)
+    expect(rows[0].overallPct).toBeNull()
+    expect(rows[0].perItem[0].done).toBe(1)
+  })
+
+  it('skips inactive items entirely', () => {
+    const rows = weeklyMatrix([item({ id: 'a', weekly_target: 2, active: false })], [], TODAY, 1)
+    expect(rows[0].perItem).toEqual([])
+    expect(rows[0].overallPct).toBeNull()
   })
 })
 

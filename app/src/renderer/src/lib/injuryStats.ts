@@ -51,63 +51,100 @@ export function isoWeekStart(ymd: string): string {
   return toYMD(d)
 }
 
+// ── daily pain resolution ──────────────────────────────────────────────────
+// A day's effective pain is the MAX pain logged that day: "fine at 18:00, flare
+// at night → flare day". All flare stats plot and count on day-maxes, so a day
+// with several logs collapses to one point at its worst reading.
+
+export interface PainDay {
+  date: string
+  /** Maximum pain level logged that day (>= 0). */
+  pain: number
+}
+
+/**
+ * Collapse log entries to one point per day carrying that day's MAX pain level.
+ * Only days with at least one pain-logged entry (pain_level != null) appear.
+ * Sorted oldest → newest.
+ */
+export function dailyPainSeries(entries: InjuryLogEntry[]): PainDay[] {
+  const maxByDay = new Map<string, number>()
+  for (const e of entries) {
+    if (e.pain_level == null) continue
+    const d = entryYMD(e)
+    const prev = maxByDay.get(d)
+    if (prev == null || e.pain_level > prev) maxByDay.set(d, e.pain_level)
+  }
+  return Array.from(maxByDay.entries())
+    .map(([date, pain]) => ({ date, pain }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+}
+
 // ── flare statistics ─────────────────────────────────────────────────────────
 
-/** A "flare" is any log entry with a recorded pain level of 1 or more. */
-function isFlare(e: InjuryLogEntry): boolean {
-  return e.pain_level != null && e.pain_level >= 1
+/** A "flare DAY" is a day whose max pain is 1 or more. */
+function isFlareDay(d: PainDay): boolean {
+  return d.pain >= 1
 }
 
 export interface FlareStats {
-  /** Flares per week over the trailing 30 days, or null if no entries at all. */
+  /** Distinct flare DAYS per week over the trailing 30 days; null if no entries. */
   perWeek30d: number | null
-  /** Mean pain of flares in the last 30d, or null if none. */
+  /** Mean of the day-maxes of flare days in the last 30d, or null if none. */
   avgIntensity30d: number | null
-  /** Trend of pain load, last 30d vs prior 30d; null when data is too thin. */
+  /** Trend of pain load (summed day-maxes), last 30d vs prior 30d; null if thin. */
   trend: 'improving' | 'stable' | 'worsening' | null
-  /** Most recent flare at any time in the provided entries. */
+  /** Most recent flare day at any time, carrying that day's max pain. */
   lastFlare: { daysAgo: number; pain: number } | null
 }
 
 /**
- * Flare frequency, intensity, trend and last-flare summary relative to `now`.
+ * Flare frequency, intensity, trend and last-flare summary relative to `now`,
+ * all computed on DAY-MAXES (see dailyPainSeries): a day is a "flare day" when
+ * its worst logged pain is >= 1, and each day contributes a single value.
  *
- * - perWeek30d: flares in the last 30d divided by (30/7). null only when there
- *   are no entries whatsoever (an injury with entries but no recent flares
- *   reports 0, which is meaningful).
- * - avgIntensity30d: mean pain of flares in the last 30d; null when none.
- * - trend: compares summed pain load of the last 30d against the prior 30d.
- *   improving if load fell >15%, worsening if it rose >15%, else stable.
- *   null when BOTH windows have fewer than 2 flare entries (insufficient data).
- * - lastFlare: the most recent flare across ALL provided entries.
+ * - perWeek30d: distinct flare DAYS in the last 30d divided by (30/7). null only
+ *   when there are no pain-logged entries at all (an injury with entries but no
+ *   recent flares reports 0, which is meaningful).
+ * - avgIntensity30d: mean of the day-maxes of flare days in the last 30d; null
+ *   when none.
+ * - trend: compares summed day-max pain load of the last 30d against the prior
+ *   30d. improving if load fell >15%, worsening if it rose >15%, else stable.
+ *   null when BOTH windows have fewer than 2 flare days (insufficient data).
+ * - lastFlare: the most recent flare day across ALL entries, at its day-max.
  */
 export function flareStats(entries: InjuryLogEntry[], now: Date): FlareStats {
   const nowYMD = toYMD(now)
   const start30 = shiftYMD(nowYMD, -30)
   const start60 = shiftYMD(nowYMD, -60)
 
-  const inWindow = (e: InjuryLogEntry, fromYMD: string, toYMDExclusive: string): boolean => {
-    const d = entryYMD(e)
-    return d > fromYMD && d <= toYMDExclusive
+  const inWindow = (d: PainDay, fromYMD: string, toYMDExclusive: string): boolean => {
+    return d.date > fromYMD && d.date <= toYMDExclusive
   }
 
-  const flares = entries.filter(isFlare)
+  // Whether ANY pain reading exists (pain 0 counts) — distinguishes "no data"
+  // (null) from "data but no flares" (0). Day-maxes drop pain-null entries, so
+  // check the raw log for the null decision.
+  const hasAnyPain = entries.some((e) => e.pain_level != null)
 
-  const last30Flares = flares.filter((e) => inWindow(e, start30, nowYMD))
-  const prior30Flares = flares.filter((e) => inWindow(e, start60, start30))
+  const painDays = dailyPainSeries(entries)
+  const flareDays = painDays.filter(isFlareDay)
 
-  const perWeek30d = entries.length === 0 ? null : last30Flares.length / (30 / 7)
+  const last30Flares = flareDays.filter((d) => inWindow(d, start30, nowYMD))
+  const prior30Flares = flareDays.filter((d) => inWindow(d, start60, start30))
+
+  const perWeek30d = !hasAnyPain ? null : last30Flares.length / (30 / 7)
 
   const avgIntensity30d =
     last30Flares.length === 0
       ? null
-      : last30Flares.reduce((s, e) => s + (e.pain_level ?? 0), 0) / last30Flares.length
+      : last30Flares.reduce((s, d) => s + d.pain, 0) / last30Flares.length
 
-  // Trend from summed pain load, guarded by a minimum sample in both windows.
+  // Trend from summed day-max load, guarded by a minimum sample in both windows.
   let trend: FlareStats['trend'] = null
   if (last30Flares.length >= 2 || prior30Flares.length >= 2) {
-    const loadLast = last30Flares.reduce((s, e) => s + (e.pain_level ?? 0), 0)
-    const loadPrior = prior30Flares.reduce((s, e) => s + (e.pain_level ?? 0), 0)
+    const loadLast = last30Flares.reduce((s, d) => s + d.pain, 0)
+    const loadPrior = prior30Flares.reduce((s, d) => s + d.pain, 0)
     if (loadPrior === 0) {
       // No prior load: any current load is a worsening, otherwise stable.
       trend = loadLast > 0 ? 'worsening' : 'stable'
@@ -119,25 +156,26 @@ export function flareStats(entries: InjuryLogEntry[], now: Date): FlareStats {
     }
   }
 
-  // Last flare across all entries (most recent by entry date).
-  let lastFlare: FlareStats['lastFlare'] = null
-  let bestYMD = ''
-  for (const e of flares) {
-    const d = entryYMD(e)
-    if (d > bestYMD) {
-      bestYMD = d
-      lastFlare = { daysAgo: daysBetween(d, nowYMD), pain: e.pain_level as number }
-    }
-  }
+  // Last flare day (flareDays is sorted oldest → newest, so the last is newest).
+  const newest = flareDays[flareDays.length - 1]
+  const lastFlare: FlareStats['lastFlare'] = newest
+    ? { daysAgo: daysBetween(newest.date, nowYMD), pain: newest.pain }
+    : null
 
   return { perWeek30d, avgIntensity30d, trend, lastFlare }
 }
 
 // ── plan adherence ───────────────────────────────────────────────────────────
 
-/** Active plan items that carry a weekly target (the ones adherence measures). */
+/**
+ * Active REHAB items (kind 'exercise') carrying a weekly target — the only ones
+ * adherence measures. Activities/habits/constraints are excluded from scoring
+ * (activities are allowed training, not rehab work).
+ */
 function targetedItems(items: RecoveryPlanItem[]): RecoveryPlanItem[] {
-  return items.filter((i) => i.active && i.weekly_target != null && i.weekly_target > 0)
+  return items.filter(
+    (i) => i.active && i.kind === 'exercise' && i.weekly_target != null && i.weekly_target > 0
+  )
 }
 
 /**
@@ -224,6 +262,125 @@ export function weeklyProgress(
     return c.item_id === item.id && d >= weekStart && d <= weekEnd
   }).length
   return { done, target: item.weekly_target }
+}
+
+/**
+ * A single day's rehab completion: how many active EXERCISE items were checked
+ * on `dateYMD` out of the total active exercise items. Activities, habits and
+ * constraints are excluded (only rehab work is scored). `total` is 0 when there
+ * are no active exercise items, in which case there is nothing to score.
+ */
+export function dayScore(
+  items: RecoveryPlanItem[],
+  checks: PlanItemCheck[],
+  dateYMD: string
+): { done: number; total: number } {
+  const exercises = items.filter((i) => i.active && i.kind === 'exercise')
+  const total = exercises.length
+  if (total === 0) return { done: 0, total: 0 }
+  const exerciseIds = new Set(exercises.map((i) => i.id))
+  const checkedIds = new Set(
+    checks.filter((c) => c.done_date.slice(0, 10) === dateYMD).map((c) => c.item_id)
+  )
+  let done = 0
+  for (const id of exerciseIds) if (checkedIds.has(id)) done++
+  return { done, total }
+}
+
+// ── adherence rating ─────────────────────────────────────────────────────────
+
+export type AdherenceRating = 'none' | 'low' | 'met' | 'untargeted'
+
+/**
+ * Rate a week's done-count against a weekly target:
+ * - null (or non-positive) target → 'untargeted' — informational count only
+ * - done 0 → 'none'
+ * - done/target >= 0.75 → 'met'
+ * - otherwise → 'low'
+ */
+export function adherenceRating(done: number, target: number | null): AdherenceRating {
+  if (target == null || target <= 0) return 'untargeted'
+  if (done === 0) return 'none'
+  return done / target >= 0.75 ? 'met' : 'low'
+}
+
+// ── weekly matrix (past-weeks history table) ─────────────────────────────────
+
+const MONTH_ABBR = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+]
+
+/** "Jun 29" — locale-independent short date for week labels. */
+function shortDate(ymd: string): string {
+  const [, m, d] = ymd.split('-').map(Number)
+  return `${MONTH_ABBR[m - 1]} ${d}`
+}
+
+export interface WeekMatrixRow {
+  weekStart: string
+  weekEnd: string
+  /** e.g. "Jun 29 – Jul 5" */
+  label: string
+  /** One entry per active item, in the order the items were passed. */
+  perItem: Array<{ itemId: string; done: number; target: number | null }>
+  /**
+   * Mean capped completion (done/target, max 1) across targeted EXERCISE items
+   * only, as a rounded percentage. null when no targeted exercise items exist.
+   */
+  overallPct: number | null
+}
+
+/**
+ * Per-item weekly done-counts for the trailing `weeks` PAST ISO weeks — the
+ * current week is excluded — newest first. Inactive items are skipped.
+ */
+export function weeklyMatrix(
+  items: RecoveryPlanItem[],
+  checks: PlanItemCheck[],
+  todayYMD: string,
+  weeks: number
+): WeekMatrixRow[] {
+  const active = items.filter((i) => i.active)
+  const targeted = active.filter(
+    (i) => i.kind === 'exercise' && i.weekly_target != null && i.weekly_target > 0
+  )
+  const currentWeekStart = isoWeekStart(todayYMD)
+  const rows: WeekMatrixRow[] = []
+
+  for (let i = 1; i <= weeks; i++) {
+    const weekStart = shiftYMD(currentWeekStart, -7 * i)
+    const weekEnd = shiftYMD(weekStart, 6)
+    const doneFor = (itemId: string): number =>
+      checks.filter((c) => {
+        const d = c.done_date.slice(0, 10)
+        return c.item_id === itemId && d >= weekStart && d <= weekEnd
+      }).length
+
+    const perItem = active.map((item) => ({
+      itemId: item.id,
+      done: doneFor(item.id),
+      target: item.weekly_target
+    }))
+
+    let overallPct: number | null = null
+    if (targeted.length > 0) {
+      let sum = 0
+      for (const item of targeted) {
+        sum += Math.min(1, doneFor(item.id) / (item.weekly_target as number))
+      }
+      overallPct = Math.round((sum / targeted.length) * 100)
+    }
+
+    rows.push({
+      weekStart,
+      weekEnd,
+      label: `${shortDate(weekStart)} – ${shortDate(weekEnd)}`,
+      perItem,
+      overallPct
+    })
+  }
+  return rows
 }
 
 // ── unified timeline ─────────────────────────────────────────────────────────

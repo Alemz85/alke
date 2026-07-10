@@ -36,6 +36,21 @@
   padding: var(--space-lg);
 }
 
+/* Whole card is clickable → full view. Hover lifts the surface per tokens. */
+.injury-card--clickable {
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.injury-card--clickable:hover {
+  background: var(--color-surface-hover);
+}
+
+.injury-card--clickable:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
 .injury-card-header {
   display: flex;
   flex-direction: column;
@@ -160,22 +175,7 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── quick-log strip ─────────────────────────────────────────────────────── */
-.injury-quicklog {
-  margin-top: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-divider-soft);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.injury-quicklog-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-
+/* ── buttons ─────────────────────────────────────────────────────────────── */
 .injury-btn {
   border: none;
   border-radius: var(--radius-full);
@@ -210,8 +210,37 @@
   background: var(--color-emphasis-pressed);
 }
 
+/* ── action row (Feeling fine · Log flare-up · Recovery plan) ────────────── */
+.injury-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+/* Distinct from a plain button: outlined, so the row reads as "do something". */
+.injury-action-btn {
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  color: var(--color-text);
+  height: 36px;
+  padding: 0 16px;
+}
+
+.injury-action-btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.injury-action-btn--active {
+  background: var(--color-surface-hover);
+  border-color: var(--color-text-tertiary);
+}
+
 /* ── flare form ──────────────────────────────────────────────────────────── */
 .injury-flare-form {
+  margin-top: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -272,8 +301,7 @@
   gap: var(--space-xxs);
 }
 
-.injury-context-chip,
-.injury-check-chip {
+.injury-context-chip {
   height: 30px;
   padding: 4px 12px;
   display: inline-flex;
@@ -306,18 +334,18 @@
   gap: var(--space-xs);
 }
 
-.injury-checkchips {
+/* ── full view ───────────────────────────────────────────────────────────── */
+.injury-full {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xxs);
+  flex-direction: column;
 }
 
-/* ── expand control ──────────────────────────────────────────────────────── */
-.injury-expand {
+.injury-back {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xxs);
-  margin-top: var(--space-md);
+  align-self: flex-start;
+  margin-bottom: var(--space-lg);
   padding: 0;
   border: none;
   background: none;
@@ -327,29 +355,22 @@
   font-size: var(--type-button-sm-size);
   font-weight: var(--type-button-sm-weight);
   letter-spacing: var(--type-button-sm-letter-spacing);
+  transition: color var(--motion-hover);
 }
 
-.injury-expand-chevron {
-  transition: transform var(--motion-hover);
+.injury-back:hover {
+  color: var(--color-text);
 }
 
-.injury-expand-chevron--open {
-  transform: rotate(90deg);
+.injury-back:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
 }
 
-/* ── detail ──────────────────────────────────────────────────────────────── */
-.injury-detail {
-  margin-top: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-divider-soft);
-}
-
+/* ── section ─────────────────────────────────────────────────────────────── */
 .injury-section {
-  margin-top: var(--space-lg);
-}
-
-.injury-section:first-child {
-  margin-top: 0;
+  margin-top: var(--space-xl);
 }
 
 .injury-section-title {
@@ -362,17 +383,7 @@
   margin: 0 0 var(--space-sm);
 }
 
-.injury-subheading {
-  font-family: var(--font-body);
-  font-size: var(--type-label-size);
-  font-weight: var(--type-label-weight);
-  letter-spacing: var(--type-label-letter-spacing);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-  margin: 0 0 var(--space-xs);
-}
-
-/* ── recovery plan list ──────────────────────────────────────────────────── */
+/* ── recovery plan list (inside modal) ───────────────────────────────────── */
 .injury-plan-list {
   list-style: none;
   margin: 0;
@@ -406,14 +417,6 @@
   color: var(--color-text);
 }
 
-.injury-plan-kind {
-  font-family: var(--font-body);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--color-text-tertiary);
-}
-
 .injury-plan-progress {
   margin-left: auto;
   font-family: var(--font-body);
@@ -429,7 +432,101 @@
   color: var(--color-text-secondary);
 }
 
-/* ── markdown (recovery_plan) ────────────────────────────────────────────── */
+/* ── recovery plan modal ─────────────────────────────────────────────────── */
+.injury-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.injury-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.injury-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.injury-modal-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.injury-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.injury-modal-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.injury-modal-close:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.injury-modal-body {
+  padding: var(--space-lg);
+  overflow-y: auto;
+}
+
+.injury-modal-approach {
+  padding-bottom: var(--space-md);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.injury-modal-group {
+  margin-top: var(--space-lg);
+}
+
+.injury-modal-group:first-of-type {
+  margin-top: 0;
+}
+
+.injury-modal-group-title {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin: 0 0 var(--space-sm);
+}
+
+/* ── markdown (recovery_plan approach) ───────────────────────────────────── */
 .injury-markdown {
   font-family: var(--font-body);
   font-size: var(--type-body-md-size);
@@ -483,59 +580,275 @@
   color: var(--color-text);
 }
 
-/* ── timeline ────────────────────────────────────────────────────────────── */
-.injury-timeline {
+/* ── adherence tables (This week · Past weeks) ───────────────────────────── */
+.injury-adh-wrap {
+  overflow-x: auto;
+}
+
+.injury-adh-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.injury-adh-table th,
+.injury-adh-table td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.injury-adh-table thead th {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-hairline);
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.injury-adh-th-item {
+  text-align: center;
+}
+
+.injury-adh-th-label {
+  display: inline-block;
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Activity columns read as "allowed training", not scored: lighter + italicised. */
+.injury-adh-th-activity {
+  color: var(--color-text-disabled);
+  font-style: italic;
+}
+
+/* Subtle divider between exercise and activity blocks. */
+.injury-adh-th-divider,
+.injury-adh-cell-divider {
+  border-left: 1px solid var(--color-hairline);
+}
+
+.injury-adh-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.injury-adh-date {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.injury-adh-pain {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.injury-adh-score {
+  white-space: nowrap;
+}
+
+.injury-adh-score-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+}
+
+.injury-adh-score-empty {
+  color: var(--color-text-disabled);
+  font-size: var(--type-body-sm-size);
+}
+
+.injury-adh-cell {
+  text-align: center;
+}
+
+.injury-adh-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-on-emphasis);
+  cursor: pointer;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
+}
+
+.injury-adh-check:hover:not(:disabled) {
+  border-color: var(--color-text-tertiary);
+}
+
+.injury-adh-check--on {
+  background: var(--color-text);
+  border-color: var(--color-text);
+}
+
+/* Activity checks are allowed training, not scored — outline stays lighter. */
+.injury-adh-check-activity {
+  border-style: dashed;
+}
+
+.injury-adh-check:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.injury-adh-check:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* Weekly-progress marker inside an item column header ("Heel walks · 2/3"). */
+.injury-adh-th-progress {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+/* "Done for the week": weekly target met → the whole column mutes for the
+   rest of the week. Cells stay clickable; treatment is a quiet filled state. */
+.injury-adh-th--met {
+  color: var(--color-text-disabled);
+}
+
+.injury-adh-th--met .injury-adh-th-progress {
+  color: var(--color-text-disabled);
+}
+
+.injury-adh-cell--met {
+  background: var(--color-surface);
+}
+
+.injury-adh-cell--met .injury-adh-check {
+  border-color: var(--color-divider-soft);
+}
+
+.injury-adh-cell--met .injury-adh-check--on {
+  background: var(--color-zone-neutral-2);
+  border-color: transparent;
+  color: var(--color-text-secondary);
+}
+
+/* ── past-weeks history table ────────────────────────────────────────────── */
+.injury-wk-label {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+/* Compact per-item weekly chip, tinted by adherence rating. Calm alpha tints
+   via existing -dim tokens — never saturated cell fills. */
+.injury-rate-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* target null → neutral count-only chip */
+.injury-rate--untargeted {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+}
+
+/* done = 0 → danger tint */
+.injury-rate--none {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+}
+
+/* 0 < ratio < 0.75 → warn tint (sessions orange, the calmest warm token) */
+.injury-rate--low {
+  background: var(--color-sessions-dim);
+  color: var(--color-sessions-text);
+}
+
+/* ratio >= 0.75 → positive tint (aerobic teal = corr-positive pole) */
+.injury-rate--met {
+  background: var(--color-aerobic-dim);
+  color: var(--color-aerobic-text);
+}
+
+/* ── notes feed ──────────────────────────────────────────────────────────── */
+.injury-notes {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
-}
-
-.injury-timeline-day {
-  display: grid;
-  grid-template-columns: 96px 1fr;
   gap: var(--space-sm);
 }
 
-@media (max-width: 520px) {
-  .injury-timeline-day {
-    grid-template-columns: 1fr;
-    gap: var(--space-xxs);
-  }
+.injury-note-row {
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--color-divider-soft);
 }
 
-.injury-timeline-date {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  font-weight: 600;
-  color: var(--color-text);
+.injury-note-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
-.injury-timeline-events {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.injury-timeline-note-meta {
+.injury-note-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
 }
 
+.injury-note-date {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 .injury-log-source {
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   letter-spacing: var(--type-caption-letter-spacing);
-  color: var(--color-text-tertiary);
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .injury-log-pain {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+  background: var(--color-surface-hover);
   font-family: var(--font-body);
-  font-size: var(--type-caption-size);
+  font-size: 11px;
+  font-weight: 600;
   color: var(--color-text-secondary);
 }
 
@@ -552,24 +865,16 @@
 }
 
 .injury-log-note {
-  margin: 0;
+  margin: var(--space-xxs) 0 0;
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   line-height: var(--type-body-sm-line-height);
   color: var(--color-text-secondary);
 }
 
-.injury-timeline-check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-tertiary);
-}
-
 .injury-showall {
   margin-top: var(--space-sm);
+  align-self: flex-start;
   padding: 0;
   border: none;
   background: none;
@@ -593,7 +898,7 @@
 }
 
 .injury-summary--footer {
-  margin-top: var(--space-lg);
+  margin-top: var(--space-xl);
   padding-top: var(--space-md);
   border-top: 1px solid var(--color-divider-soft);
   color: var(--color-text-tertiary);
@@ -652,23 +957,6 @@
   white-space: nowrap;
 }
 
-.injury-hist-row td:first-child .injury-card-chevron {
-  display: inline-block;
-  vertical-align: middle;
-  margin-right: var(--space-xxs);
-  color: var(--color-text-tertiary);
-  transition: transform var(--motion-hover);
-}
-
-.injury-card-chevron--open {
-  transform: rotate(90deg);
-}
-
 .injury-hist-cap {
   text-transform: capitalize;
-}
-
-.injury-hist-detail-row td {
-  padding: var(--space-md) var(--space-sm) var(--space-lg);
-  background: var(--color-surface);
 }

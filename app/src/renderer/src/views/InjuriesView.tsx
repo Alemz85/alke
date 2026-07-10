@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactElement } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, Check, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, ArrowDownRight, Check, Minus, X } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -26,11 +26,15 @@ import { EmptyState } from '../components'
 import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 import {
   adherencePct,
-  buildTimeline,
+  adherenceRating,
+  dailyPainSeries,
+  dayScore,
   flareStats,
   humanizeDuration,
+  isoWeekStart,
   shiftYMD,
   weeklyAdherence,
+  weeklyMatrix,
   weeklyProgress,
   type FlareStats
 } from '../lib/injuryStats'
@@ -49,6 +53,14 @@ const CONTEXT_LABEL: Record<InjuryNoteContext, string> = {
   on_waking: 'On waking'
 }
 
+// Plan-item kind → modal group label. Order below drives section order.
+const KIND_GROUPS: Array<{ kind: RecoveryPlanItem['kind']; label: string }> = [
+  { kind: 'exercise', label: 'Rehab work' },
+  { kind: 'activity', label: 'Allowed activity' },
+  { kind: 'habit', label: 'Habits' },
+  { kind: 'constraint', label: 'Constraints' }
+]
+
 type TabKey = 'active' | 'history'
 
 function formatDate(iso: string | null): string {
@@ -56,6 +68,13 @@ function formatDate(iso: string | null): string {
   const d = new Date(iso.length <= 10 ? `${iso}T00:00:00` : iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+/** Short date for dense table rows: "Jul 10". */
+function formatDateShort(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ymd
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function sourceLabel(source: string | null): string {
@@ -66,13 +85,17 @@ function sourceLabel(source: string | null): string {
 
 // ── shared queries (one hook set per injury) ─────────────────────────────────
 
-function useInjuryData(injuryId: string, enabled: boolean, todayYMD: string): {
+interface InjuryData {
   log: InjuryLogEntry[]
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
   loading: boolean
-} {
-  const fromDate = shiftYMD(todayYMD, -90)
+}
+
+function useInjuryData(injuryId: string, enabled: boolean, todayYMD: string): InjuryData {
+  // A year of checks: the past-weeks table pages back 8 weeks at a time, so the
+  // 90d chart window alone would starve it (check rows are tiny — fetch wide).
+  const fromDate = shiftYMD(todayYMD, -365)
   const logQuery = useQuery({
     queryKey: ['injuries', 'log', injuryId],
     queryFn: () => window.api.getInjuryLog(injuryId),
@@ -125,13 +148,36 @@ function StatCell({ label, children }: { label: string; children: ReactElement |
   )
 }
 
+function StatRow({
+  stats,
+  adherence
+}: {
+  stats: FlareStats
+  adherence: number | null
+}): ReactElement {
+  return (
+    <div className="injury-stat-row">
+      <StatCell label="Flare freq">
+        {stats.perWeek30d == null ? '—' : `${stats.perWeek30d.toFixed(1)}/wk`}
+      </StatCell>
+      <StatCell label="Avg intensity">
+        {stats.avgIntensity30d == null ? '—' : `${stats.avgIntensity30d.toFixed(1)}/10`}
+      </StatCell>
+      <StatCell label="Trend">
+        <TrendPill trend={stats.trend} />
+      </StatCell>
+      <StatCell label="Adherence 7d">{adherence == null ? '—' : `${adherence}%`}</StatCell>
+    </div>
+  )
+}
+
 interface PainPoint {
   date: string
   pain: number | null
   adherence: number | null
 }
 
-/** Build the chart series: pain points (last 90d) + weekly-adherence underlay. */
+/** Chart series: per-day-max pain (last 90d) + weekly-adherence underlay bars. */
 function usePainSeries(
   log: InjuryLogEntry[],
   plan: RecoveryPlanItem[],
@@ -142,20 +188,17 @@ function usePainSeries(
     const start = shiftYMD(todayYMD, -90)
     // 13 ISO weeks ≈ 90 days of underlay bars.
     const weekly = weeklyAdherence(plan, checks, todayYMD, 13)
-    const adherenceByWeekStart = new Map(weekly.map((w) => [w.weekStart, w.pct]))
 
     const points: PainPoint[] = []
-    // Pain points from flare/log entries in window (pain_level != null).
-    for (const e of log) {
-      const d = e.entry_date.slice(0, 10)
-      if (d < start || d > todayYMD) continue
-      if (e.pain_level == null) continue
-      points.push({ date: d, pain: e.pain_level, adherence: null })
+    // One point per day carrying that day's MAX pain.
+    for (const d of dailyPainSeries(log)) {
+      if (d.date < start || d.date > todayYMD) continue
+      points.push({ date: d.date, pain: d.pain, adherence: null })
     }
     // Adherence underlay: one point per week start carrying its pct.
-    for (const [weekStart, pct] of adherenceByWeekStart) {
-      if (weekStart < start) continue
-      points.push({ date: weekStart, pain: null, adherence: pct })
+    for (const w of weekly) {
+      if (w.weekStart < start) continue
+      points.push({ date: w.weekStart, pain: null, adherence: w.pct })
     }
     points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     return points
@@ -268,9 +311,6 @@ function FlareForm({
     }
   })
 
-  const toggleContext = (c: InjuryNoteContext): void =>
-    setContexts((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
-
   return (
     <div className="injury-flare-form">
       <div className="injury-pain-scale" role="group" aria-label="Pain level">
@@ -301,7 +341,9 @@ function FlareForm({
             type="button"
             className={`chip injury-context-chip${contexts.includes(c) ? ' chip--active' : ''}`}
             aria-pressed={contexts.includes(c)}
-            onClick={() => toggleContext(c)}
+            onClick={() =>
+              setContexts((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
+            }
           >
             {CONTEXT_LABEL[c]}
           </button>
@@ -333,21 +375,20 @@ function FlareForm({
   )
 }
 
-// ── quick-log strip ────────────────────────────────────────────────────────────
+// ── action row (Feeling fine · Log flare-up · Recovery plan) ──────────────────
 
-function QuickLog({
+function ActionRow({
   injury,
-  plan,
-  checks,
-  todayYMD
+  flareOpen,
+  onToggleFlare,
+  onOpenPlan
 }: {
   injury: Injury
-  plan: RecoveryPlanItem[]
-  checks: PlanItemCheck[]
-  todayYMD: string
+  flareOpen: boolean
+  onToggleFlare: () => void
+  onOpenPlan: () => void
 }): ReactElement {
   const queryClient = useQueryClient()
-  const [flareOpen, setFlareOpen] = useState(false)
   const [justLogged, setJustLogged] = useState(false)
 
   const fineMutation = useMutation({
@@ -360,189 +401,506 @@ function QuickLog({
     }
   })
 
+  // Buttons stop propagation so they never trigger the card's navigation.
+  const stop = (fn: () => void) => (e: MouseEvent) => {
+    e.stopPropagation()
+    fn()
+  }
+
+  return (
+    <div className="injury-actions" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className="injury-btn injury-action-btn"
+        disabled={fineMutation.isPending}
+        onClick={stop(() => fineMutation.mutate())}
+      >
+        {justLogged ? '✓ Logged' : 'Feeling fine'}
+      </button>
+      <button
+        type="button"
+        className={`injury-btn injury-action-btn${flareOpen ? ' injury-action-btn--active' : ''}`}
+        aria-expanded={flareOpen}
+        onClick={stop(onToggleFlare)}
+      >
+        Log flare-up
+      </button>
+      <button type="button" className="injury-btn injury-action-btn" onClick={stop(onOpenPlan)}>
+        Recovery plan
+      </button>
+    </div>
+  )
+}
+
+// ── recovery plan modal ───────────────────────────────────────────────────────
+
+function RecoveryPlanModal({
+  injury,
+  plan,
+  checks,
+  todayYMD,
+  onClose
+}: {
+  injury: Injury
+  plan: RecoveryPlanItem[]
+  checks: PlanItemCheck[]
+  todayYMD: string
+  onClose: () => void
+}): ReactElement {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const activeItems = plan.filter((i) => i.active)
+
+  return (
+    <div className="injury-modal-overlay" onClick={onClose}>
+      <div
+        className="injury-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${injury.name} recovery plan`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="injury-modal-head">
+          <h3 className="injury-modal-title">Recovery plan</h3>
+          <button type="button" className="injury-modal-close" aria-label="Close" onClick={onClose}>
+            <X size={18} strokeWidth={1.75} />
+          </button>
+        </div>
+
+        <div className="injury-modal-body">
+          {injury.recovery_plan && (
+            <div className="injury-markdown injury-modal-approach">
+              <Markdown remarkPlugins={[remarkGfm]}>{injury.recovery_plan}</Markdown>
+            </div>
+          )}
+
+          {activeItems.length === 0 ? (
+            <p className="injury-log-empty">No plan items yet.</p>
+          ) : (
+            KIND_GROUPS.map(({ kind, label }) => {
+              const items = activeItems.filter((i) => i.kind === kind)
+              if (items.length === 0) return null
+              return (
+                <section key={kind} className="injury-modal-group">
+                  <h4 className="injury-modal-group-title">{label}</h4>
+                  <ul className="injury-plan-list">
+                    {items.map((item) => {
+                      const progress = weeklyProgress(item, checks, todayYMD)
+                      return (
+                        <li key={item.id} className="injury-plan-item">
+                          <div className="injury-plan-item-head">
+                            <span className="injury-plan-name">{item.name}</span>
+                            {progress && (
+                              <span className="injury-plan-progress tabular-nums">
+                                {progress.done}/{progress.target} this wk
+                              </span>
+                            )}
+                          </div>
+                          {item.note && <p className="injury-plan-note">{item.note}</p>}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              )
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── this-week daily table ─────────────────────────────────────────────────────
+
+/** Active checkable columns: exercises first, then activities. */
+function checkableColumns(plan: RecoveryPlanItem[]): {
+  exercises: RecoveryPlanItem[]
+  activities: RecoveryPlanItem[]
+} {
+  return {
+    exercises: plan.filter((i) => i.active && i.kind === 'exercise'),
+    activities: plan.filter((i) => i.active && i.kind === 'activity')
+  }
+}
+
+function ThisWeekTable({
+  plan,
+  checks,
+  todayYMD,
+  log,
+  readOnly
+}: {
+  plan: RecoveryPlanItem[]
+  checks: PlanItemCheck[]
+  todayYMD: string
+  log: InjuryLogEntry[]
+  readOnly: boolean
+}): ReactElement | null {
+  const queryClient = useQueryClient()
+
   const checkMutation = useMutation({
-    mutationFn: ({ itemId, done }: { itemId: string; done: boolean }) =>
-      window.api.setPlanItemCheck(itemId, todayYMD, done),
+    mutationFn: ({ itemId, dateYMD, done }: { itemId: string; dateYMD: string; done: boolean }) =>
+      window.api.setPlanItemCheck(itemId, dateYMD, done),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['injuries'] })
   })
 
-  const checkableItems = plan.filter((i) => i.active && (i.kind === 'exercise' || i.kind === 'habit'))
-  const checkedTodayIds = new Set(
-    checks.filter((c) => c.done_date.slice(0, 10) === todayYMD).map((c) => c.item_id)
-  )
+  const { exercises, activities } = checkableColumns(plan)
+  const columns = [...exercises, ...activities]
+
+  // checked ids per YMD, and day-max pain per YMD.
+  const checkedByDay = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const c of checks) {
+      const d = c.done_date.slice(0, 10)
+      let set = m.get(d)
+      if (!set) {
+        set = new Set()
+        m.set(d, set)
+      }
+      set.add(c.item_id)
+    }
+    return m
+  }, [checks])
+
+  const painByDay = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const d of dailyPainSeries(log)) m.set(d.date, d.pain)
+    return m
+  }, [log])
+
+  if (columns.length === 0) return null
+
+  // Monday of the current ISO week through today (future days omitted).
+  const weekStart = isoWeekStart(todayYMD)
+  const rows: string[] = []
+  for (let d = weekStart; d <= todayYMD; d = shiftYMD(d, 1)) rows.push(d)
+
+  // "Done for the week": a targeted item whose weekly count met its target —
+  // its whole column mutes for the rest of the week (still clickable).
+  const progressFor = (item: RecoveryPlanItem): { done: number; target: number } | null =>
+    weeklyProgress(item, checks, todayYMD)
+  const isMet = (item: RecoveryPlanItem): boolean => {
+    const p = progressFor(item)
+    return p != null && p.done >= p.target
+  }
+
+  const toggle = (itemId: string, dateYMD: string, done: boolean): void => {
+    if (readOnly) return
+    checkMutation.mutate({ itemId, dateYMD, done })
+  }
+
+  const renderHeader = (item: RecoveryPlanItem, isActivity: boolean, i: number): ReactElement => {
+    const p = progressFor(item)
+    const met = isMet(item)
+    const cls = [
+      'injury-adh-th-item',
+      isActivity ? 'injury-adh-th-activity' : '',
+      isActivity && i === 0 ? 'injury-adh-th-divider' : '',
+      met ? 'injury-adh-th--met' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return (
+      <th key={item.id} className={cls} title={item.name}>
+        <span className="injury-adh-th-label">{item.name}</span>
+        {p && (
+          <span className="injury-adh-th-progress tabular-nums">
+            {' · '}
+            {p.done}/{p.target}
+          </span>
+        )}
+      </th>
+    )
+  }
+
+  const renderCell = (
+    item: RecoveryPlanItem,
+    ymd: string,
+    isActivity: boolean,
+    i: number
+  ): ReactElement => {
+    const on = (checkedByDay.get(ymd) ?? new Set<string>()).has(item.id)
+    const met = isMet(item)
+    const tdCls = [
+      'injury-adh-cell',
+      isActivity ? 'injury-adh-cell-activity' : '',
+      isActivity && i === 0 ? 'injury-adh-cell-divider' : '',
+      met ? 'injury-adh-cell--met' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const btnCls = [
+      'injury-adh-check',
+      isActivity ? 'injury-adh-check-activity' : '',
+      on ? 'injury-adh-check--on' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return (
+      <td key={item.id} className={tdCls}>
+        <button
+          type="button"
+          className={btnCls}
+          aria-pressed={on}
+          aria-label={`${item.name} on ${formatDateShort(ymd)}`}
+          disabled={readOnly || checkMutation.isPending}
+          onClick={() => toggle(item.id, ymd, !on)}
+        >
+          {on && <Check size={12} strokeWidth={2.5} />}
+        </button>
+      </td>
+    )
+  }
 
   return (
-    <div className="injury-quicklog">
-      <div className="injury-quicklog-row">
-        <button
-          type="button"
-          className="injury-btn"
-          disabled={fineMutation.isPending}
-          onClick={() => fineMutation.mutate()}
-        >
-          {justLogged ? '✓ Logged' : 'Feeling fine'}
-        </button>
-        <button
-          type="button"
-          className="injury-btn"
-          aria-expanded={flareOpen}
-          onClick={() => setFlareOpen((v) => !v)}
-        >
-          Log flare-up
-        </button>
-      </div>
-
-      {flareOpen && (
-        <FlareForm
-          injuryId={injury.id}
-          todayYMD={todayYMD}
-          onDone={() => setFlareOpen(false)}
-          onCancel={() => setFlareOpen(false)}
-        />
-      )}
-
-      {checkableItems.length > 0 && (
-        <div className="injury-checkchips">
-          {checkableItems.map((item) => {
-            const checked = checkedTodayIds.has(item.id)
+    <div className="injury-adh-wrap">
+      <table className="injury-adh-table">
+        <thead>
+          <tr>
+            <th className="injury-adh-th-date">Date</th>
+            <th className="injury-adh-th-score">Score</th>
+            {exercises.map((item) => renderHeader(item, false, -1))}
+            {activities.map((item, i) => renderHeader(item, true, i))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((ymd) => {
+            const score = dayScore(plan, checks, ymd)
+            const pain = painByDay.get(ymd)
+            const intensity = score.total > 0 ? score.done / score.total : 0
             return (
-              <button
-                key={item.id}
-                type="button"
-                className={`chip injury-check-chip${checked ? ' chip--active' : ''}`}
-                aria-pressed={checked}
-                disabled={checkMutation.isPending}
-                onClick={() => checkMutation.mutate({ itemId: item.id, done: !checked })}
-              >
-                {checked && <Check size={13} strokeWidth={2.5} />}
-                {item.name}
-              </button>
+              <tr key={ymd} className="injury-adh-row">
+                <td className="injury-adh-date tabular-nums">
+                  <span>{formatDateShort(ymd)}</span>
+                  {pain != null && pain >= 1 && (
+                    <span className="injury-adh-pain tabular-nums">{pain}/10</span>
+                  )}
+                </td>
+                <td className="injury-adh-score">
+                  {score.total > 0 ? (
+                    <span
+                      className="injury-adh-score-pill tabular-nums"
+                      style={{ opacity: 0.4 + intensity * 0.6 }}
+                    >
+                      {score.done}/{score.total}
+                    </span>
+                  ) : (
+                    <span className="injury-adh-score-empty">—</span>
+                  )}
+                </td>
+                {exercises.map((item) => renderCell(item, ymd, false, -1))}
+                {activities.map((item, i) => renderCell(item, ymd, true, i))}
+              </tr>
             )
           })}
-        </div>
-      )}
+        </tbody>
+      </table>
     </div>
   )
 }
 
-// ── expanded detail ────────────────────────────────────────────────────────────
+// ── past-weeks history table ──────────────────────────────────────────────────
 
-function InjuryDetail({
-  injury,
-  log,
+function RatingChip({ done, target }: { done: number; target: number | null }): ReactElement {
+  const rating = adherenceRating(done, target)
+  return (
+    <span className={`injury-rate-chip injury-rate--${rating} tabular-nums`}>
+      {target != null && target > 0 ? `${done}/${target}` : `${done}`}
+    </span>
+  )
+}
+
+function PastWeeksTable({
   plan,
   checks,
-  series,
   todayYMD
 }: {
-  injury: Injury
-  log: InjuryLogEntry[]
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
-  series: PainPoint[]
   todayYMD: string
-}): ReactElement {
-  const [showAll, setShowAll] = useState(false)
-  const activeItems = plan.filter((i) => i.active)
+}): ReactElement | null {
+  const [weeksShown, setWeeksShown] = useState(8)
 
-  const timeline = useMemo(() => buildTimeline(log, checks, plan), [log, checks, plan])
-  const cutoff = shiftYMD(todayYMD, -60)
-  const visibleTimeline = showAll ? timeline : timeline.filter((d) => d.date >= cutoff)
-  const hasMore = timeline.length > visibleTimeline.length
+  const { exercises, activities } = checkableColumns(plan)
+  const columns = [...exercises, ...activities]
+
+  const rows = useMemo(
+    () => weeklyMatrix(columns, checks, todayYMD, weeksShown),
+    // columns derives from plan; the memo key is the source data
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan, checks, todayYMD, weeksShown]
+  )
+
+  if (columns.length === 0) return null
+
+  // Weeks fully before an item existed render an em-dash, not a red zero.
+  // "Existed" dates from the EARLIEST evidence: a backfilled check proves the
+  // item was being done before its row was created (plans imported later).
+  const earliestCheck = new Map<string, string>()
+  for (const c of checks) {
+    const d = c.done_date.slice(0, 10)
+    const prev = earliestCheck.get(c.item_id)
+    if (prev === undefined || d < prev) earliestCheck.set(c.item_id, d)
+  }
+  const existedIn = (item: RecoveryPlanItem, weekEnd: string): boolean => {
+    const created = item.created_at?.slice(0, 10) ?? null
+    const first = earliestCheck.get(item.id) ?? null
+    const since = first !== null && (created === null || first < created) ? first : created
+    return since == null || since <= weekEnd
+  }
 
   return (
-    <div className="injury-detail">
-      {series.length > 0 && (
-        <section className="injury-section">
-          <h4 className="injury-section-title">Pain &amp; adherence</h4>
-          <PainChart data={series} tall />
-        </section>
-      )}
-
-      {activeItems.length > 0 && (
-        <section className="injury-section">
-          <h4 className="injury-section-title">Recovery plan</h4>
-          <ul className="injury-plan-list">
-            {activeItems.map((item) => {
-              const progress = weeklyProgress(item, checks, todayYMD)
-              return (
-                <li key={item.id} className="injury-plan-item">
-                  <div className="injury-plan-item-head">
-                    <span className="injury-plan-name">{item.name}</span>
-                    <span className="injury-plan-kind">{item.kind}</span>
-                    {progress && (
-                      <span className="injury-plan-progress tabular-nums">
-                        {progress.done}/{progress.target} this wk
-                      </span>
-                    )}
-                  </div>
-                  {item.note && <p className="injury-plan-note">{item.note}</p>}
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      )}
-
-      {injury.recovery_plan && (
-        <section className="injury-section">
-          <h5 className="injury-subheading">Approach</h5>
-          <div className="injury-markdown">
-            <Markdown remarkPlugins={[remarkGfm]}>{injury.recovery_plan}</Markdown>
-          </div>
-        </section>
-      )}
-
-      {timeline.length > 0 && (
-        <section className="injury-section">
-          <h4 className="injury-section-title">Timeline</h4>
-          <ol className="injury-timeline">
-            {visibleTimeline.map((day) => (
-              <li key={day.date} className="injury-timeline-day">
-                <div className="injury-timeline-date tabular-nums">{formatDate(day.date)}</div>
-                <div className="injury-timeline-events">
-                  {day.notes.map((n) => (
-                    <div key={n.id} className="injury-timeline-note">
-                      <div className="injury-timeline-note-meta">
-                        <span className="injury-log-source">{sourceLabel(n.source)}</span>
-                        {n.pain_level != null && (
-                          <span className="injury-log-pain tabular-nums">{n.pain_level}/10</span>
-                        )}
-                        {n.context?.map((c) => (
-                          <span key={c} className="injury-tag">
-                            {CONTEXT_LABEL[c as InjuryNoteContext] ?? c}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="injury-log-note">{n.note}</p>
-                    </div>
-                  ))}
-                  {day.checks.map((c, i) => (
-                    <div key={`${day.date}-chk-${i}`} className="injury-timeline-check">
-                      <Check size={13} strokeWidth={2.5} /> {c.itemName}
-                    </div>
-                  ))}
-                </div>
-              </li>
+    <div className="injury-adh-wrap">
+      <table className="injury-adh-table injury-wk-table">
+        <thead>
+          <tr>
+            <th className="injury-adh-th-date">Week</th>
+            <th className="injury-adh-th-score">Adherence</th>
+            {exercises.map((item) => (
+              <th key={item.id} className="injury-adh-th-item" title={item.name}>
+                <span className="injury-adh-th-label">{item.name}</span>
+              </th>
             ))}
-          </ol>
-          {hasMore && (
-            <button type="button" className="injury-showall" onClick={() => setShowAll(true)}>
-              Show all
-            </button>
-          )}
-        </section>
-      )}
-
-      {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
+            {activities.map((item, i) => (
+              <th
+                key={item.id}
+                className={`injury-adh-th-item injury-adh-th-activity${i === 0 ? ' injury-adh-th-divider' : ''}`}
+                title={item.name}
+              >
+                <span className="injury-adh-th-label">{item.name}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const anyExisted = columns.some((item) => existedIn(item, row.weekEnd))
+            return (
+              <tr key={row.weekStart} className="injury-adh-row">
+                <td className="injury-wk-label tabular-nums">{row.label}</td>
+                <td className="injury-adh-score">
+                  {row.overallPct != null && anyExisted ? (
+                    <span
+                      className={`injury-rate-chip injury-rate--${adherenceRating(row.overallPct, 100)} tabular-nums`}
+                    >
+                      {row.overallPct}%
+                    </span>
+                  ) : (
+                    <span className="injury-adh-score-empty">—</span>
+                  )}
+                </td>
+                {columns.map((item, idx) => {
+                  const cell = row.perItem[idx]
+                  const isActivity = item.kind === 'activity'
+                  const divider = isActivity && item.id === activities[0]?.id
+                  const tdCls = [
+                    'injury-adh-cell',
+                    isActivity ? 'injury-adh-cell-activity' : '',
+                    divider ? 'injury-adh-cell-divider' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                  return (
+                    <td key={item.id} className={tdCls}>
+                      {existedIn(item, row.weekEnd) ? (
+                        <RatingChip done={cell.done} target={cell.target} />
+                      ) : (
+                        <span className="injury-adh-score-empty">—</span>
+                      )}
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <button type="button" className="injury-showall" onClick={() => setWeeksShown((w) => w + 8)}>
+        Show more
+      </button>
     </div>
   )
 }
 
-// ── active injury card ─────────────────────────────────────────────────────────
+// ── notes feed ────────────────────────────────────────────────────────────────
 
-function ActiveInjuryCard({ injury, todayYMD }: { injury: Injury; todayYMD: string }): ReactElement {
-  const [expanded, setExpanded] = useState(false)
+function NotesFeed({ log }: { log: InjuryLogEntry[] }): ReactElement | null {
+  const [showAll, setShowAll] = useState(false)
+  const sorted = useMemo(
+    () =>
+      [...log].sort((a, b) => {
+        const ak = a.noted_at ?? a.entry_date
+        const bk = b.noted_at ?? b.entry_date
+        return ak < bk ? 1 : ak > bk ? -1 : 0
+      }),
+    [log]
+  )
+  if (sorted.length === 0) return null
+  const visible = showAll ? sorted : sorted.slice(0, 30)
+  const hasMore = sorted.length > visible.length
+
+  return (
+    <ol className="injury-notes">
+      {visible.map((n) => (
+        <li key={n.id} className="injury-note-row">
+          <div className="injury-note-meta">
+            <span className="injury-log-source">{sourceLabel(n.source)}</span>
+            <span className="injury-note-date tabular-nums">{formatDateShort(n.entry_date)}</span>
+            {n.pain_level != null && n.pain_level >= 1 && (
+              <span className="injury-log-pain tabular-nums">{n.pain_level}/10</span>
+            )}
+            {n.context?.map((c) => (
+              <span key={c} className="injury-tag">
+                {CONTEXT_LABEL[c as InjuryNoteContext] ?? c}
+              </span>
+            ))}
+          </div>
+          {n.note && <p className="injury-log-note">{n.note}</p>}
+        </li>
+      ))}
+      {hasMore && (
+        <button type="button" className="injury-showall" onClick={() => setShowAll(true)}>
+          Show all
+        </button>
+      )}
+    </ol>
+  )
+}
+
+// ── injury header (name, badges, body area, since) ────────────────────────────
+
+function InjuryHeader({ injury }: { injury: Injury }): ReactElement {
+  return (
+    <div className="injury-card-header">
+      <h3 className="injury-name">{injury.name}</h3>
+      <div className="injury-badges">
+        <span className="badge injury-badge-status">{STATUS_LABEL[injury.status]}</span>
+        {injury.severity && <span className="badge injury-badge-severity">{injury.severity}</span>}
+        {injury.body_area && <span className="injury-body-area">{injury.body_area}</span>}
+      </div>
+      <span className="injury-since">since {formatDate(injury.started_at)}</span>
+    </div>
+  )
+}
+
+// ── active injury card (glance + actions, navigates to full view) ─────────────
+
+function ActiveInjuryCard({
+  injury,
+  todayYMD,
+  onOpen
+}: {
+  injury: Injury
+  todayYMD: string
+  onOpen: () => void
+}): ReactElement {
   const { log, plan, checks, loading } = useInjuryData(injury.id, true, todayYMD)
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
 
@@ -550,113 +908,198 @@ function ActiveInjuryCard({ injury, todayYMD }: { injury: Injury; todayYMD: stri
   const adherence = adherencePct(plan, checks, todayYMD, 7)
   const series = usePainSeries(log, plan, checks, todayYMD)
 
+  const [flareOpen, setFlareOpen] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
+
   const flareCaption =
     stats.lastFlare == null
       ? 'No flares in the last 90 days'
       : `Last flare: ${stats.lastFlare.daysAgo} days ago · ${stats.lastFlare.pain}/10`
 
   return (
-    <div className="injury-card injury-card--active">
-      <div className="injury-card-header">
-        <h3 className="injury-name">{injury.name}</h3>
-        <div className="injury-badges">
-          <span className="badge injury-badge-status">{STATUS_LABEL[injury.status]}</span>
-          {injury.severity && <span className="badge injury-badge-severity">{injury.severity}</span>}
-          {injury.body_area && <span className="injury-body-area">{injury.body_area}</span>}
-        </div>
-        <span className="injury-since">since {formatDate(injury.started_at)}</span>
-      </div>
-
-      <div className="injury-stat-row">
-        <StatCell label="Flare freq">
-          {stats.perWeek30d == null ? '—' : `${stats.perWeek30d.toFixed(1)}/wk`}
-        </StatCell>
-        <StatCell label="Avg intensity">
-          {stats.avgIntensity30d == null ? '—' : `${stats.avgIntensity30d.toFixed(1)}/10`}
-        </StatCell>
-        <StatCell label="Trend">
-          <TrendPill trend={stats.trend} />
-        </StatCell>
-        <StatCell label="Adherence 7d">{adherence == null ? '—' : `${adherence}%`}</StatCell>
-      </div>
-
-      {series.length > 0 ? (
-        <div className="injury-sparkline">
-          <PainChart data={series} tall={false} />
-        </div>
-      ) : (
-        !loading && <p className="injury-log-empty injury-sparkline-empty">No pain data yet.</p>
-      )}
-      <p className="injury-flare-caption">{flareCaption}</p>
-
-      <QuickLog injury={injury} plan={plan} checks={checks} todayYMD={todayYMD} />
-
-      <button
-        type="button"
-        className="injury-expand"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
+    <>
+      <div
+        className="injury-card injury-card--active injury-card--clickable"
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onOpen()
+          }
+        }}
       >
-        <ChevronRight
-          size={16}
-          strokeWidth={1.5}
-          className={`injury-expand-chevron${expanded ? ' injury-expand-chevron--open' : ''}`}
-        />
-        Details
-      </button>
+        <InjuryHeader injury={injury} />
 
-      {expanded && (
-        <InjuryDetail
+        <StatRow stats={stats} adherence={adherence} />
+
+        {series.length > 0 ? (
+          <div className="injury-sparkline">
+            <PainChart data={series} tall={false} />
+          </div>
+        ) : (
+          !loading && <p className="injury-log-empty injury-sparkline-empty">No pain data yet.</p>
+        )}
+        <p className="injury-flare-caption">{flareCaption}</p>
+
+        <ActionRow
           injury={injury}
-          log={log}
+          flareOpen={flareOpen}
+          onToggleFlare={() => setFlareOpen((v) => !v)}
+          onOpenPlan={() => setPlanOpen(true)}
+        />
+
+        {flareOpen && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <FlareForm
+              injuryId={injury.id}
+              todayYMD={todayYMD}
+              onDone={() => setFlareOpen(false)}
+              onCancel={() => setFlareOpen(false)}
+            />
+          </div>
+        )}
+      </div>
+
+      {planOpen && (
+        <RecoveryPlanModal
+          injury={injury}
           plan={plan}
           checks={checks}
-          series={series}
           todayYMD={todayYMD}
+          onClose={() => setPlanOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
+// ── full injury view (replaces the list) ──────────────────────────────────────
+
+function InjuryFullView({
+  injury,
+  todayYMD,
+  readOnly,
+  onBack
+}: {
+  injury: Injury
+  todayYMD: string
+  readOnly: boolean
+  onBack: () => void
+}): ReactElement {
+  const { log, plan, checks } = useInjuryData(injury.id, true, todayYMD)
+  const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
+  const stats = useMemo(() => flareStats(log, now), [log, now])
+  const adherence = adherencePct(plan, checks, todayYMD, 7)
+  const series = usePainSeries(log, plan, checks, todayYMD)
+
+  const [flareOpen, setFlareOpen] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
+
+  // The list and this view share the same scroll container; entering an
+  // injury must not inherit the list's scroll offset.
+  useEffect(() => {
+    document.querySelector('.content-area')?.scrollTo(0, 0)
+  }, [injury.id])
+
+  return (
+    <div className="injury-full">
+      <button type="button" className="injury-back" onClick={onBack}>
+        <ArrowLeft size={16} strokeWidth={1.75} />
+        Injuries
+      </button>
+
+      <InjuryHeader injury={injury} />
+
+      {!readOnly && (
+        <>
+          <ActionRow
+            injury={injury}
+            flareOpen={flareOpen}
+            onToggleFlare={() => setFlareOpen((v) => !v)}
+            onOpenPlan={() => setPlanOpen(true)}
+          />
+          {flareOpen && (
+            <FlareForm
+              injuryId={injury.id}
+              todayYMD={todayYMD}
+              onDone={() => setFlareOpen(false)}
+              onCancel={() => setFlareOpen(false)}
+            />
+          )}
+        </>
+      )}
+      {readOnly && (
+        <div className="injury-actions">
+          <button type="button" className="injury-btn injury-action-btn" onClick={() => setPlanOpen(true)}>
+            Recovery plan
+          </button>
+        </div>
+      )}
+
+      <StatRow stats={stats} adherence={adherence} />
+
+      {series.length > 0 && (
+        <section className="injury-section">
+          <h4 className="injury-section-title">Pain &amp; adherence</h4>
+          <PainChart data={series} tall />
+        </section>
+      )}
+
+      {plan.some((i) => i.active && (i.kind === 'exercise' || i.kind === 'activity')) && (
+        <>
+          <section className="injury-section">
+            <h4 className="injury-section-title">This week</h4>
+            <ThisWeekTable
+              plan={plan}
+              checks={checks}
+              todayYMD={todayYMD}
+              log={log}
+              readOnly={readOnly}
+            />
+          </section>
+
+          <section className="injury-section">
+            <h4 className="injury-section-title">Past weeks</h4>
+            <PastWeeksTable plan={plan} checks={checks} todayYMD={todayYMD} />
+          </section>
+        </>
+      )}
+
+      {log.length > 0 && (
+        <section className="injury-section">
+          <h4 className="injury-section-title">Notes</h4>
+          <NotesFeed log={log} />
+        </section>
+      )}
+
+      {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
+
+      {planOpen && (
+        <RecoveryPlanModal
+          injury={injury}
+          plan={plan}
+          checks={checks}
+          todayYMD={todayYMD}
+          onClose={() => setPlanOpen(false)}
         />
       )}
     </div>
   )
 }
 
-// ── history row (lazy detail) ──────────────────────────────────────────────────
+// ── history row (opens the same full view) ────────────────────────────────────
 
-function HistoryRow({ injury, todayYMD }: { injury: Injury; todayYMD: string }): ReactElement {
-  const [expanded, setExpanded] = useState(false)
-  const { log, plan, checks } = useInjuryData(injury.id, expanded, todayYMD)
-  const series = usePainSeries(log, plan, checks, todayYMD)
-
+function HistoryRow({ injury, onOpen }: { injury: Injury; onOpen: () => void }): ReactElement {
   return (
-    <>
-      <tr className="injury-hist-row" onClick={() => setExpanded((v) => !v)}>
-        <td>
-          <ChevronRight
-            size={14}
-            strokeWidth={1.5}
-            className={`injury-card-chevron${expanded ? ' injury-card-chevron--open' : ''}`}
-          />
-          {injury.name}
-        </td>
-        <td>{injury.body_area ?? '—'}</td>
-        <td className="injury-hist-cap">{injury.severity ?? '—'}</td>
-        <td className="tabular-nums">{humanizeDuration(injury.started_at, injury.resolved_at)}</td>
-        <td className="tabular-nums">{formatDate(injury.resolved_at)}</td>
-      </tr>
-      {expanded && (
-        <tr className="injury-hist-detail-row">
-          <td colSpan={5}>
-            <InjuryDetail
-              injury={injury}
-              log={log}
-              plan={plan}
-              checks={checks}
-              series={series}
-              todayYMD={todayYMD}
-            />
-          </td>
-        </tr>
-      )}
-    </>
+    <tr className="injury-hist-row" onClick={onOpen}>
+      <td>{injury.name}</td>
+      <td>{injury.body_area ?? '—'}</td>
+      <td className="injury-hist-cap">{injury.severity ?? '—'}</td>
+      <td className="tabular-nums">{humanizeDuration(injury.started_at, injury.resolved_at)}</td>
+      <td className="tabular-nums">{formatDate(injury.resolved_at)}</td>
+    </tr>
   )
 }
 
@@ -664,6 +1107,7 @@ function HistoryRow({ injury, todayYMD }: { injury: Injury; todayYMD: string }):
 
 export function InjuriesView(): ReactElement {
   const [tab, setTab] = useState<TabKey>('active')
+  const [selectedInjuryId, setSelectedInjuryId] = useState<string | null>(null)
 
   const injuriesQuery = useQuery({
     queryKey: ['injuries', 'list'],
@@ -682,6 +1126,22 @@ export function InjuriesView(): ReactElement {
   const injuries = injuriesQuery.data ?? []
   const active = injuries.filter((i) => i.status === 'active' || i.status === 'recovering')
   const history = injuries.filter((i) => i.status === 'resolved')
+
+  const selected = selectedInjuryId ? injuries.find((i) => i.id === selectedInjuryId) ?? null : null
+
+  // Full view replaces the entire list surface.
+  if (selected) {
+    return (
+      <div className="view">
+        <InjuryFullView
+          injury={selected}
+          todayYMD={todayYMD}
+          readOnly={selected.status === 'resolved'}
+          onBack={() => setSelectedInjuryId(null)}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="view">
@@ -718,7 +1178,12 @@ export function InjuriesView(): ReactElement {
         ) : (
           <div className="injury-list">
             {active.map((injury) => (
-              <ActiveInjuryCard key={injury.id} injury={injury} todayYMD={todayYMD} />
+              <ActiveInjuryCard
+                key={injury.id}
+                injury={injury}
+                todayYMD={todayYMD}
+                onOpen={() => setSelectedInjuryId(injury.id)}
+              />
             ))}
           </div>
         )
@@ -738,7 +1203,11 @@ export function InjuriesView(): ReactElement {
             </thead>
             <tbody>
               {history.map((injury) => (
-                <HistoryRow key={injury.id} injury={injury} todayYMD={todayYMD} />
+                <HistoryRow
+                  key={injury.id}
+                  injury={injury}
+                  onOpen={() => setSelectedInjuryId(injury.id)}
+                />
               ))}
             </tbody>
           </table>
