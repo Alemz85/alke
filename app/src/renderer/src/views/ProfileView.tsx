@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type FormEvent,
@@ -89,12 +90,18 @@ function AchievementsSection({ workouts, now }: { workouts: Workout[]; now: Date
 
 // ── goal progress chart ──────────────────────────────────────────────────────
 
-function GoalProgressChart({ points }: { points: GoalProgressPoint[] }): ReactElement {
+function GoalProgressChart({
+  points,
+  height = 80
+}: {
+  points: GoalProgressPoint[]
+  height?: number
+}): ReactElement {
   const data = [...points]
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     .map((p) => ({ date: p.date, value: p.value }))
   return (
-    <ResponsiveContainer width="100%" height={80}>
+    <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
         <XAxis dataKey="date" hide />
         <Tooltip
@@ -125,10 +132,12 @@ function GoalProgressChart({ points }: { points: GoalProgressPoint[] }): ReactEl
 
 function GoalMetricBlock({
   goal,
-  showDescription
+  showDescription,
+  chartHeight = 80
 }: {
   goal: Goal
   showDescription: boolean
+  chartHeight?: number
 }): ReactElement {
   const queryClient = useQueryClient()
 
@@ -215,7 +224,7 @@ function GoalMetricBlock({
       )}
 
       {points.length > 1 ? (
-        <GoalProgressChart points={points} />
+        <GoalProgressChart points={points} height={chartHeight} />
       ) : (
         !progressQuery.isLoading && <p className="profile-metric-empty">Not enough data points yet.</p>
       )}
@@ -236,50 +245,24 @@ const STATUS_LABEL: Record<Goal['status'], string> = {
   abandoned: 'Abandoned'
 }
 
-function GoalCard({
-  goal,
-  now,
-  onEdit
-}: {
-  goal: Goal
-  now: Date
-  onEdit: () => void
-}): ReactElement {
-  const queryClient = useQueryClient()
-  const [expanded, setExpanded] = useState(false)
-
-  const statusMutation = useMutation({
-    mutationFn: (patch: GoalPatch) => window.api.updateGoal(goal.id, patch),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['goals'] })
-  })
-
-  const tp = timeProgress(goal, now)
-  const isActive = goal.status === 'active'
-  const isOnHold = goal.status === 'on_hold'
-
-  // The whole card toggles expansion (collapsed cards share a fixed height, so
-  // overflow is cropped) — except clicks on its interactive children.
-  const toggleExpand = (e: ReactMouseEvent<HTMLDivElement>): void => {
-    if ((e.target as HTMLElement).closest('button, a, input, textarea')) return
-    setExpanded((v) => !v)
-  }
-
+function GoalHead({ goal }: { goal: Goal }): ReactElement {
   return (
-    <div
-      className={`profile-goal-card${isActive || isOnHold ? '' : ' profile-goal-card--inactive'}${expanded ? ' profile-goal-card--expanded' : ''}`}
-      onClick={toggleExpand}
-      aria-expanded={expanded}
-    >
-      <div className="profile-goal-head">
-        <h3 className="profile-goal-title">{goal.title}</h3>
-        <div className="profile-goal-badges">
-          <span className={`badge profile-goal-status profile-goal-status--${goal.status}`}>
-            {STATUS_LABEL[goal.status]}
-          </span>
-          {goal.created_by === 'chat' && <span className="profile-goal-via">via chat</span>}
-        </div>
+    <div className="profile-goal-head">
+      <h3 className="profile-goal-title">{goal.title}</h3>
+      <div className="profile-goal-badges">
+        <span className={`badge profile-goal-status profile-goal-status--${goal.status}`}>
+          {STATUS_LABEL[goal.status]}
+        </span>
+        {goal.created_by === 'chat' && <span className="profile-goal-via">via chat</span>}
       </div>
+    </div>
+  )
+}
 
+function GoalMeta({ goal, now }: { goal: Goal; now: Date }): ReactElement {
+  const tp = timeProgress(goal, now)
+  return (
+    <>
       <div className="profile-goal-meta">
         <span>Started {formatDate(goal.started_at)}</span>
         {goal.duration_days != null ? (
@@ -296,61 +279,139 @@ function GoalCard({
           <div className="profile-goal-bar-fill" style={{ width: `${tp.pct}%` }} />
         </div>
       )}
+    </>
+  )
+}
 
-      {goal.description && (
-        <p className={`profile-goal-desc${expanded ? ' profile-goal-desc--expanded' : ''}`}>
-          {goal.description}
-        </p>
-      )}
+function GoalActions({ goal, onEdit }: { goal: Goal; onEdit: () => void }): ReactElement {
+  const queryClient = useQueryClient()
 
-      <GoalMetricBlock goal={goal} showDescription={expanded} />
+  const statusMutation = useMutation({
+    mutationFn: (patch: GoalPatch) => window.api.updateGoal(goal.id, patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['goals'] })
+  })
 
-      <div className="profile-goal-actions">
-        <ButtonSoft onClick={onEdit}>Edit</ButtonSoft>
-        {isActive ? (
-          <>
-            <ButtonSoft
-              onClick={() => statusMutation.mutate({ status: 'completed' })}
-              disabled={statusMutation.isPending}
-            >
-              Complete
-            </ButtonSoft>
-            <ButtonSoft
-              onClick={() => statusMutation.mutate({ status: 'on_hold' })}
-              disabled={statusMutation.isPending}
-            >
-              Hold
-            </ButtonSoft>
-            <ButtonSoft
-              onClick={() => statusMutation.mutate({ status: 'abandoned' })}
-              disabled={statusMutation.isPending}
-            >
-              Abandon
-            </ButtonSoft>
-          </>
-        ) : isOnHold ? (
-          <>
-            <ButtonSoft
-              onClick={() => statusMutation.mutate({ status: 'active' })}
-              disabled={statusMutation.isPending}
-            >
-              Resume
-            </ButtonSoft>
-            <ButtonSoft
-              onClick={() => statusMutation.mutate({ status: 'abandoned' })}
-              disabled={statusMutation.isPending}
-            >
-              Abandon
-            </ButtonSoft>
-          </>
-        ) : (
-          <ButtonSoft
-            onClick={() => statusMutation.mutate({ status: 'active' })}
-            disabled={statusMutation.isPending}
-          >
-            Reactivate
+  const set = (status: Goal['status']): void => statusMutation.mutate({ status })
+  const pending = statusMutation.isPending
+
+  return (
+    <div className="profile-goal-actions">
+      <ButtonSoft onClick={onEdit}>Edit</ButtonSoft>
+      {goal.status === 'active' ? (
+        <>
+          <ButtonSoft onClick={() => set('completed')} disabled={pending}>
+            Complete
           </ButtonSoft>
-        )}
+          <ButtonSoft onClick={() => set('on_hold')} disabled={pending}>
+            Hold
+          </ButtonSoft>
+          <ButtonSoft onClick={() => set('abandoned')} disabled={pending}>
+            Abandon
+          </ButtonSoft>
+        </>
+      ) : goal.status === 'on_hold' ? (
+        <>
+          <ButtonSoft onClick={() => set('active')} disabled={pending}>
+            Resume
+          </ButtonSoft>
+          <ButtonSoft onClick={() => set('abandoned')} disabled={pending}>
+            Abandon
+          </ButtonSoft>
+        </>
+      ) : (
+        <ButtonSoft onClick={() => set('active')} disabled={pending}>
+          Reactivate
+        </ButtonSoft>
+      )}
+    </div>
+  )
+}
+
+function GoalCard({
+  goal,
+  now,
+  onEdit,
+  onOpen
+}: {
+  goal: Goal
+  now: Date
+  onEdit: () => void
+  onOpen: () => void
+}): ReactElement {
+  const dimmed = goal.status === 'completed' || goal.status === 'abandoned'
+
+  // Collapsed cards share a fixed height so the action rows line up; the full
+  // content lives in the peek (click anywhere non-interactive to open it).
+  const handleOpen = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    if ((e.target as HTMLElement).closest('button, a, input, textarea')) return
+    onOpen()
+  }
+
+  return (
+    <div
+      className={`profile-goal-card${dimmed ? ' profile-goal-card--inactive' : ''}`}
+      onClick={handleOpen}
+    >
+      <GoalHead goal={goal} />
+      <GoalMeta goal={goal} now={now} />
+
+      {goal.description && <p className="profile-goal-desc">{goal.description}</p>}
+
+      <GoalMetricBlock goal={goal} showDescription={false} />
+
+      <GoalActions goal={goal} onEdit={onEdit} />
+    </div>
+  )
+}
+
+// ── goal detail peek (Notion-style centered pop-out of a card) ───────────────
+
+function GoalDetailModal({
+  goal,
+  now,
+  onEdit,
+  onClose
+}: {
+  goal: Goal
+  now: Date
+  onEdit: () => void
+  onClose: () => void
+}): ReactElement {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="profile-modal-overlay" onClick={onClose}>
+      <div
+        className="profile-modal profile-modal--detail"
+        role="dialog"
+        aria-modal="true"
+        aria-label={goal.title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="profile-modal-head">
+          <GoalHead goal={goal} />
+          <button type="button" className="profile-modal-close" aria-label="Close" onClick={onClose}>
+            <X size={18} strokeWidth={1.75} />
+          </button>
+        </div>
+
+        <div className="profile-goal-detail-body">
+          <GoalMeta goal={goal} now={now} />
+
+          {goal.description && (
+            <p className="profile-goal-desc profile-goal-desc--expanded">{goal.description}</p>
+          )}
+
+          <GoalMetricBlock goal={goal} showDescription chartHeight={160} />
+
+          <GoalActions goal={goal} onEdit={onEdit} />
+        </div>
       </div>
     </div>
   )
@@ -508,6 +569,15 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
 function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElement {
   const [modalGoal, setModalGoal] = useState<Goal | null | 'new'>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
+
+  // Resolve from the live list so mutations inside the peek stay fresh.
+  const detailGoal = detailId != null ? (goals.find((g) => g.id === detailId) ?? null) : null
+
+  const openEdit = (goal: Goal): void => {
+    setDetailId(null)
+    setModalGoal(goal)
+  }
 
   return (
     <section className="profile-section">
@@ -524,9 +594,24 @@ function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElemen
       ) : (
         <div className="profile-goal-grid">
           {goals.map((g) => (
-            <GoalCard key={g.id} goal={g} now={now} onEdit={() => setModalGoal(g)} />
+            <GoalCard
+              key={g.id}
+              goal={g}
+              now={now}
+              onEdit={() => openEdit(g)}
+              onOpen={() => setDetailId(g.id)}
+            />
           ))}
         </div>
+      )}
+
+      {detailGoal != null && (
+        <GoalDetailModal
+          goal={detailGoal}
+          now={now}
+          onEdit={() => openEdit(detailGoal)}
+          onClose={() => setDetailId(null)}
+        />
       )}
 
       {modalGoal != null && (

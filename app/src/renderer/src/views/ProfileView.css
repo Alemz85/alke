@@ -153,9 +153,9 @@
   }
 }
 
-/* Collapsed cards share one fixed height so the pinned action row lines up
-   across the grid; overflow is cropped inside the metric block. Clicking the
-   card expands it to full width and natural height. */
+/* Cards share one fixed height so the pinned action row lines up across the
+   grid; overflow is cropped inside the metric block. Clicking a card opens
+   the detail peek (centered pop-out) with the full content. */
 .profile-goal-card {
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
@@ -166,11 +166,11 @@
   height: 480px;
   overflow: hidden;
   cursor: pointer;
+  transition: background var(--motion-hover);
 }
 
-.profile-goal-card--expanded {
-  grid-column: 1 / -1;
-  height: auto;
+.profile-goal-card:hover {
+  background: var(--color-surface-hover);
 }
 
 .profile-goal-card--inactive {
@@ -295,8 +295,10 @@
   overflow: hidden;
 }
 
-.profile-goal-card--expanded .profile-goal-metric {
+/* Inside the detail peek nothing is cropped. */
+.profile-modal--detail .profile-goal-metric {
   overflow: visible;
+  flex: none;
 }
 
 .profile-goal-metric--pending {
@@ -383,6 +385,25 @@
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
   overflow: hidden;
+}
+
+/* Goal detail peek: a wider dialog that scrolls its body when tall. */
+.profile-modal--detail {
+  max-width: 760px;
+}
+
+.profile-modal--detail .profile-goal-head {
+  flex: 1;
+  margin-right: var(--space-sm);
+}
+
+.profile-goal-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  padding-top: 0;
+  overflow-y: auto;
 }
 
 .profile-modal-head {
