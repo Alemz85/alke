@@ -30,7 +30,7 @@ interface Draft {
 }
 
 function fracToPct(frac: number | null): string {
-  return frac == null ? '' : String(Math.round(frac * 1000) / 10)
+  return frac == null ? '' : String(Math.round(frac * 10000) / 100)
 }
 
 function numOrEmpty(n: number | null): string {

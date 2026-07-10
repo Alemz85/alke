@@ -405,12 +405,23 @@ export async function updateChatSession(
   if (error) throw new Error(`updateChatSession: ${error.message}`)
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function assertSessionId(id: unknown): void {
+  if (typeof id !== 'string' || !UUID_RE.test(id)) throw new Error('invalid session id')
+}
+
 export async function renameChatSession(id: string, title: string): Promise<void> {
+  assertSessionId(id)
+  if (typeof title !== 'string' || title.trim().length === 0 || title.length > 200) {
+    throw new Error('invalid title')
+  }
   const { error } = await getClient().from('chat_sessions').update({ title }).eq('id', id)
   if (error) throw new Error(`renameChatSession: ${error.message}`)
 }
 
 export async function deleteChatSession(id: string): Promise<void> {
+  assertSessionId(id)
   const { error } = await getClient().from('chat_sessions').delete().eq('id', id)
   if (error) throw new Error(`deleteChatSession: ${error.message}`)
 }

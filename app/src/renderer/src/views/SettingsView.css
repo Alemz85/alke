@@ -253,7 +253,7 @@
 }
 
 .button-primary:active:not(:disabled) {
-  background: #c9c9cd;
+  background: var(--color-emphasis-pressed);
 }
 
 .button-primary:disabled {

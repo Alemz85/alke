@@ -11,6 +11,11 @@ import * as db from './db'
 // Packaged apps can't reach the source tree relative to __dirname (which
 // resolves inside app.asar); ship chatctx as an extraResource instead (see
 // electron-builder.yml) and read it from resourcesPath when packaged.
+// Ensure no claude CLI child outlives the app.
+app.on('before-quit', () => {
+  for (const [, entry] of activeChildren) entry.child.kill('SIGTERM')
+})
+
 const CHATCTX_DIR = app.isPackaged
   ? join(process.resourcesPath, 'chatctx')
   : join(__dirname, '../../../chatctx')
@@ -100,6 +105,7 @@ export async function sendMessage(
         const block = inner.content_block as Record<string, unknown> | undefined
         if (block?.type === 'text' && assistantText && !assistantText.endsWith('\n')) {
           assistantText += '\n\n'
+          emit({ kind: 'text', text: '\n\n' })
         }
         return
       }
@@ -123,6 +129,7 @@ export async function sendMessage(
       for (const block of content as Record<string, unknown>[]) {
         if (block.type === 'tool_use') {
           if (assistantText && !assistantText.endsWith('\n')) assistantText += '\n\n'
+          emit({ kind: 'text', text: '\n\n' })
           const input = JSON.stringify(block.input ?? {})
           emit({
             kind: 'tool',

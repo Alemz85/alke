@@ -193,7 +193,7 @@ export function buildWeightSeries(
   maxGapDays = 7
 ): WeightPoint[] {
   const readings = rows
-    .filter((r): r is DailyMetric & { weight_kg: number } => r.weight_kg !== null)
+    .filter((r): r is DailyMetric & { weight_kg: number } => typeof r.weight_kg === 'number')
     .sort((a, b) => a.date.localeCompare(b.date))
 
   return readings.map((r, i) => {

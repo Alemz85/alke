@@ -89,6 +89,7 @@ export function ChatView(): ReactElement {
     setMessages(session?.messages ?? [])
     setStream([])
     setError(null)
+    setBusy(false) // terminal events for a previously-active session are dropped by the stream guard
   }
 
   function newAnalysis(): void {
@@ -96,6 +97,7 @@ export function ChatView(): ReactElement {
     setMessages([])
     setStream([])
     setError(null)
+    setBusy(false)
   }
 
   async function send(override?: string): Promise<void> {

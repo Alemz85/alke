@@ -125,7 +125,8 @@
 .chat-session-icon-btn--confirm,
 .chat-session-row:hover .chat-session-icon-btn--confirm {
   opacity: 1;
-  color: var(--color-flag-text);
+  color: var(--color-text);
+  background: var(--color-surface-hover);
 }
 
 .chat-session-row--editing {
@@ -136,10 +137,10 @@
   width: 100%;
   border: none;
   background: var(--color-surface-elevated);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--color-text);
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: var(--type-body-sm-size);
   padding: 2px var(--space-xs);
   outline: none;
 }
@@ -215,7 +216,8 @@
 }
 
 .chat-error {
-  color: var(--color-flag-text);
+  color: var(--color-text);
+  background: var(--color-surface-hover);
   font-family: var(--font-body);
   font-size: 13px;
   white-space: pre-wrap;

@@ -26,6 +26,7 @@
      chat-send), which is painted with --color-text. Always the inverse of
      --color-text so the label reads. */
   --color-on-emphasis: #000000;
+  --color-emphasis-pressed: #c9c9cd;
 
   /* Semantic accents — base hue used for chart lines, fills, dots, cells. */
   --color-aerobic: #2dd4bf;
