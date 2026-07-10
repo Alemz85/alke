@@ -9,6 +9,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { IPC_CHANNELS } from '@shared/types'
 import * as db from './db'
+import * as chat from './chat'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -59,6 +60,16 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getUserConfig, () => db.getUserConfig())
   ipcMain.handle(IPC_CHANNELS.getTodayFlags, () => db.getTodayFlags())
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
+  ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
+  ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
+  ipcMain.handle(IPC_CHANNELS.chatStatus, () => chat.checkClaude())
+  ipcMain.handle(IPC_CHANNELS.chatListSessions, () => db.listChatSessions())
+  ipcMain.handle(IPC_CHANNELS.chatGetSession, (_event, id: string) => db.getChatSession(id))
+  ipcMain.handle(IPC_CHANNELS.chatSend, (event, sessionId: string | null, message: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) throw new Error('no window for chat send')
+    return chat.sendMessage(win, sessionId, message)
+  })
 }
 
 app.whenReady().then(() => {

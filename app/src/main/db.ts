@@ -8,6 +8,11 @@ if (typeof globalThis.WebSocket === 'undefined') {
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type {
+  InsightCorrelation,
+  InsightModel,
+  ChatMessage,
+  ChatSession,
+  ChatSessionMeta,
   ComputedDaily,
   ComputedWorkout,
   DailyMetric,
@@ -259,4 +264,59 @@ export async function getDbStatus(): Promise<DbStatus> {
   } catch (err) {
     return { connected: false, error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+export async function getInsightCorrelations(): Promise<InsightCorrelation[]> {
+  const { data, error } = await getClient()
+    .from('insight_correlations')
+    .select('var_x, var_y, lag_days, r, n, p_value')
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) =>
+    normalizeNumeric(row as unknown as InsightCorrelation, ['r', 'n', 'p_value', 'lag_days'])
+  )
+}
+
+export async function getInsightModels(): Promise<InsightModel[]> {
+  const { data, error } = await getClient()
+    .from('insight_models')
+    .select('name, computed_at, spec, coefficients, diagnostics')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as InsightModel[]
+}
+
+export async function listChatSessions(): Promise<ChatSessionMeta[]> {
+  const { data, error } = await getClient()
+    .from('chat_sessions')
+    .select('id, started_at, title')
+    .order('started_at', { ascending: false })
+  if (error) throw new Error(`listChatSessions: ${error.message}`)
+  return (data ?? []) as ChatSessionMeta[]
+}
+
+export async function getChatSession(id: string): Promise<ChatSession | null> {
+  const { data, error } = await getClient()
+    .from('chat_sessions')
+    .select('id, started_at, title, claude_session_id, messages')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw new Error(`getChatSession: ${error.message}`)
+  return (data as ChatSession) ?? null
+}
+
+export async function createChatSession(title: string): Promise<ChatSession> {
+  const { data, error } = await getClient()
+    .from('chat_sessions')
+    .insert({ title, messages: [] })
+    .select('id, started_at, title, claude_session_id, messages')
+    .single()
+  if (error) throw new Error(`createChatSession: ${error.message}`)
+  return data as ChatSession
+}
+
+export async function updateChatSession(
+  id: string,
+  patch: { messages?: ChatMessage[]; claude_session_id?: string }
+): Promise<void> {
+  const { error } = await getClient().from('chat_sessions').update(patch).eq('id', id)
+  if (error) throw new Error(`updateChatSession: ${error.message}`)
 }

@@ -11,7 +11,19 @@ const api: HealthApi = {
     ipcRenderer.invoke(IPC_CHANNELS.getComputedDaily, fromDate, toDate),
   getUserConfig: () => ipcRenderer.invoke(IPC_CHANNELS.getUserConfig),
   getTodayFlags: () => ipcRenderer.invoke(IPC_CHANNELS.getTodayFlags),
-  getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus)
+  getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus),
+  getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),
+  getInsightModels: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightModels),
+  chatStatus: () => ipcRenderer.invoke(IPC_CHANNELS.chatStatus),
+  chatListSessions: () => ipcRenderer.invoke(IPC_CHANNELS.chatListSessions),
+  chatGetSession: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatGetSession, id),
+  chatSend: (sessionId: string | null, message: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message),
+  onChatStream: (listener: (payload: never) => void) => {
+    const wrapped = (_e: unknown, payload: never): void => listener(payload)
+    ipcRenderer.on('chat:stream', wrapped as never)
+    return () => ipcRenderer.removeListener('chat:stream', wrapped as never)
+  }
 }
 
 if (process.contextIsolated) {

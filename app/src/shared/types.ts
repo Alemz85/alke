@@ -104,6 +104,13 @@ export interface HealthApi {
   getUserConfig(): Promise<UserConfig>
   getTodayFlags(): Promise<Flag[]>
   getDbStatus(): Promise<DbStatus>
+  getInsightCorrelations(): Promise<InsightCorrelation[]>
+  getInsightModels(): Promise<InsightModel[]>
+  chatStatus(): Promise<ChatStatus>
+  chatListSessions(): Promise<ChatSessionMeta[]>
+  chatGetSession(id: string): Promise<ChatSession | null>
+  chatSend(sessionId: string | null, message: string): Promise<{ sessionId: string }>
+  onChatStream(listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void): () => void
 }
 
 export const IPC_CHANNELS = {
@@ -113,5 +120,57 @@ export const IPC_CHANNELS = {
   getComputedDaily: 'db:getComputedDaily',
   getUserConfig: 'db:getUserConfig',
   getTodayFlags: 'db:getTodayFlags',
-  getDbStatus: 'db:getDbStatus'
+  getDbStatus: 'db:getDbStatus',
+  getInsightCorrelations: 'db:getInsightCorrelations',
+  getInsightModels: 'db:getInsightModels',
+  chatStatus: 'chat:status',
+  chatListSessions: 'chat:listSessions',
+  chatGetSession: 'chat:getSession',
+  chatSend: 'chat:send'
 } as const
+
+export interface InsightCorrelation {
+  var_x: string
+  var_y: string
+  lag_days: number
+  r: number
+  n: number
+  p_value: number
+}
+
+export interface InsightModel {
+  name: string
+  computed_at: string | null
+  spec: string | null
+  coefficients: Record<string, { coef: number; ci_low: number; ci_high: number; p_value: number }> | null
+  diagnostics: { n?: number; r2?: number; caveat?: string } | null
+}
+
+export interface ChatStatus {
+  available: boolean
+  version?: string
+  error?: string
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  ts: string
+}
+
+export interface ChatSessionMeta {
+  id: string
+  started_at: string
+  title: string | null
+}
+
+export interface ChatSession extends ChatSessionMeta {
+  claude_session_id: string | null
+  messages: ChatMessage[]
+}
+
+export type ChatStreamEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; name: string; detail: string }
+  | { kind: 'done' }
+  | { kind: 'error'; message: string }
