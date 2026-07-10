@@ -17,6 +17,8 @@ Subagents do NOT reduce total token spend for a fixed task; they usually increas
 
 Dispatch when: (a) ≥2 genuinely independent tasks exist, or (b) the reading required is bulky and one-shot (you need the conclusion, not the material). Work inline when the task is small, single-surface, and you already know where the code is — dispatch overhead exceeds the isolation benefit.
 
+**Tiering math**: down-tier tokens cost a fraction of top-tier tokens, so the agent's boot tax (re-reading CLAUDE.md, exploring) is paid in cheap tokens while the orchestrator's expensive tokens go only to spec, judgment, and integration. The decision variable is rework probability, not token price: cheap work is only cheap when acceptance is machine-checkable (tests/typecheck gates), because otherwise verification means re-reading the work at top-tier prices — or worse, accepting subtly wrong work and paying during reconciliation. Rule: **delegate down-tier when spec + machine-checkable acceptance costs under ~20% of doing the work; keep in-tier anything whose verification requires re-reading it.** The two mechanisms multiply: expensive-model × small context + cheap-model × large context.
+
 ## Non-negotiable rules (learned the hard way — see memory `parallel-agent-file-collisions`)
 
 1. **Strictly disjoint file surfaces.** Every parallel agent gets an explicit, exclusive file list. Never two agents on the same file, even "additively".
