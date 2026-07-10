@@ -53,6 +53,7 @@ export function RecoveryView(): ReactElement {
   const [sleepRange, setSleepRange] = useState<ChipRange>('30d')
   const [rhrRange, setRhrRange] = useState<ChipRange>('90d')
   const [hrvRange, setHrvRange] = useState<ChipRange>('90d')
+  const [respRange, setRespRange] = useState<ChipRange>('90d')
 
   const userConfigQuery = useRecoveryUserConfig()
   const flagsQuery = useRecoveryTodayFlags()
@@ -151,6 +152,16 @@ export function RecoveryView(): ReactElement {
     weeklyMedian: hrvWeeklyMedian.get(r.date) ?? null
   }))
   const hasHrvData = hrvChartData.some((d) => d.hrv !== null)
+
+  // --- Respiratory rate chart data (dots + 7d rolling avg line) ---
+  const respDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[respRange])
+  const respRollingAvg = rollingAverage(allMetrics, 'respiratory_rate')
+  const respChartData = respDaysWindow.map((r) => ({
+    date: r.date,
+    resp: r.respiratory_rate,
+    avgResp: respRollingAvg.has(r.date) ? (respRollingAvg.get(r.date) as number) : null
+  }))
+  const hasRespData = respChartData.some((d) => d.resp !== null)
 
   // --- VO2max sparse scatter (1y) ---
   const vo2Window = sliceLastNDays(allMetrics, RANGE_DAYS['1y'])
@@ -394,6 +405,75 @@ export function RecoveryView(): ReactElement {
               </>
             ) : (
               <EmptyState message="No HRV data in this range yet — heart rate variability will chart here once Apple Health exports it." />
+            )}
+          </ChartCard>
+        </div>
+
+        <div className="recovery-grid--span-6">
+          <ChartCard
+            title="Respiratory rate"
+            span={6}
+            headerRight={<ChipFilter value={respRange} onChange={setRespRange} options={['30d', '90d', '1y']} />}
+          >
+            {hasRespData ? (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={respChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="var(--color-divider-soft)" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={AXIS_TICK}
+                      axisLine={AXIS_LINE}
+                      tickLine={false}
+                      minTickGap={32}
+                      tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                    />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={32}
+                      domain={['auto', 'auto']}
+                      label={{ value: 'br/min', position: 'insideTopLeft', fill: 'var(--color-text-tertiary)', fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
+                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      formatter={(value: number, name: string) => [
+                        `${value.toFixed(1)} br/min`,
+                        name === 'avgResp' ? '7d avg' : 'Respiratory rate'
+                      ]}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="resp"
+                      name="resp"
+                      stroke="var(--color-recovery)"
+                      strokeOpacity={0.35}
+                      strokeWidth={0}
+                      dot={{ r: 2, fill: 'var(--color-recovery)', fillOpacity: 0.35, strokeWidth: 0 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="avgResp"
+                      name="avgResp"
+                      stroke="var(--color-recovery)"
+                      strokeWidth={1.5}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <p className="recovery-chart-caption">
+                  Overnight breaths per minute — a steady baseline; spikes can precede illness.
+                </p>
+              </>
+            ) : (
+              <EmptyState message="No respiratory rate data in this range yet — overnight breathing rate will chart here once Apple Health exports it." />
             )}
           </ChartCard>
         </div>

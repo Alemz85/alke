@@ -64,7 +64,7 @@ def fetch_hr_samples(sb: Client, workout_ids: list[str]) -> dict[str, list[tuple
 def fetch_daily_metrics(sb: Client) -> list[dict]:
     def q():
         return sb.table("daily_metrics").select(
-            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min"
+            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min, weight_kg"
         ).order("date")
 
     return _fetch_all(q)

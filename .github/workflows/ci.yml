@@ -37,7 +37,7 @@ jobs:
         working-directory: supabase/functions/ingest
 
   app:
-    name: app (typecheck + build)
+    name: app (typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +51,8 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run typecheck
+        working-directory: app
+      - run: npm test
         working-directory: app
       - run: npm run build
         working-directory: app

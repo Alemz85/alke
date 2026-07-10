@@ -14,7 +14,11 @@ MIN_CORR_N = 20
 MIN_DLM_N = 40
 
 DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior"]
-PERFS = ["ef", "decoupling", "hrr60", "trimp_total"]
+PERFS = ["ef", "decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
+
+WEIGHT_FFILL_LIMIT_DAYS = 3
+WEIGHT_ROLLING_WINDOW_DAYS = 7
+WEIGHT_ROLLING_MIN_PERIODS = 4
 
 
 def zscore_trailing(frame: pd.DataFrame, days: int = 180) -> pd.DataFrame:
@@ -23,6 +27,33 @@ def zscore_trailing(frame: pd.DataFrame, days: int = 180) -> pd.DataFrame:
     window = frame.loc[frame.index >= frame.index.max() - pd.Timedelta(days=days - 1)]
     sd = window.std(ddof=0)
     return (window - window.mean()) / sd.replace(0, np.nan)
+
+
+def weight_series(raw: pd.Series | None) -> tuple[pd.Series | None, pd.Series | None]:
+    """Build the two derived weight series for the analysis frame from a raw
+    daily (possibly gappy, possibly string-typed) body-weight column.
+
+    Returns `(weight, weight_7d_slope)`:
+    - `weight`: raw daily weight, coerced to float, forward-filled up to
+      `WEIGHT_FFILL_LIMIT_DAYS` days to bridge sparse weigh-ins. Gaps longer
+      than the limit stay NaN rather than carrying a stale reading forward
+      indefinitely.
+    - `weight_7d_slope`: trend in kg/week — the 7-day rolling mean of the
+      ffilled weight minus that same rolling mean 7 days prior. Weight is an
+      OUTCOME (slow-moving), not a daily driver, so downstream correlation
+      tests treat this slope as a PERF variable regressed against same/lagged
+      drivers (sleep, rhr_dev, hrv_dev, trimp_prior).
+
+    Returns `(None, None)` when `raw` is None (column absent from the source
+    frame) so callers can skip attaching weight columns without special-casing.
+    """
+    if raw is None:
+        return None, None
+
+    weight = pd.to_numeric(raw, errors="coerce").ffill(limit=WEIGHT_FFILL_LIMIT_DAYS)
+    rolling_mean = weight.rolling(WEIGHT_ROLLING_WINDOW_DAYS, min_periods=WEIGHT_ROLLING_MIN_PERIODS).mean()
+    weight_7d_slope = rolling_mean - rolling_mean.shift(WEIGHT_ROLLING_WINDOW_DAYS)
+    return weight, weight_7d_slope
 
 
 def compute_correlations(

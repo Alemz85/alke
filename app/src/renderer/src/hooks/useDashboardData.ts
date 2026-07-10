@@ -15,10 +15,16 @@ function isoDateToday(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-/** Last 3 workouts — fetch a generous 90d window and slice, since there's no "limit" API. */
+/**
+ * Last 3 workouts — fetch a generous 90d window and slice, since there's no
+ * "limit" API. The window bounds are snapped to whole calendar days so the
+ * query key is stable within a day; using millisecond-precision ISO timestamps
+ * here made the key change on every render, spawning an endless refetch loop
+ * that left the query perpetually `pending` (and the list perpetually empty).
+ */
 export function useRecentWorkouts() {
-  const fromIso = new Date(Date.now() - 90 * DAY_MS).toISOString()
-  const toIso = new Date().toISOString()
+  const fromIso = `${isoDateNDaysAgo(90)}T00:00:00.000Z`
+  const toIso = `${isoDateToday()}T23:59:59.999Z`
   return useQuery<Workout[]>({
     queryKey: ['dashboard', 'workouts', fromIso, toIso],
     queryFn: () => window.api.getWorkouts(fromIso, toIso)

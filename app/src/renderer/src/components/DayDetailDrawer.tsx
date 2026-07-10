@@ -180,8 +180,26 @@ function SessionCard({
   )
 }
 
+// Ordered zone keys z1..z5. Each zone gets a luminance step within the sessions
+// (orange) domain — lightest for easy Z1, full accent for hard Z5 — so the bar
+// reads as one domain, never borrowing another family's hue.
+const ZONE_ORDER = ['z1', 'z2', 'z3', 'z4', 'z5'] as const
+const ZONE_OPACITY: Record<string, number> = { z1: 0.28, z2: 0.45, z3: 0.62, z4: 0.8, z5: 1 }
+const ZONE_LABEL: Record<string, string> = { z1: 'Z1', z2: 'Z2', z3: 'Z3', z4: 'Z4', z5: 'Z5' }
+
+function fmtZoneTime(seconds: number): string {
+  const total = Math.round(seconds)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  if (m === 0) return `${s}s`
+  return `${m}m ${s.toString().padStart(2, '0')}s`
+}
+
 function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactElement {
-  const entries = Object.entries(zones).filter(([, v]) => typeof v === 'number') as [string, number][]
+  const entries: [string, number][] = ZONE_ORDER.flatMap((z) => {
+    const v = zones[z]
+    return typeof v === 'number' ? [[z, v] as [string, number]] : []
+  })
   const total = entries.reduce((sum, [, v]) => sum + v, 0)
   if (total === 0) {
     return (
@@ -190,16 +208,33 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
       </div>
     )
   }
+  const shown = entries.filter(([, v]) => v > 0)
   return (
-    <div className="day-drawer-zones-bar">
-      {entries.map(([zone, value]) => (
-        <div
-          key={zone}
-          className="day-drawer-zones-segment"
-          style={{ width: `${(value / total) * 100}%` }}
-          title={`${zone}: ${value}`}
-        />
-      ))}
-    </div>
+    <>
+      <div className="day-drawer-zones-bar">
+        {shown.map(([zone, value]) => (
+          <div
+            key={zone}
+            className="day-drawer-zones-segment"
+            style={{
+              width: `${(value / total) * 100}%`,
+              background: `color-mix(in srgb, var(--color-sessions) ${(ZONE_OPACITY[zone] ?? 1) * 100}%, transparent)`
+            }}
+            title={`${ZONE_LABEL[zone] ?? zone}: ${fmtZoneTime(value)}`}
+          />
+        ))}
+      </div>
+      <div className="day-drawer-zones-legend">
+        {shown.map(([zone, value]) => (
+          <span key={zone} className="day-drawer-zones-legend-item">
+            <span
+              className="day-drawer-zones-swatch"
+              style={{ background: `color-mix(in srgb, var(--color-sessions) ${(ZONE_OPACITY[zone] ?? 1) * 100}%, transparent)` }}
+            />
+            {ZONE_LABEL[zone] ?? zone} <span className="tabular-nums">{fmtZoneTime(value)}</span>
+          </span>
+        ))}
+      </div>
+    </>
   )
 }

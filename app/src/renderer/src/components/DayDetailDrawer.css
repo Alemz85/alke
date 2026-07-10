@@ -173,3 +173,26 @@
 .day-drawer-zones-segment:last-child {
   border-right: none;
 }
+
+.day-drawer-zones-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.day-drawer-zones-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-secondary);
+}
+
+.day-drawer-zones-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}

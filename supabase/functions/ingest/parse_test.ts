@@ -622,6 +622,45 @@ Deno.test("maps vo2_max, hrv, respiratory_rate, wrist temp metrics", () => {
   assertEquals(dm.wrist_temp_deviation_c, 0.3);
 });
 
+Deno.test("maps weight_body_mass in kg as a scalar (last value per date wins)", () => {
+  const payload = {
+    data: {
+      metrics: [
+        {
+          name: "weight_body_mass",
+          units: "kg",
+          data: [
+            { date: "2026-07-08 07:00:00 +0200", qty: 78.4 },
+            { date: "2026-07-08 20:00:00 +0200", qty: 78.9 },
+          ],
+        },
+      ],
+      workouts: [],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const dm = result.dailyMetrics[0];
+  assertEquals(dm.weight_kg, 78.9); // last-wins, NOT summed
+});
+
+Deno.test("converts weight_body_mass from lb to kg when units say lb", () => {
+  const payload = {
+    data: {
+      metrics: [
+        {
+          name: "weight_body_mass",
+          units: "lb",
+          data: [{ date: "2026-07-08 07:00:00 +0200", qty: 172.84 }],
+        },
+      ],
+      workouts: [],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const dm = result.dailyMetrics[0];
+  assertAlmostEquals(dm.weight_kg!, 172.84 * 0.45359237, 0.0001);
+});
+
 Deno.test("maps state_of_mind metric into jsonb", () => {
   const payload = {
     data: {

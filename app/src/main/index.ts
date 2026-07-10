@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, screen, BrowserWindow, ipcMain } from 'electron'
 
 // Load .env before anything else touches process.env.SUPABASE_URL / SUPABASE_SERVICE_KEY.
 // `app.getPath('userData')` is safe to call before app.ready(), so we can resolve the
@@ -25,8 +25,21 @@ import { IPC_CHANNELS, type UserConfigPatch } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
 
+// HEALTH_APP_DISPLAY=external places the window on a non-primary display
+// (used by automated test launches so they stay off the main monitor).
+function externalDisplayBounds(): { x: number; y: number } | null {
+  if (process.env.HEALTH_APP_DISPLAY !== 'external') return null
+  const primary = screen.getPrimaryDisplay()
+  const external = screen.getAllDisplays().find((d) => d.id !== primary.id)
+  if (!external) return null
+  const { x, y, width, height } = external.workArea
+  return { x: x + Math.max(0, (width - 1440) / 2), y: y + Math.max(0, (height - 900) / 2) }
+}
+
 function createWindow(): void {
+  const position = externalDisplayBounds()
   const mainWindow = new BrowserWindow({
+    ...(position ?? {}),
     width: 1440,
     height: 900,
     minWidth: 900,

@@ -206,7 +206,7 @@ def run(full: bool) -> None:
 def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     import pandas as pd
 
-    from metrics.insights import compute_correlations, ef_dlm, zscore_trailing
+    from metrics.insights import compute_correlations, ef_dlm, weight_series, zscore_trailing
 
     # per-day performance: EF / decoupling / HRR60 averaged over that day's workouts
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
@@ -261,6 +261,18 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     frame["sleep_midpoint_dev"] = (
         frame["sleep_midpoint"] - frame["sleep_midpoint"].rolling(14, min_periods=5).median()
     ).abs()
+
+    # weight is a slow OUTCOME, not a daily driver: raw (ffilled) weight is kept
+    # for reference/plotting, and weight_7d_slope (kg/week trend) is the PERF
+    # variable correlations test against sleep/rhr/hrv/training-load drivers.
+    if any("weight_kg" in (r or {}) for r in daily_metrics):
+        raw_weight = pd.Series(
+            [(dm_by_date.get(d) or {}).get("weight_kg") for d in index],
+            index=frame.index,
+        )
+        weight, weight_7d_slope = weight_series(raw_weight)
+        frame["weight"] = weight
+        frame["weight_7d_slope"] = weight_7d_slope
 
     correlations = compute_correlations(zscore_trailing(frame))
     db.replace_insight_correlations(sb, correlations)

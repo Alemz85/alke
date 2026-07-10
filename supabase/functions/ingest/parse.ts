@@ -39,6 +39,7 @@ export interface NormalizedDailyMetric {
   active_energy_kcal: number | null;
   wrist_temp_deviation_c: number | null;
   state_of_mind: Record<string, unknown> | null;
+  weight_kg: number | null;
 }
 
 export interface ParsedResult {
@@ -61,6 +62,7 @@ const FIELD_MAP = {
     step_count: "steps", // summed per date
     active_energy: "active_energy_kcal", // summed per date
     apple_sleeping_wrist_temperature: "wrist_temp_deviation_c",
+    weight_body_mass: "weight_kg", // scalar per date, last-wins; unit-converted to kg
     // sleep_analysis and state_of_mind are handled specially (multi-field).
   } as Record<string, keyof NormalizedDailyMetric>,
   sleepAnalysisMetricName: "sleep_analysis",
@@ -105,6 +107,14 @@ const FIELD_MAP = {
     km: 1000,
     mi: 1609.344,
     yd: 0.9144,
+  } as Record<string, number>,
+  // Mass unit -> kilograms conversion factor, for weight_body_mass. Unknown
+  // units (including absent/kg) assume kilograms already.
+  massUnitToKg: {
+    kg: 1,
+    lb: 0.45359237,
+    lbs: 0.45359237,
+    st: 6.35029318,
   } as Record<string, number>,
 } as const;
 
@@ -361,6 +371,7 @@ function emptyDailyMetric(date: string): NormalizedDailyMetric {
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
     state_of_mind: null,
+    weight_kg: null,
   };
 }
 
@@ -413,13 +424,23 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
     if (!column) continue; // unknown metric name: ignore gracefully
 
     const summed = column === "steps" || column === "active_energy_kcal";
+    const isWeight = column === "weight_kg";
+    // The metric-level `units` field applies to every entry in `data`
+    // (Health Auto Export doesn't vary units per-entry within one metric).
+    const metricUnits = typeof metric.units === "string" ? metric.units.toLowerCase() : null;
 
     for (const entry of data) {
       if (!isPlainObject(entry)) continue;
       const date = localDatePart(entry.date);
       if (!date) continue;
-      const qty = toNumber(entry.qty);
+      let qty = toNumber(entry.qty);
       if (qty === null) continue;
+
+      if (isWeight) {
+        const entryUnits = typeof entry.units === "string" ? entry.units.toLowerCase() : metricUnits;
+        const factor = entryUnits ? FIELD_MAP.massUnitToKg[entryUnits] ?? 1 : 1;
+        qty = qty * factor;
+      }
 
       const row = getRow(date) as unknown as Record<string, unknown>;
       if (summed) {
@@ -523,6 +544,7 @@ const MERGEABLE_COLUMNS = [
   "active_energy_kcal",
   "wrist_temp_deviation_c",
   "state_of_mind",
+  "weight_kg",
 ] as const;
 
 export type DailyMetricRow = { date: string } & Partial<

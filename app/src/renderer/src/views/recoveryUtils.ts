@@ -106,7 +106,10 @@ export function median(values: Array<number | null | undefined>): number | null 
  */
 export function rollingAverage(
   rows: DailyMetric[],
-  field: keyof Pick<DailyMetric, 'sleep_duration_min' | 'resting_hr' | 'hrv_sdnn_ms'>,
+  field: keyof Pick<
+    DailyMetric,
+    'sleep_duration_min' | 'resting_hr' | 'hrv_sdnn_ms' | 'respiratory_rate'
+  >,
   windowDays = 7
 ): Map<string, number> {
   const out = new Map<string, number>()
