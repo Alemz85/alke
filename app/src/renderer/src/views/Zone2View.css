@@ -1,8 +1,42 @@
+.zone2-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xxs);
+  margin-top: var(--space-lg);
+}
+
+.zone2-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+  margin-top: var(--space-xl);
+}
+
+@media (max-width: 760px) {
+  .zone2-stat-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.zone2-ef-explainer {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
 .zone2-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   gap: var(--space-md);
   margin-top: var(--space-xl);
+}
+
+.zone2-stat-row + .zone2-grid {
+  margin-top: var(--space-md);
 }
 
 .zone2-grid .chart-card--span-12 {
