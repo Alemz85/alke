@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, ChevronRight, Plus } from 'lucide-react'
+import { ArrowUp, Check, ChevronRight, Copy, Plus, Square } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage, ChatStreamEvent } from '@shared/types'
@@ -30,6 +30,7 @@ export function ChatView(): ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const activeIdRef = useRef<string | null>(null)
   activeIdRef.current = activeId
 
@@ -65,6 +66,7 @@ export function ChatView(): ReactElement {
       })
       setBusy(false)
       void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+      textareaRef.current?.focus()
     } else if (event.kind === 'error') {
       setError(event.message)
       setBusy(false)
@@ -104,6 +106,11 @@ export function ChatView(): ReactElement {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
     }
+  }
+
+  async function stop(): Promise<void> {
+    if (!activeId) return
+    await window.api.chatStop(activeId)
   }
 
   const sessions = sessionsQuery.data ?? []
@@ -169,8 +176,11 @@ export function ChatView(): ReactElement {
                   {m.content}
                 </div>
               ) : (
-                <div key={i} className="chat-assistant">
-                  <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                <div key={i} className="chat-assistant-block">
+                  <CopyButton text={m.content} />
+                  <div className="chat-assistant">
+                    <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                  </div>
                 </div>
               )
             )}
@@ -189,6 +199,7 @@ export function ChatView(): ReactElement {
 
           <div className="chat-input-well">
             <textarea
+              ref={textareaRef}
               className="chat-input"
               rows={1}
               placeholder="Ask about your training, recovery, trends…"
@@ -202,18 +213,36 @@ export function ChatView(): ReactElement {
                 }
               }}
             />
-            <button
-              className="chat-send"
-              onClick={() => void send()}
-              disabled={busy || !input.trim()}
-              aria-label="Send"
-            >
-              <ArrowUp size={18} strokeWidth={2} />
-            </button>
+            {busy ? (
+              <button className="chat-send chat-stop" onClick={() => void stop()} aria-label="Stop">
+                <Square size={14} fill="currentColor" />
+              </button>
+            ) : (
+              <button className="chat-send" onClick={() => void send()} disabled={!input.trim()} aria-label="Send">
+                <ArrowUp size={18} strokeWidth={2} />
+              </button>
+            )}
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }): ReactElement {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className="chat-copy-btn"
+      aria-label="Copy message"
+      onClick={() => {
+        void navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      {copied ? <Check size={16} strokeWidth={1.5} /> : <Copy size={16} strokeWidth={1.5} />}
+    </button>
   )
 }
 

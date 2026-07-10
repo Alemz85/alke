@@ -1,0 +1,291 @@
+/* Settings — neutral chrome, no domain accent. Column of cards, max ~640px. */
+
+.settings-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  max-width: 640px;
+}
+
+.settings-card {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.settings-card-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+}
+
+/* ── Fields ─────────────────────────────────────────────────────────────── */
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.settings-field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+.settings-label {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
+}
+
+.settings-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.settings-unit {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* text-input per DESIGN.md: surface bg, hairline border, radius-md, 48px. */
+.text-input {
+  appearance: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  height: 48px;
+  padding: 0 var(--space-md);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+  transition: border-color var(--motion-hover);
+}
+
+.text-input:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.text-input:focus,
+.text-input:focus-visible {
+  border-color: var(--color-text-tertiary);
+  outline: none;
+}
+
+.text-input::placeholder {
+  color: var(--color-text-disabled);
+}
+
+/* Strip native number spinners — steppers stay flat per spec. */
+.settings-input--num::-webkit-outer-spin-button,
+.settings-input--num::-webkit-inner-spin-button,
+.settings-input--stepper::-webkit-outer-spin-button,
+.settings-input--stepper::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.settings-input--num {
+  width: 140px;
+}
+
+.settings-input--tz {
+  width: 100%;
+  max-width: 340px;
+}
+
+.settings-help {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.settings-field-error {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-flag-text);
+}
+
+.settings-card-footnote {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.settings-caption,
+.settings-error-caption {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.settings-error-caption {
+  color: var(--color-flag-text);
+}
+
+/* ── Weekly minimum sessions ────────────────────────────────────────────── */
+
+.settings-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.settings-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.settings-session-name {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text);
+}
+
+.settings-input--stepper {
+  width: 88px;
+  text-align: center;
+  padding: 0 var(--space-sm);
+}
+
+.settings-session-unit {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.settings-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  transition:
+    background var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.settings-icon-button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.settings-add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.settings-add-select {
+  width: 100%;
+  max-width: 220px;
+  color: var(--color-text-secondary);
+}
+
+.settings-add-hint {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Save bar ───────────────────────────────────────────────────────────── */
+
+.settings-save-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: 44px;
+}
+
+.button-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0 var(--space-lg);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-text);
+  color: var(--color-on-emphasis);
+  font-family: var(--font-body);
+  font-size: var(--type-button-md-size);
+  font-weight: var(--type-button-md-weight);
+  line-height: var(--type-button-md-line-height);
+  letter-spacing: var(--type-button-md-letter-spacing);
+  transition:
+    background var(--motion-hover),
+    opacity var(--motion-hover);
+}
+
+.button-primary:active:not(:disabled) {
+  background: #c9c9cd;
+}
+
+.button-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-saved {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.settings-saved--visible {
+  opacity: 1;
+}
+
+.settings-save-error {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-flag-text);
+}
+
+/* Responsive: pairs stack on narrow windows. */
+@media (max-width: 759px) {
+  .settings-field-pair {
+    grid-template-columns: 1fr;
+  }
+}

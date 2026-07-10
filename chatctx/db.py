@@ -3,27 +3,41 @@
 
 Runs the SQL through the database's exec_readonly_sql function (SELECT/WITH
 only — anything else is rejected server-side) and prints a markdown table
-capped at 200 rows. Stdlib only; credentials come from ./.env (gitignored)."""
+capped at 200 rows. Stdlib only; credentials come from ./.env (gitignored)
+when present, else from the process environment (the packaged Electron app
+spawns this CLI with SUPABASE_URL / SUPABASE_SERVICE_KEY already in its env,
+since chatctx/.env is never bundled into the packaged app — see
+electron-builder.yml)."""
 
 import json
+import os
 import pathlib
 import sys
 import urllib.error
 import urllib.request
 
 ROW_CAP = 200
+REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 
 
 def load_env() -> dict:
     env = {}
     env_path = pathlib.Path(__file__).parent / ".env"
-    if not env_path.exists():
-        sys.exit("chatctx/.env missing — copy .env.example and fill in credentials")
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            env[key.strip()] = value.strip()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                env[key.strip()] = value.strip()
+    if not all(env.get(k) for k in REQUIRED_KEYS):
+        for key in REQUIRED_KEYS:
+            if os.environ.get(key):
+                env[key] = os.environ[key]
+    if not all(env.get(k) for k in REQUIRED_KEYS):
+        sys.exit(
+            "missing SUPABASE_URL/SUPABASE_SERVICE_KEY — set chatctx/.env "
+            "(copy .env.example and fill in credentials) or export them in the environment"
+        )
     return env
 
 

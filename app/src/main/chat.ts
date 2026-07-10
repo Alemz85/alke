@@ -2,13 +2,24 @@
 // `claude -p <msg> --output-format stream-json` in /chatctx (resuming the
 // CLI session when one exists); parsed events stream to the renderer over
 // IPC. The CLI runs ONLY on user message send — never scheduled.
-import { execFile, spawn } from 'child_process'
+import { execFile, spawn, type ChildProcess } from 'child_process'
 import { join } from 'path'
-import type { BrowserWindow } from 'electron'
-import type { ChatStatus, ChatStreamEvent } from '@shared/types'
+import { app, ipcMain, type BrowserWindow } from 'electron'
+import { IPC_CHANNELS, type ChatStatus, type ChatStreamEvent } from '@shared/types'
 import * as db from './db'
 
-const CHATCTX_DIR = join(__dirname, '../../../chatctx')
+// Packaged apps can't reach the source tree relative to __dirname (which
+// resolves inside app.asar); ship chatctx as an extraResource instead (see
+// electron-builder.yml) and read it from resourcesPath when packaged.
+const CHATCTX_DIR = app.isPackaged
+  ? join(process.resourcesPath, 'chatctx')
+  : join(__dirname, '../../../chatctx')
+
+// Tracks the in-flight CLI child process per DB session id, so a stop
+// request can locate and signal the right one. `markStopped` flips the
+// closure-local `stopped` flag in the matching sendMessage() call, so its
+// `close` handler emits `done` instead of `error` for a deliberate stop.
+const activeChildren = new Map<string, { child: ChildProcess; markStopped: () => void }>()
 
 export function checkClaude(): Promise<ChatStatus> {
   return new Promise((resolve) => {
@@ -50,6 +61,13 @@ export async function sendMessage(
   let assistantText = ''
   let stderr = ''
   let buffer = ''
+  let stopped = false
+  activeChildren.set(session.id, {
+    child,
+    markStopped: () => {
+      stopped = true
+    }
+  })
 
   child.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString()
@@ -122,18 +140,35 @@ export async function sendMessage(
 
   child.on('close', (code) => {
     void (async () => {
+      activeChildren.delete(session!.id)
       if (assistantText.trim().length > 0) {
         messages.push({ role: 'assistant', content: assistantText, ts: new Date().toISOString() })
         await db.updateChatSession(session!.id, { messages })
       }
-      if (code === 0) emit({ kind: 'done' })
+      if (code === 0 || stopped) emit({ kind: 'done' })
       else emit({ kind: 'error', message: stderr.trim() || `claude exited with code ${code}` })
     })()
   })
 
   child.on('error', (error) => {
+    activeChildren.delete(session!.id)
     emit({ kind: 'error', message: `failed to start claude CLI: ${error.message}` })
   })
 
   return { sessionId: session.id }
 }
+
+// Kills the in-flight CLI process for a session, if any. The `close`
+// handler in sendMessage() still runs afterward — it persists whatever
+// partial text was accumulated and, because markStopped() flips `stopped`
+// first, emits `done` rather than `error` for this deliberate stop.
+export function stopMessage(sessionId: string): boolean {
+  const entry = activeChildren.get(sessionId)
+  if (!entry) return false
+  entry.markStopped()
+  return entry.child.kill('SIGTERM')
+}
+
+// Registered here (not main/index.ts, which is owned by another surface)
+// so the stop button has an IPC channel to call.
+ipcMain.handle(IPC_CHANNELS.chatStop, (_event, sessionId: string) => stopMessage(sessionId))

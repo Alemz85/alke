@@ -126,6 +126,7 @@ export interface HealthApi {
   chatListSessions(): Promise<ChatSessionMeta[]>
   chatGetSession(id: string): Promise<ChatSession | null>
   chatSend(sessionId: string | null, message: string): Promise<{ sessionId: string }>
+  chatStop(sessionId: string): Promise<boolean>
   onChatStream(listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void): () => void
 }
 
@@ -143,7 +144,9 @@ export const IPC_CHANNELS = {
   chatStatus: 'chat:status',
   chatListSessions: 'chat:listSessions',
   chatGetSession: 'chat:getSession',
-  chatSend: 'chat:send'
+  chatSend: 'chat:send',
+  // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
+  chatStop: 'chat:stop'
 } as const
 
 export interface InsightCorrelation {

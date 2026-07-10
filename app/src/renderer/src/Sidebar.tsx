@@ -5,7 +5,8 @@ import {
   ListChecks,
   Moon,
   Sparkles,
-  MessageSquare
+  MessageSquare,
+  Settings
 } from 'lucide-react'
 import type { TabId } from './tabs'
 import './Sidebar.css'
@@ -22,7 +23,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'sessions', label: 'Sessions', icon: ListChecks },
   { id: 'recovery', label: 'Recovery', icon: Moon },
   { id: 'insights', label: 'Insights', icon: Sparkles },
-  { id: 'chat', label: 'Chat', icon: MessageSquare }
+  { id: 'chat', label: 'Chat', icon: MessageSquare },
+  { id: 'settings', label: 'Settings', icon: Settings }
 ]
 
 export interface SidebarProps {

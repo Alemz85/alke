@@ -25,7 +25,6 @@ const AEROBIC = 'var(--color-aerobic)'
 const AEROBIC_DIM = 'var(--color-aerobic-dim)'
 const TERTIARY = 'var(--color-text-tertiary)'
 const GRID = 'var(--color-divider-soft)'
-const WEEKLY_TARGET_MIN = 90 // modest default per spec; editable in user_config later
 // Z2 carries the domain accent; other zones are neutral grays so color = Z2.
 const ZONE_FILLS = [
   'var(--color-zone-neutral-1)',
@@ -76,6 +75,7 @@ export function Zone2View(): ReactElement {
   })
 
   const timezone = configQuery.data?.timezone ?? null
+  const weeklyTargetMin = configQuery.data?.zone2_weekly_target_min ?? 90
   const workouts = useMemo(() => workoutsQuery.data ?? [], [workoutsQuery.data])
 
   // --- weekly Z2 minutes, last 12 ISO weeks ---
@@ -187,11 +187,11 @@ export function Zone2View(): ReactElement {
                 <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ fill: CHART_CURSOR }} />
                 <ReferenceLine
-                  y={WEEKLY_TARGET_MIN}
+                  y={weeklyTargetMin}
                   stroke={TERTIARY}
                   strokeDasharray="4 4"
                   label={{
-                    value: `${WEEKLY_TARGET_MIN} min target`,
+                    value: `${weeklyTargetMin} min target`,
                     fill: TERTIARY,
                     fontSize: 11,
                     position: 'insideTopRight'

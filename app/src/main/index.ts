@@ -1,10 +1,24 @@
 import { config as loadEnv } from 'dotenv'
+import { existsSync } from 'fs'
 import { join } from 'path'
-
-// Load app/.env before anything else touches process.env.SUPABASE_URL / SUPABASE_SERVICE_KEY.
-loadEnv({ path: join(__dirname, '../../.env') })
-
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
+
+// Load .env before anything else touches process.env.SUPABASE_URL / SUPABASE_SERVICE_KEY.
+// `app.getPath('userData')` is safe to call before app.ready(), so we can resolve the
+// packaged-app credentials location without waiting for the app lifecycle.
+// Candidates, in priority order:
+//   1. app/.env (dev — out/main -> app, unchanged behavior)
+//   2. <userData>/.env (packaged — e.g. ~/Library/Application Support/health-analytics-app/.env,
+//      the documented place users drop credentials for a packaged build)
+const envCandidates = [join(__dirname, '../../.env'), join(app.getPath('userData'), '.env')]
+const envPath = envCandidates.find((candidate) => existsSync(candidate))
+if (envPath) {
+  loadEnv({ path: envPath })
+  console.log(`[env] loaded credentials from ${envPath}`)
+} else {
+  console.log(`[env] no .env found in any candidate location: ${envCandidates.join(', ')}`)
+}
+
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { IPC_CHANNELS, type UserConfigPatch } from '@shared/types'

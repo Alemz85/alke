@@ -20,6 +20,7 @@ const api: HealthApi = {
   chatGetSession: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatGetSession, id),
   chatSend: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message),
+  chatStop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatStop, sessionId),
   onChatStream: (listener: (payload: never) => void) => {
     const wrapped = (_e: unknown, payload: never): void => listener(payload)
     ipcRenderer.on('chat:stream', wrapped as never)

@@ -10,12 +10,27 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
 # asar stays enabled (electron-builder default). Packaging note: the main
-# process resolves `app/.env` and `../chatctx` relative to __dirname, which
-# inside a packaged app sits at Contents/Resources/app.asar/out/main — those
-# relative paths no longer reach a real .env or the chatctx directory once
-# packaged. This is a known limitation (not fixed here — see README); the
-# app still launches and falls back to its designed DB-error state.
+# process resolves `app/.env` relative to __dirname, which inside a packaged
+# app sits at Contents/Resources/app.asar/out/main — that relative path no
+# longer reaches a real .env once packaged. This is a known limitation (not
+# fixed here — see README); the app still launches and falls back to its
+# designed DB-error state.
+#
+# chatctx IS shipped, via extraResources below, so packaged-app chat works:
+# chat.ts resolves CHATCTX_DIR to process.resourcesPath/chatctx when
+# app.isPackaged. The file list is explicit and deliberately excludes
+# chatctx/.env — that file holds Supabase credentials and must never be
+# bundled into a distributable; the packaged CLI instead relies on
+# SUPABASE_URL / SUPABASE_SERVICE_KEY already present in the main process's
+# env (see chatctx/db.py's os.environ fallback).
 asar: true
+extraResources:
+  - from: ../chatctx/CLAUDE.md
+    to: chatctx/CLAUDE.md
+  - from: ../chatctx/db.py
+    to: chatctx/db.py
+  - from: ../chatctx/.claude
+    to: chatctx/.claude
 mac:
   icon: build/icon.icns
   identity: null
