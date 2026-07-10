@@ -22,7 +22,7 @@ Four tables track historical + active injuries, each with a progress log and a r
 
 - `injuries(id, name, body_area, status, severity, started_at, resolved_at, summary, recovery_plan, created_at, updated_at)` — `status` is one of `active`/`recovering`/`resolved`; `severity` is one of `mild`/`moderate`/`severe` (nullable); `summary` covers what it is, mechanism, and context; `recovery_plan` is a SHORT markdown "approach" paragraph, AI-maintained (see maintenance note below — the actionable plan itself lives in `recovery_plan_items`, not here).
 - `injury_notes(id, injury_id, entry_date, noted_at, source, note, pain_level, context, workout_id)` — dated progress notes per injury, `pain_level` 0–10 (nullable), `source` is `chat` (you) or `user`, indexed by `(injury_id, entry_date desc)`. `context` is a text array tagging when it happened — valid values `during_workout`/`post_workout`/`at_rest`/`on_waking` (nullable); `workout_id` optionally links to the specific `workouts` row (nullable, `ON DELETE SET NULL`).
-- `recovery_plan_items(id, injury_id, name, kind, weekly_target, note, active, created_at, updated_at)` — the structured, actionable recovery plan. `kind` is one of `exercise`/`habit`/`constraint`; `weekly_target` is 1–14 (nullable — omit for constraints, i.e. things to avoid, which have no target); `active` marks whether it's current.
+- `recovery_plan_items(id, injury_id, name, kind, weekly_target, note, active, created_at, updated_at)` — the structured, actionable recovery plan. `kind` is one of `exercise` (rehab work — counts toward the adherence score the app shows), `activity` (cleared/allowed training like lifting or cycling — tracked via checks but NOT scored as recovery work), `habit` (recurring non-exercise behavior, unscored), or `constraint` (standing rule, no checks); `weekly_target` is 1–14 (nullable — omit for constraints); `active` marks whether it's current.
 - `plan_item_checks(id, item_id, done_date, source, created_at)` — one row per day a plan item was done, unique on `(item_id, done_date)`; `source` is `user`/`chat`/`gym`.
 
 You **maintain** injuries yourself: read via `db.py` SELECTs, write via a separate, narrowly-scoped helper — `db.py` stays read-only. Use it from this directory:
@@ -34,7 +34,7 @@ python3 injuries.py update <id> [--status ..] [--severity ..] [--resolved YYYY-M
 python3 injuries.py note <injury_id> --note ".." [--pain 0-10] [--date YYYY-MM-DD] [--context during_workout,post_workout] [--workout <workout_id>]
 python3 injuries.py notes <injury_id>
 python3 injuries.py plan-list <injury_id>
-python3 injuries.py plan-add <injury_id> --name ".." [--kind exercise|habit|constraint] [--target 1-14] [--note ".."]
+python3 injuries.py plan-add <injury_id> --name ".." [--kind exercise|habit|constraint|activity] [--target 1-14] [--note ".."]
 python3 injuries.py plan-update <item_id> [--name ".."] [--kind ..] [--target 1-14|none] [--note ".."] [--active true|false]
 python3 injuries.py plan-remove <item_id>
 python3 injuries.py check <item_id> [--date YYYY-MM-DD]

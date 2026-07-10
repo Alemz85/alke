@@ -155,7 +155,10 @@ export interface RecoveryPlanItem {
   id: string
   injury_id: string
   name: string
-  kind: 'exercise' | 'habit' | 'constraint'
+  // 'exercise' = rehab work (counts toward adherence); 'activity' = cleared/
+  // allowed training (tracked, not scored); 'habit' = recurring non-exercise
+  // behavior; 'constraint' = standing rule (no checks).
+  kind: 'exercise' | 'habit' | 'constraint' | 'activity'
   weekly_target: number | null
   note: string | null
   active: boolean
