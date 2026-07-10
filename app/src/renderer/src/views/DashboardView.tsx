@@ -5,7 +5,6 @@ import {
   BadgeDomain,
   ChartCard,
   EmptyState,
-  FlagBanner,
   HeroMetric,
   MetricCard
 } from '../components'
@@ -13,7 +12,6 @@ import {
   useComputedDaily,
   useDailyMetrics,
   useRecentWorkouts,
-  useTodayFlags,
   useUserConfig,
   useWorkoutsInRange
 } from '../hooks/useDashboardData'
@@ -37,7 +35,6 @@ const EM_DASH = '—'
 
 export function DashboardView(): ReactElement {
   const userConfigQuery = useUserConfig()
-  const flagsQuery = useTodayFlags()
   const computedDailyQuery = useComputedDaily(90)
   const dailyMetricsQuery = useDailyMetrics(90)
   const recentWorkoutsQuery = useRecentWorkouts()
@@ -134,19 +131,9 @@ export function DashboardView(): ReactElement {
     .sort((a, b) => b.start_at.localeCompare(a.start_at))
     .slice(0, 3)
 
-  const flags = flagsQuery.data ?? []
-
   return (
     <div className="view">
       <TabHeader eyebrow="Overview" title="Dashboard" />
-
-      {flags.length > 0 && (
-        <div className="dashboard-flags">
-          {flags.map((flag, i) => (
-            <FlagBanner key={`${flag.type}-${i}`} message={flag.message} severity={flag.severity === 'info' ? 'info' : 'warn'} />
-          ))}
-        </div>
-      )}
 
       <HeroMetric
         eyebrow="TRAINING LOAD · CTL"

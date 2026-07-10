@@ -3,20 +3,13 @@
 // overlapping workout ranges (visible month, full year for streaks) with its
 // own query keys so it doesn't collide with other views' caches.
 import { useQuery } from '@tanstack/react-query'
-import type { Flag, UserConfig, Workout, WorkoutDetail } from '@shared/types'
+import type { UserConfig, Workout, WorkoutDetail } from '@shared/types'
 import { addDays, isoWeekStart, todayYMD, ymdToIsoStart, type YMD } from './sessionsDate'
 
 export function useUserConfig() {
   return useQuery<UserConfig>({
     queryKey: ['sessions', 'userConfig'],
     queryFn: () => window.api.getUserConfig()
-  })
-}
-
-export function useTodayFlags() {
-  return useQuery<Flag[]>({
-    queryKey: ['sessions', 'todayFlags'],
-    queryFn: () => window.api.getTodayFlags()
   })
 }
 

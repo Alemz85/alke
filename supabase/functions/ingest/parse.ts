@@ -535,10 +535,6 @@ const MERGEABLE_COLUMNS = [
   "resting_hr",
   "hrv_sdnn_ms",
   "respiratory_rate",
-  "sleep_start",
-  "sleep_end",
-  "sleep_duration_min",
-  "sleep_stages",
   "vo2max",
   "steps",
   "active_energy_kcal",
@@ -547,14 +543,33 @@ const MERGEABLE_COLUMNS = [
   "weight_kg",
 ] as const;
 
+// Sleep columns describe ONE aggregate of the night and merge as a group:
+// HAE incremental syncs can re-send a *shrunken* aggregate of the same night
+// (a later export can cover a smaller window), so a shorter incoming night
+// must never
+// clobber a longer stored one, and fields from different exports must not be
+// spliced together.
+const SLEEP_COLUMNS = [
+  "sleep_start",
+  "sleep_end",
+  "sleep_duration_min",
+  "sleep_stages",
+] as const;
+
 export type DailyMetricRow = { date: string } & Partial<
-  Record<(typeof MERGEABLE_COLUMNS)[number], unknown>
+  Record<
+    (typeof MERGEABLE_COLUMNS)[number] | (typeof SLEEP_COLUMNS)[number],
+    unknown
+  >
 >;
 
 /**
- * Merges an incoming daily_metrics row onto an existing one, per column:
- * incoming non-null/non-undefined wins, otherwise the existing value is
- * kept. `existing` may be null (no prior row) in which case incoming
+ * Merges an incoming daily_metrics row onto an existing one. Non-sleep
+ * columns merge per column: incoming non-null/non-undefined wins, otherwise
+ * the existing value is kept. Sleep columns merge as an atomic group keyed
+ * on sleep_duration_min: the incoming group is adopted only when it is at
+ * least as complete (>= duration) as the stored one, or when nothing is
+ * stored yet. `existing` may be null (no prior row) in which case incoming
  * values pass through unchanged.
  */
 export function mergeDailyMetric(
@@ -567,6 +582,23 @@ export function mergeDailyMetric(
     const incomingValue = (incoming as Record<string, unknown>)[column];
     if (incomingValue !== null && incomingValue !== undefined) {
       merged[column] = incomingValue;
+    }
+  }
+
+  const existingDuration = toNumber(existing.sleep_duration_min);
+  const incomingDuration = toNumber(incoming.sleep_duration_min);
+  const adoptIncomingSleep = existingDuration === null
+    ? SLEEP_COLUMNS.some((c) =>
+      (incoming as Record<string, unknown>)[c] !== null &&
+      (incoming as Record<string, unknown>)[c] !== undefined
+    )
+    : incomingDuration !== null && incomingDuration >= existingDuration;
+  if (adoptIncomingSleep) {
+    for (const column of SLEEP_COLUMNS) {
+      const incomingValue = (incoming as Record<string, unknown>)[column];
+      if (incomingValue !== null && incomingValue !== undefined) {
+        merged[column] = incomingValue;
+      }
     }
   }
   return merged as DailyMetricRow;

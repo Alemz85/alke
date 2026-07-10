@@ -2,7 +2,7 @@
 // "own file, dedupe later" convention — other views may grow their own
 // equivalents that fetch overlapping ranges with different windows.
 import { useQuery } from '@tanstack/react-query'
-import type { ComputedDaily, DailyMetric, Flag, UserConfig, Workout } from '@shared/types'
+import type { ComputedDaily, DailyMetric, UserConfig, Workout } from '@shared/types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -66,9 +66,3 @@ export function useUserConfig() {
   })
 }
 
-export function useTodayFlags() {
-  return useQuery<Flag[]>({
-    queryKey: ['dashboard', 'todayFlags'],
-    queryFn: () => window.api.getTodayFlags()
-  })
-}

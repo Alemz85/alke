@@ -744,3 +744,79 @@ Deno.test("mergeDailyMetric: no existing row -> incoming values pass through", (
   assertEquals(merged.resting_hr, 52);
   assertEquals(merged.steps, null);
 });
+
+// ---------------------------------------------------------------------------
+// mergeDailyMetric — sleep is a group, and a shorter re-export of the same
+// night must not clobber a more complete one already stored (HAE incremental
+// syncs re-send shrinking aggregates of the same night).
+// ---------------------------------------------------------------------------
+
+const FULL_NIGHT = {
+  sleep_start: "2026-07-10T00:30:00+00:00",
+  sleep_end: "2026-07-10T07:00:00+00:00",
+  sleep_duration_min: 365.5,
+  sleep_stages: { rem: 1.8, core: 3.9, deep: 0.4, awake: 0.3 },
+};
+
+const SHRUNK_NIGHT = {
+  sleep_start: "2026-07-10T02:30:00+00:00",
+  sleep_end: "2026-07-10T07:00:00+00:00",
+  sleep_duration_min: 250.5,
+  sleep_stages: { rem: 1.4, core: 2.6, deep: 0.2, awake: 0.3 },
+};
+
+Deno.test("mergeDailyMetric: shorter incoming sleep never clobbers a longer stored night", () => {
+  const existing = { date: "2026-07-10", ...FULL_NIGHT };
+  const incoming = { date: "2026-07-10", ...SHRUNK_NIGHT, steps: 4200 };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.sleep_start, FULL_NIGHT.sleep_start);
+  assertEquals(merged.sleep_end, FULL_NIGHT.sleep_end);
+  assertEquals(merged.sleep_duration_min, FULL_NIGHT.sleep_duration_min);
+  assertEquals(merged.sleep_stages, FULL_NIGHT.sleep_stages);
+  // non-sleep columns still merge normally
+  assertEquals(merged.steps, 4200);
+});
+
+Deno.test("mergeDailyMetric: longer incoming sleep replaces the whole sleep group", () => {
+  const existing = { date: "2026-07-10", ...SHRUNK_NIGHT };
+  const incoming = { date: "2026-07-10", ...FULL_NIGHT };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.sleep_start, FULL_NIGHT.sleep_start);
+  assertEquals(merged.sleep_duration_min, FULL_NIGHT.sleep_duration_min);
+  assertEquals(merged.sleep_stages, FULL_NIGHT.sleep_stages);
+});
+
+Deno.test("mergeDailyMetric: incoming sleep fills a row that has none", () => {
+  const existing = { date: "2026-07-10", resting_hr: 50 };
+  const incoming = { date: "2026-07-10", ...SHRUNK_NIGHT };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.sleep_duration_min, SHRUNK_NIGHT.sleep_duration_min);
+  assertEquals(merged.sleep_start, SHRUNK_NIGHT.sleep_start);
+  assertEquals(merged.resting_hr, 50);
+});
+
+Deno.test("mergeDailyMetric: sleep group is not mixed across exports", () => {
+  // Incoming has start/end but no duration: with a stored night present we
+  // keep the stored group wholesale rather than splicing fields together.
+  const existing = { date: "2026-07-10", ...FULL_NIGHT };
+  const incoming = {
+    date: "2026-07-10",
+    sleep_start: "2026-07-10T05:00:00+00:00",
+    sleep_end: "2026-07-10T07:00:00+00:00",
+    sleep_duration_min: null,
+    sleep_stages: null,
+  };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.sleep_start, FULL_NIGHT.sleep_start);
+  assertEquals(merged.sleep_end, FULL_NIGHT.sleep_end);
+  assertEquals(merged.sleep_duration_min, FULL_NIGHT.sleep_duration_min);
+});
+
+Deno.test("mergeDailyMetric: equal-duration incoming sleep refreshes the group", () => {
+  // Same length, later export — adopt it (stage breakdown may be refined).
+  const refreshed = { ...FULL_NIGHT, sleep_stages: { rem: 2.01, core: 3.81, deep: 0.02, awake: 0.23 } };
+  const existing = { date: "2026-07-10", ...FULL_NIGHT };
+  const incoming = { date: "2026-07-10", ...refreshed };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.sleep_stages, refreshed.sleep_stages);
+});

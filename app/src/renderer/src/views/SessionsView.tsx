@@ -3,21 +3,15 @@ import { TabHeader } from './TabHeader'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { modalityLabel } from '../components/modalityAccent'
-import { EmptyState, FlagBanner, HeroMetric, StatTable } from '../components'
+import { EmptyState, HeroMetric, StatTable } from '../components'
 import type { StatTableRow } from '../components'
-import {
-  useMonthWorkouts,
-  useTodayFlags,
-  useUserConfig,
-  useYearWorkouts
-} from '../hooks/useSessionsData'
+import { useMonthWorkouts, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import { formatDuration, groupWorkoutsByDay, longestWeeklyStreak } from '../hooks/sessionsCompute'
 import { isoWeekKey, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
 import './SessionsView.css'
 
 export function SessionsView(): ReactElement {
   const userConfigQuery = useUserConfig()
-  const flagsQuery = useTodayFlags()
   const timezone = userConfigQuery.data?.timezone
 
   const today = todayYMD(timezone)
@@ -78,8 +72,6 @@ export function SessionsView(): ReactElement {
       ]
     : [{ label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }]
 
-  const flags = flagsQuery.data ?? []
-
   const selectedBucket = selectedDayKey ? daysByKey.get(selectedDayKey) : undefined
   const selectedDateLabel = selectedDayKey
     ? new Date(`${selectedDayKey}T12:00:00Z`).toLocaleDateString('en-US', {
@@ -112,14 +104,6 @@ export function SessionsView(): ReactElement {
   return (
     <div className="view">
       <TabHeader eyebrow="Sessions · Adherence" title="Sessions" />
-
-      {flags.length > 0 && (
-        <div className="sessions-flags">
-          {flags.map((flag, i) => (
-            <FlagBanner key={`${flag.type}-${i}`} message={flag.message} severity={flag.severity === 'info' ? 'info' : 'warn'} />
-          ))}
-        </div>
-      )}
 
       <HeroMetric
         eyebrow="Sessions · This week"
