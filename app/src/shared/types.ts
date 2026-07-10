@@ -212,6 +212,51 @@ export interface NewGoal {
 // User-editable subset of an existing goal. Metric fields stay agent-owned.
 export type GoalPatch = Partial<Pick<Goal, 'title' | 'description' | 'status' | 'duration_days'>>
 
+// One nightly row of the Zone-2-scoped fitness model (docs/zone2-fitness-model.md).
+// Two independent numbers, NEVER summed: durable_base (slow, VO2max-anchored
+// headline) and sharpness (fast current-form companion). Distinct from the
+// whole-body ctl/atl/tsb in ComputedDaily.
+export type Zone2EvidenceState = 'ok' | 'insufficient' | 'ambiguous' | 'low_confidence'
+export type Zone2Stage = 'literature' | 'lightly_tuned' | 'personalized'
+
+// Fixed-ceiling two-component model (docs/zone2-fitness-model.md v2): the headline
+// index is durable_base + sharpness, each bounded by its own FIXED ceiling. These
+// are design constants — the split never shifts with training age.
+export const ZONE2_DURABLE_CEILING = 70
+export const ZONE2_FAST_CEILING = 30
+export const ZONE2_INDEX_CEILING = ZONE2_DURABLE_CEILING + ZONE2_FAST_CEILING // 100
+
+export interface Zone2Fitness {
+  date: string
+  // two fixed-ceiling components summed into the headline index (= durable_base +
+  // sharpness). durable_base ∈ [0, ZONE2_DURABLE_CEILING]; sharpness ∈
+  // [0, ZONE2_FAST_CEILING]. The band columns are the INDEX band.
+  durable_base: number | null
+  durable_band_lo: number | null
+  durable_band_hi: number | null
+  sharpness: number | null
+  // provenance / anchor
+  vo2max_anchor_score: number | null
+  anchor_beta: number | null
+  days_since_vo2max: number | null
+  // internal state (for the projection trail + audit)
+  durable_load: number | null
+  sharp_load: number | null
+  base_accum_b: number | null
+  tau_slow_days: number | null
+  floor_score: number | null
+  // confidence + evidence
+  confidence: number | null
+  evidence_state: Zone2EvidenceState
+  contributing: Record<string, number> | null
+  stage: Zone2Stage
+  // maintenance / degradation warning
+  maintenance_met: boolean | null
+  warn_after_days: number | null
+  flags: Flag[]
+  computed_at: string | null
+}
+
 // The typed surface exposed on window.api by the preload script.
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
@@ -234,6 +279,7 @@ export interface HealthApi {
   // Spawns a headless chat-agent run (cwd chatctx/) that designs the goal's
   // progress metric via goals.py; resolves when the run exits. Long-running.
   buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
+  getZone2Fitness(fromDate: string, toDate: string): Promise<Zone2Fitness[]>
   getDbStatus(): Promise<DbStatus>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
@@ -265,6 +311,7 @@ export const IPC_CHANNELS = {
   getGoalProgress: 'db:getGoalProgress',
   addGoal: 'db:addGoal',
   updateGoal: 'db:updateGoal',
+  getZone2Fitness: 'db:getZone2Fitness',
   // Handler in index.ts delegates to chat.ts, which owns CLI process spawning.
   buildGoalMetric: 'goals:buildMetric',
   getDbStatus: 'db:getDbStatus',

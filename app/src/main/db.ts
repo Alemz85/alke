@@ -32,7 +32,8 @@ import {
   type UserConfigPatch,
   type Workout,
   type WorkoutDetail,
-  type WorkoutHrSample
+  type WorkoutHrSample,
+  type Zone2Fitness
 } from '@shared/types'
 
 let client: SupabaseClient | null = null
@@ -109,6 +110,23 @@ const COMPUTED_DAILY_NUMERIC_KEYS: (keyof ComputedDaily)[] = [
   'hrv_dev'
 ]
 
+const ZONE2_FITNESS_NUMERIC_KEYS: (keyof Zone2Fitness)[] = [
+  'durable_base',
+  'durable_band_lo',
+  'durable_band_hi',
+  'sharpness',
+  'vo2max_anchor_score',
+  'anchor_beta',
+  'days_since_vo2max',
+  'durable_load',
+  'sharp_load',
+  'base_accum_b',
+  'tau_slow_days',
+  'floor_score',
+  'confidence',
+  'warn_after_days'
+]
+
 const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
   'hr_max',
   'swim_hr_offset',
@@ -140,6 +158,9 @@ const DAILY_METRIC_COLUMNS =
 
 const COMPUTED_DAILY_COLUMNS =
   'date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags, computed_at'
+
+const ZONE2_FITNESS_COLUMNS =
+  'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, anchor_beta, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
   'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, weekly_min_sessions, timezone'
@@ -247,6 +268,26 @@ export async function getComputedDaily(
 
   return (data ?? []).map((row) =>
     normalizeNumeric(row as ComputedDaily, COMPUTED_DAILY_NUMERIC_KEYS)
+  )
+}
+
+export async function getZone2Fitness(fromDate: string, toDate: string): Promise<Zone2Fitness[]> {
+  assertDate(fromDate, 'fromDate')
+  assertDate(toDate, 'toDate')
+
+  const supabase = getClient()
+
+  const { data, error } = await supabase
+    .from('computed_zone2_fitness')
+    .select(ZONE2_FITNESS_COLUMNS)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .order('date', { ascending: true })
+
+  if (error) throw new Error(`getZone2Fitness: ${error.message}`)
+
+  return (data ?? []).map((row) =>
+    normalizeNumeric(row as Zone2Fitness, ZONE2_FITNESS_NUMERIC_KEYS)
   )
 }
 

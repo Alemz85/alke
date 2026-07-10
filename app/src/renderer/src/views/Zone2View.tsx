@@ -17,7 +17,7 @@ import {
 } from 'recharts'
 import type { Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
-import { ChartCard, EmptyState, HeroMetric, MetricCard } from '../components'
+import { ChartCard, EmptyState, HeroMetric, MetricCard, Zone2FitnessHeader } from '../components'
 import { isoWeekKey, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import {
   CARDIO_MODALITIES,
@@ -313,6 +313,11 @@ export function Zone2View(): ReactElement {
   return (
     <div className="view">
       <TabHeader eyebrow="Aerobic base" title="Zone 2" />
+
+      {/* Zone-2 fitness model: durable base + sharpness, calendar with degradation
+          trail, honesty labels, maintenance nudge (docs/zone2-fitness-model.md §10). */}
+      <Zone2FitnessHeader timezone={timezone} />
+
       <HeroMetric
         eyebrow="Zone 2 · this week"
         value={String(thisWeekMin)}

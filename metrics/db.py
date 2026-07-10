@@ -64,7 +64,7 @@ def fetch_hr_samples(sb: Client, workout_ids: list[str]) -> dict[str, list[tuple
 def fetch_daily_metrics(sb: Client) -> list[dict]:
     def q():
         return sb.table("daily_metrics").select(
-            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min, weight_kg"
+            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min, weight_kg, vo2max"
         ).order("date")
 
     return _fetch_all(q)
@@ -89,6 +89,50 @@ def fetch_computed_workouts(sb: Client) -> list[dict]:
         return sb.table("computed_workout").select("workout_id, ef, decoupling_pct, hrr60").order("workout_id")
 
     return _fetch_all(q)
+
+
+def fetch_computed_workout_zones(sb: Client) -> dict[str, dict]:
+    """time_in_zones jsonb per workout — the Zone-2 model's core input (spec §8).
+    Keyed by workout_id."""
+
+    def q():
+        return sb.table("computed_workout").select("workout_id, time_in_zones").order("workout_id")
+
+    return {r["workout_id"]: (r.get("time_in_zones") or {}) for r in _fetch_all(q)}
+
+
+def fetch_zone2_fitness_params(sb: Client) -> dict:
+    """Single-row fitted/literature parameters (spec §9). Falls back to {} if the
+    row is somehow absent, letting callers apply literature defaults."""
+    rows = sb.table("zone2_fitness_params").select("*").eq("id", 1).execute().data
+    return rows[0] if rows else {}
+
+
+def fetch_active_injury_holds(sb: Client) -> dict:
+    """State for the zone2_maintenance suppression rule (spec §5c.4). Returns
+    counts of active injuries and active training-constraint plan items; the
+    caller suppresses the nudge when either is non-empty (an injury/plan hold
+    must never read as pressure to train)."""
+    injuries = (
+        sb.table("injuries").select("id, status").eq("status", "active").execute().data
+    )
+    constraints = (
+        sb.table("recovery_plan_items")
+        .select("id, kind, active")
+        .eq("active", True)
+        .eq("kind", "constraint")
+        .execute()
+        .data
+    )
+    return {
+        "active_injuries": len(injuries),
+        "active_constraints": len(constraints),
+    }
+
+
+def upsert_computed_zone2_fitness(sb: Client, rows: list[dict]) -> None:
+    for i in range(0, len(rows), WRITE_CHUNK):
+        sb.table("computed_zone2_fitness").upsert(rows[i : i + WRITE_CHUNK], on_conflict="date").execute()
 
 
 def replace_insight_correlations(sb: Client, rows: list[dict]) -> None:

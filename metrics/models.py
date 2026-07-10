@@ -3,6 +3,7 @@ its inputs so the test suite pins the math exactly."""
 
 from __future__ import annotations
 
+import math
 from statistics import median
 
 Sample = tuple[int, float]  # (offset_s, bpm)
@@ -172,3 +173,327 @@ def flags_for_day(
             }
         )
     return flags
+
+
+# ---------------------------------------------------------------------------
+# Zone 2 fitness model (docs/zone2-fitness-model.md). Two independent numbers,
+# never summed: a slow VO2max-anchored DURABLE BASE and a fast SHARPNESS. All
+# math here is pure so pytest pins it exactly (spec §11), mirroring the
+# ctl_atl_series style above.
+# ---------------------------------------------------------------------------
+
+# Literature defaults (spec "Locked constants"; overridable via zone2_fitness_params).
+Z2_TAU_FAST_DAYS = 14.0
+Z2_TAU_SLOW_MIN_DAYS = 45.0
+Z2_TAU_SLOW_MAX_DAYS = 90.0
+Z2_F_MAX = 0.55
+Z2_FLOOR_P = 1.5
+Z2_B_REF_MIN_PER_WK = 200.0
+Z2_ANCHOR_VO2_100 = 62.0
+Z2_ANCHOR_BETA0 = 0.7
+Z2_ANCHOR_BETA_TAU_DAYS = 45.0
+
+# ---- v2 fixed-ceiling amendment (docs/zone2-fitness-model.md "v2 — locked
+# amendments"). The headline index I = D + F, each component bounded by its OWN
+# FIXED ceiling; the split never shifts with training age. ----
+ZONE2_DURABLE_CEILING = 70.0  # C_D — durable/structural share of the trainable range
+ZONE2_FAST_CEILING = 30.0     # C_F — fast-reversible (plasma-volume + enzyme) share
+ZONE2_INDEX_CEILING = 100.0   # I = D + F tops out here
+
+# F = C_F * (1 - exp(-fast_load / FAST_SAT)) — a SATURATING map, NOT an anchor to
+# τ_fast. τ_fast=14 governs how fast fast_load MOVES; FAST_SAT is where the fast
+# pool tops out. Reference: the fast compartment is a fast EWMA of the SAME daily
+# Z2 stimulus w(t) as the durable one, so its steady state under a consistent
+# training week equals the mean daily Z2-TRIMP. FAST_SAT is set to the daily
+# Z2-TRIMP a consistently-training athlete sustains at the maintenance/build dose
+# — ~4 quality Z2 sessions/wk × ~45 min in-band → ~90 z2-min/wk of steady w, i.e.
+# a fast-EWMA steady state of ~ (90 min * 2 Edwards-weight / 7 days) ≈ 26 load
+# units/day. At fast_load = FAST_SAT, F = C_F*(1-1/e) ≈ 0.63*C_F (the pool is
+# ~63% saturated at the sustained-training reference and asymptotes to C_F above
+# it) — plasma-volume expansion + oxidative-enzyme activity saturate with more
+# volume, they do not scale linearly. Tunable via zone2_fitness_params.fast_sat.
+ZONE2_FAST_SAT = 26.0
+
+# The durable LEVEL is re-anchored to the user's OWN sports (v2 Thread 2), not to
+# the swim/indoor-bike-blind watch VO2max. Blend weights over the available
+# submaximal-efficiency + autonomic signals; watch VO2max is LOW-WEIGHT occasional
+# calibration only (applied on days it refreshed), NEVER the cap.
+ZONE2_LEVEL_W_SWIM_EF = 0.30   # own swim submaximal efficiency (pace/HR percentile)
+ZONE2_LEVEL_W_BIKE_EF = 0.35   # own bike efficiency proxy — cleaner (no stroke confound)
+ZONE2_LEVEL_W_RHR = 0.20       # resting-HR trend (technique-free, robust)
+ZONE2_LEVEL_W_HRV = 0.15       # HRV trend (PPG-noisy, lowest own-signal weight)
+ZONE2_LEVEL_W_VO2MAX = 0.10    # watch VO2max — occasional low-weight calibration only
+
+
+def z2_trimp_from_zones(time_in_zones: dict) -> float:
+    """Zone-2 stimulus w(t) of a single workout (spec §1): Edwards zone-2 weight
+    plus half-credited upper-aerobic (z3) spillover. z1/z4/z5 contribute 0 by
+    design — this metric is Zone-2-scoped.
+
+    Accepts a dict keyed either by int zone (1..5) or by the jsonb string keys
+    ('z2','z3') that computed_workout.time_in_zones stores; values are seconds.
+    """
+
+    def sec(zone: int) -> float:
+        if zone in time_in_zones:
+            return float(time_in_zones[zone] or 0.0)
+        return float(time_in_zones.get(f"z{zone}", 0.0) or 0.0)
+
+    z2_sec = sec(2)
+    z3_sec = sec(3)
+    return (z2_sec / 60.0) * 2.0 + (z3_sec / 60.0) * 3.0 * 0.5
+
+
+def vo2max_to_score(v: float) -> float:
+    """Piecewise-linear, clamped VO2max→0-100 map (spec §4b). FRIEND reference
+    percentiles anchor the knots: 30→20 (deconditioned floor), 48→55 (median
+    knee), 62→100 (90th pct ceiling). Both ends clamp."""
+    if v <= 30.0:
+        return 20.0
+    if v <= 48.0:
+        return 20.0 + (v - 30.0) * (55.0 - 20.0) / (48.0 - 30.0)
+    if v <= 62.0:
+        return 55.0 + (v - 48.0) * (100.0 - 55.0) / (62.0 - 48.0)
+    return 100.0
+
+
+def durable_score_from_percentile(
+    pct_score: float, durable_ceiling: float = ZONE2_DURABLE_CEILING
+) -> float:
+    """v2 rescale (docs v2 "Ceiling split + anchoring"): the durable/structural
+    share is expressed on [0, C_D], not [0,100]. A percentile-style score in
+    [0,100] (e.g. vo2max_to_score, or a fused own-sports level) maps linearly onto
+    [0, C_D] and clamps there. This is what turns the v1 [0,100] durable framing
+    into the v2 fixed-ceiling durable component D."""
+    return max(0.0, min(durable_ceiling, pct_score / 100.0 * durable_ceiling))
+
+
+def fast_score_from_load(
+    fast_load: float,
+    fast_ceiling: float = ZONE2_FAST_CEILING,
+    fast_sat: float = ZONE2_FAST_SAT,
+) -> float:
+    """v2 fast component F ∈ [0, C_F] (docs v2 "Ceiling split + anchoring"):
+    F = C_F · (1 − exp(−fast_load / fast_sat)), a monotonic SATURATING map of the
+    fast-EWMA load. τ_fast=14 governs how fast fast_load MOVES; fast_sat is the
+    saturation REFERENCE (where the plasma-volume/enzyme pool tops out), NOT the
+    half-life. Monotone-increasing in fast_load, F→C_F as load→∞, F(0)=0, and F
+    never exceeds C_F. Non-positive load → 0."""
+    if fast_sat <= 0:
+        return 0.0
+    if fast_load <= 0:
+        return 0.0
+    return fast_ceiling * (1.0 - math.exp(-fast_load / fast_sat))
+
+
+def durable_level_score(
+    swim_ef_pct: float | None,
+    bike_ef_pct: float | None,
+    rhr_pct: float | None,
+    hrv_pct: float | None,
+    vo2max_pct: float | None,
+    vo2max_refreshed: bool = False,
+) -> float | None:
+    """v2 re-anchored durable LEVEL (docs v2 "Re-anchoring"; Thread 2). Returns a
+    percentile-style level in [0,100] blended from the user's OWN sports, NOT the
+    swim/indoor-bike-blind watch VO2max:
+
+      - swim_ef_pct / bike_ef_pct: own submaximal efficiency mapped to a percentile
+      - rhr_pct / hrv_pct: own resting-HR / HRV trend percentiles
+      - vo2max_pct: watch VO2max percentile — LOW-WEIGHT occasional calibration
+        ONLY, and only counted on days it refreshed (vo2max_refreshed=True). It is
+        NEVER the cap: it enters as one weighted term among many, so it can neither
+        push the level above what the sports imply nor floor it below.
+
+    Each argument is a percentile-style value in [0,100] or None when unavailable;
+    missing signals drop out and the present weights renormalize. Returns None when
+    NO own-sports signal is available (caller then falls back to load dynamics and
+    a WIDE band — no fabricated precision).
+
+    The caller maps this [0,100] level onto [0, C_D] via durable_score_from_percentile."""
+    terms: list[tuple[float, float]] = []
+    if swim_ef_pct is not None:
+        terms.append((swim_ef_pct, ZONE2_LEVEL_W_SWIM_EF))
+    if bike_ef_pct is not None:
+        terms.append((bike_ef_pct, ZONE2_LEVEL_W_BIKE_EF))
+    if rhr_pct is not None:
+        terms.append((rhr_pct, ZONE2_LEVEL_W_RHR))
+    if hrv_pct is not None:
+        terms.append((hrv_pct, ZONE2_LEVEL_W_HRV))
+    # Watch VO2max is included ONLY when it actually refreshed that day, and always
+    # at low weight — the demotion from v1's primary anchor (docs v2 Thread 2).
+    if vo2max_pct is not None and vo2max_refreshed:
+        terms.append((vo2max_pct, ZONE2_LEVEL_W_VO2MAX))
+
+    # Level requires at least one OWN-sports signal; a lone refreshed VO2max is not
+    # enough to place the level (it may never let the swimmer reach his ceiling).
+    own_signal = any(
+        v is not None for v in (swim_ef_pct, bike_ef_pct, rhr_pct, hrv_pct)
+    )
+    if not own_signal or not terms:
+        return None
+
+    wsum = sum(w for _, w in terms)
+    if wsum <= 0:
+        return None
+    level = sum(v * w for v, w in terms) / wsum
+    return max(0.0, min(100.0, level))
+
+
+def ewma_alpha(tau: float) -> float:
+    """Daily smoothing factor for a decay time constant tau (spec §2)."""
+    return 1.0 - math.exp(-1.0 / tau)
+
+
+def base_consolidation(
+    weekly_z2_minutes: list[float],
+    b_ref: float = Z2_B_REF_MIN_PER_WK,
+) -> float:
+    """B ∈ [0,1] — accumulated-base consolidation (spec §3): a ~180-day EWMA of
+    weekly Zone-2 minutes (weekly step), normalized by b_ref and clamped. Seeded
+    at 0. Returns the final B; an empty history is B=0 (brand-new)."""
+    alpha_b = 1.0 - math.exp(-7.0 / 180.0)
+    b_raw = 0.0
+    for wk in weekly_z2_minutes:
+        b_raw += alpha_b * (float(wk) - b_raw)
+    return max(0.0, min(1.0, b_raw / b_ref))
+
+
+def tau_slow(
+    b: float,
+    tau_min: float = Z2_TAU_SLOW_MIN_DAYS,
+    tau_max: float = Z2_TAU_SLOW_MAX_DAYS,
+) -> float:
+    """Durable time constant τ_slow(B) = 45 + 45·B days (spec §3). B clamps to
+    [0,1] so tau_slow(0)=45 (beginner) and tau_slow(1)=90 (consolidated)."""
+    bc = max(0.0, min(1.0, b))
+    return tau_min + (tau_max - tau_min) * bc
+
+
+def durable_floor_score(
+    b: float,
+    f_max: float = Z2_F_MAX,
+    p: float = Z2_FLOOR_P,
+) -> float:
+    """FLOOR_score(B) = f_max·100·B^p in 0-100 score units (spec §3). f_max is a
+    fraction (0.55) so the ceiling of the floor is 55 at B=1; a beginner (B=0)
+    has a ~0 floor (decays to baseline), a veteran retains an elevated floor."""
+    bc = max(0.0, min(1.0, b))
+    return f_max * 100.0 * (bc ** p)
+
+
+def z2_durable_sharpness_series(
+    daily_z2_load: list[float],
+    tau_fast: float = Z2_TAU_FAST_DAYS,
+    tau_slow_days: float = Z2_TAU_SLOW_MIN_DAYS,
+    floor_load: float = 0.0,
+) -> list[tuple[float, float]]:
+    """Per-day (durable_load, sharp_load), both EWMAs over the same daily Z2
+    load, seeded at 0 (spec §2).
+
+    - sharp_load: plain fast EWMA, alpha_fast = 1-exp(-1/tau_fast).
+    - durable_load: slow EWMA build, then on any *falling* day the Newton-cooling
+      floor rule (spec §2c) replaces the value so it decays toward floor_load,
+      never below it: durable = floor + (prev - floor)*exp(-1/tau_slow).
+
+    tau_slow_days and floor_load are held fixed across the series (resolved from
+    B by the caller); this matches the nightly single-pass usage and keeps the
+    math pinnable."""
+    alpha_fast = ewma_alpha(tau_fast)
+    alpha_slow = ewma_alpha(tau_slow_days)
+    decay_slow = math.exp(-1.0 / tau_slow_days)
+
+    out: list[tuple[float, float]] = []
+    durable = sharp = 0.0
+    for w in daily_z2_load:
+        w = float(w)
+        sharp += alpha_fast * (w - sharp)
+
+        prev_durable = durable
+        built = prev_durable + alpha_slow * (w - prev_durable)
+        if built < prev_durable:  # detraining day: decay toward the floor, not 0
+            built = floor_load + (prev_durable - floor_load) * decay_slow
+        durable = built
+        out.append((durable, sharp))
+    return out
+
+
+def anchor_beta(
+    days_since_vo2max: int | None,
+    vo2max_confidence: float,
+    beta0: float = Z2_ANCHOR_BETA0,
+    tau_days: float = Z2_ANCHOR_BETA_TAU_DAYS,
+) -> float:
+    """Weight on the VO2max anchor (spec §4c): beta0·exp(-days_since/45)·conf. A
+    fresh, corroborated VO2max dominates the level; a stale/uncorroborated one
+    yields to load dynamics. No VO2max at all → 0 (pure dynamics)."""
+    if days_since_vo2max is None:
+        return 0.0
+    return beta0 * math.exp(-max(0, days_since_vo2max) / tau_days) * max(0.0, min(1.0, vo2max_confidence))
+
+
+def fuse_inverse_variance(estimates: list[tuple[float, float]]) -> tuple[float, float] | None:
+    """Inverse-variance weighted mean + posterior SD (spec §6c). `estimates` is
+    a list of (value, variance); variances ≤ 0 are skipped. Returns
+    (fused_mean, posterior_sd), or None when no usable estimate exists."""
+    num = 0.0
+    wsum = 0.0
+    for value, variance in estimates:
+        if variance is None or variance <= 0:
+            continue
+        w = 1.0 / variance
+        num += w * float(value)
+        wsum += w
+    if wsum <= 0:
+        return None
+    mean = num / wsum
+    posterior_sd = math.sqrt(1.0 / wsum)
+    return mean, posterior_sd
+
+
+def warn_after_days(b: float) -> int:
+    """Level-dependent degradation-warning window (spec §5b): a thinner base
+    reverses faster, so it gets a tighter window. B<0.33→9, <0.66→14, else 24."""
+    if b < 0.33:
+        return 9
+    if b < 0.66:
+        return 14
+    return 24
+
+
+ZONE2_MAINTENANCE_MESSAGE = (
+    "You're below the dose that holds your level. Two Zone-2 sessions at target "
+    "intensity in the next few days keeps it. Miss that and your sharpness fades "
+    "first; your durable base erodes more slowly."
+)
+
+
+def zone2_maintenance_flag(
+    maintenance_met: bool,
+    consecutive_unmet_days: int,
+    warn_window: int,
+    sharpness: float,
+    durable_base: float,
+    hold_active: bool,
+) -> list[dict]:
+    """The zone2_maintenance firing rule (spec §5c). Fires severity 'info' iff
+    ALL hold: maintenance unmet for `warn_window` consecutive days AND sharpness
+    has dropped below durable_base (form fading faster than the base) AND NOT
+    suppressed by an active injury/plan hold. Never red, never single-reading —
+    the multi-day window supplies persistence; the two numbers' relationship is
+    read, never summed."""
+    fires = (
+        not maintenance_met
+        and consecutive_unmet_days >= warn_window
+        and sharpness < durable_base
+        and not hold_active
+    )
+    if not fires:
+        return []
+    return [
+        {
+            "type": "zone2_maintenance",
+            "severity": "info",
+            "message": ZONE2_MAINTENANCE_MESSAGE,
+        }
+    ]

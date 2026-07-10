@@ -1,0 +1,353 @@
+/* Zone-2 fitness model header (docs/zone2-fitness-model.md v2 "Visual").
+   A single VERTICAL two-zone bar carries the composition: a solid "earned" durable
+   foundation on the bottom [0,70], a lighter "provisional" fast cap on top [70,100],
+   each ghosting to its ceiling. Neutral chrome everywhere; teal (aerobic) is the only
+   accent — two tones of it, per DESIGN.md. Grayscale-clean by law. */
+
+.z2f {
+  margin-top: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* ── Panel: bar on the left, readout on the right ─────────────────────── */
+.z2f-panel {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: stretch;
+}
+
+/* Whole panel greyed when evidence is not ok (insufficient / ambiguous / low-confidence). */
+.z2f-panel--stale {
+  opacity: 0.62;
+}
+
+@media (max-width: 620px) {
+  .z2f-panel {
+    grid-template-columns: 1fr;
+    gap: var(--space-lg);
+  }
+}
+
+/* ── Vertical bar ─────────────────────────────────────────────────────── */
+.z2f-barwrap {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: stretch;
+}
+
+.z2f-bar {
+  position: relative;
+  width: 44px;
+  min-height: 240px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column; /* DOM order = top→bottom: fast-ghost, fast-fill, durable-ghost, durable-fill */
+  background: var(--color-surface);
+}
+
+.z2f-bar-seg {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+/* Durable = bottom zone. Solid "earned" teal; ghost = faint outlined headroom. */
+.z2f-bar-seg--durable-fill {
+  background: var(--color-aerobic);
+}
+.z2f-bar-seg--durable-ghost {
+  background: var(--color-aerobic-dim);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.28);
+}
+
+/* Fast = top zone. Lighter/translucent "provisional" teal; ghost = fainter headroom. */
+.z2f-bar-seg--fast-fill {
+  background: rgba(45, 212, 191, 0.5);
+}
+.z2f-bar-seg--fast-ghost {
+  background: rgba(45, 212, 191, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.18);
+}
+
+/* Subtle divider at the 70 ceiling (the seam between the two zones). */
+.z2f-bar-divider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+[data-theme='light'] .z2f-bar-divider {
+  border-top-color: rgba(0, 0, 0, 0.22);
+}
+
+/* Soft confidence error zone across the top of the current fill — the crisp bar must
+   NOT imply false precision. A faint striped band spanning the index CI. */
+.z2f-bar-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.16) 2px,
+    transparent 2px,
+    transparent 5px
+  );
+  border-top: 1px solid rgba(255, 255, 255, 0.32);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.32);
+}
+[data-theme='light'] .z2f-bar-band {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(0, 0, 0, 0.12),
+    rgba(0, 0, 0, 0.12) 2px,
+    transparent 2px,
+    transparent 5px
+  );
+  border-top-color: rgba(0, 0, 0, 0.26);
+  border-bottom-color: rgba(0, 0, 0, 0.26);
+}
+
+/* Vertical zone labels flanking the bar. */
+.z2f-bar-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+.z2f-bar-axis-top,
+.z2f-bar-axis-bottom {
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+.z2f-bar-axis-mid {
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+}
+
+/* ── Readout: index + composition + honesty ───────────────────────────── */
+.z2f-readout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.z2f-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-aerobic-text);
+}
+
+.z2f-index-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.z2f-index {
+  font-family: var(--font-display);
+  font-size: var(--type-hero-metric-size);
+  font-weight: var(--type-hero-metric-weight);
+  line-height: var(--type-hero-metric-line-height);
+  letter-spacing: var(--type-hero-metric-letter-spacing);
+  color: var(--color-text);
+}
+.z2f-index--stale {
+  color: var(--color-text-secondary);
+}
+
+/* ± band on the number — mandatory, prominent, never an afterthought. */
+.z2f-index-band {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-aerobic-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.z2f-index-ceiling {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Composition line: Durable D/70 + Fast F/30. Never a summed single value. */
+.z2f-compose {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
+}
+.z2f-compose-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+.z2f-compose-ceil {
+  color: var(--color-text-tertiary);
+  margin-left: 2px;
+}
+.z2f-compose-plus {
+  color: var(--color-text-tertiary);
+}
+
+.z2f-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.z2f-swatch--durable {
+  background: var(--color-aerobic);
+}
+.z2f-swatch--fast {
+  background: rgba(45, 212, 191, 0.5);
+}
+
+.z2f-pills {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-xxs);
+}
+
+/* Neutral stage pill (chip-filter style). */
+.z2f-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+}
+
+.z2f-evidence-note {
+  margin: var(--space-xs) 0 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
+}
+
+.z2f-evidence-tag {
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--color-text-tertiary);
+}
+
+.z2f-honesty-caption {
+  margin: var(--space-xs) 0 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Calendar block + projection trail ────────────────────────────────── */
+.z2f-calendar-block {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.z2f-strip {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.z2f-strip-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.z2f-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.z2f-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  border-top-width: 1.5px;
+  border-top-style: solid;
+  border-top-color: var(--color-aerobic);
+}
+
+.z2f-legend-swatch--sharpness {
+  opacity: 0.45;
+}
+
+.z2f-legend-swatch--projected {
+  border-top-style: dashed;
+  opacity: 0.5;
+}
+
+.z2f-legend-item--projected {
+  font-style: italic;
+}
+
+/* ── Maintenance nudge — NEUTRAL inset, never the red flag banner ─────── */
+.z2f-maintenance {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.z2f-maintenance-badge {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.z2f-maintenance-copy {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+  color: var(--color-text-secondary);
+}

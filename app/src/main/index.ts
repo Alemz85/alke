@@ -110,6 +110,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getComputedDaily, (_event, fromDate: string, toDate: string) =>
     db.getComputedDaily(fromDate, toDate)
   )
+  ipcMain.handle(IPC_CHANNELS.getZone2Fitness, (_event, fromDate: string, toDate: string) =>
+    db.getZone2Fitness(fromDate, toDate)
+  )
   ipcMain.handle(IPC_CHANNELS.getUserConfig, () => db.getUserConfig())
   ipcMain.handle(IPC_CHANNELS.updateUserConfig, (_event, patch: UserConfigPatch) =>
     db.updateUserConfig(patch)
