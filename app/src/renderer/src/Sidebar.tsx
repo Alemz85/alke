@@ -7,6 +7,7 @@ import {
   Sparkles,
   Bandage,
   MessageSquare,
+  CircleUser,
   Settings
 } from 'lucide-react'
 import type { TabId } from './tabs'
@@ -28,7 +29,10 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare }
 ]
 
-const FOOTER_NAV_ITEMS: NavItem[] = [{ id: 'settings', label: 'Settings', icon: Settings }]
+const FOOTER_NAV_ITEMS: NavItem[] = [
+  { id: 'profile', label: 'Profile', icon: CircleUser },
+  { id: 'settings', label: 'Settings', icon: Settings }
+]
 
 export interface SidebarProps {
   active: TabId

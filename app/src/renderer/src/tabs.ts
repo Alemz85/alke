@@ -6,4 +6,5 @@ export type TabId =
   | 'insights'
   | 'injuries'
   | 'chat'
+  | 'profile'
   | 'settings'

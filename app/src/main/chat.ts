@@ -165,6 +165,49 @@ export async function sendMessage(
   return { sessionId: session.id }
 }
 
+// One headless CLI run per goal: the chat agent (with its chatctx/CLAUDE.md
+// Goals instructions) designs the goal's progress metric and writes it via
+// goals.py. Plain -p output — nothing streams to the renderer; the caller
+// refetches goals when the promise resolves. Runs ONLY on explicit request
+// from the Profile tab — never scheduled.
+const METRIC_BUILD_TIMEOUT_MS = 5 * 60 * 1000
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const metricBuildsInFlight = new Set<string>()
+
+export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!UUID_RE.test(goalId)) {
+    return Promise.resolve({ ok: false, error: 'invalid goal id' })
+  }
+  if (metricBuildsInFlight.has(goalId)) {
+    return Promise.resolve({ ok: false, error: 'metric build already running for this goal' })
+  }
+  metricBuildsInFlight.add(goalId)
+
+  const prompt =
+    `A goal card with id ${goalId} was just created in the app and has no progress metric yet. ` +
+    `Follow the Goals section of your instructions: read the goal (python3 goals.py list, ` +
+    `plus db.py for the data), design its progress metric, save it with goals.py set-metric, ` +
+    `materialize the series with goals.py recompute, and if the goal's description is empty ` +
+    `write a short factual one via goals.py update. Run end-to-end without asking for ` +
+    `confirmations; make reasonable assumptions and state them in the metric description.`
+
+  return new Promise((resolve) => {
+    execFile(
+      'claude',
+      ['-p', prompt],
+      { cwd: CHATCTX_DIR, env: process.env, timeout: METRIC_BUILD_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
+      (error, _stdout, stderr) => {
+        metricBuildsInFlight.delete(goalId)
+        if (error) {
+          resolve({ ok: false, error: String(stderr).trim() || error.message })
+        } else {
+          resolve({ ok: true })
+        }
+      }
+    )
+  })
+}
+
 // Kills the in-flight CLI process for a session, if any. The `close`
 // handler in sendMessage() still runs afterward — it persists whatever
 // partial text was accumulated and, because markStopped() flips `stopped`

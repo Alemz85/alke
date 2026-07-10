@@ -1,0 +1,527 @@
+/* Profile — neutral chrome only, per DESIGN.md: goals/profile get no new
+   accent color family. Signal comes from text weight, hairlines and neutral
+   pills, exactly like Injuries. */
+
+.profile-loading,
+.profile-error {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+}
+
+/* ── stats row ───────────────────────────────────────────────────────────── */
+.profile-stats-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-md);
+}
+
+@media (max-width: 1099px) {
+  .profile-stats-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .profile-stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── sections ────────────────────────────────────────────────────────────── */
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.profile-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.profile-section-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* ── achievements ────────────────────────────────────────────────────────── */
+.profile-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-sm);
+}
+
+.profile-badge {
+  position: relative;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-badge--locked {
+  color: var(--color-text-disabled);
+}
+
+.profile-badge-lock {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  color: var(--color-text-disabled);
+}
+
+.profile-badge-title {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.profile-badge--locked .profile-badge-title {
+  color: var(--color-text-disabled);
+}
+
+.profile-badge-desc {
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.profile-badge-date {
+  margin-top: var(--space-xxs);
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+/* ── profile sub-tabs (mirrors ChipFilter's chip look, scoped) ───────────── */
+.profile-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  margin-bottom: var(--space-md);
+}
+
+.profile-tab {
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  height: 32px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.profile-tab:hover {
+  background: var(--color-surface-hover);
+}
+
+.profile-tab--active,
+.profile-tab--active:hover {
+  background: var(--color-text);
+  color: var(--color-text-on-accent);
+}
+
+/* ── goal grid + card ────────────────────────────────────────────────────── */
+.profile-goal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+}
+
+@media (max-width: 1099px) {
+  .profile-goal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Collapsed cards share one fixed height so the pinned action row lines up
+   across the grid; overflow is cropped inside the metric block. Clicking the
+   card expands it to full width and natural height. */
+.profile-goal-card {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  height: 480px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.profile-goal-card--expanded {
+  grid-column: 1 / -1;
+  height: auto;
+}
+
+.profile-goal-card--inactive {
+  opacity: 0.66;
+}
+
+.profile-goal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.profile-goal-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.profile-goal-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.profile-goal-status--active {
+  color: var(--color-text);
+}
+
+.profile-goal-status--on_hold {
+  color: var(--color-text-secondary);
+}
+
+.profile-goal-status--completed,
+.profile-goal-status--abandoned {
+  color: var(--color-text-tertiary);
+}
+
+.profile-goal-via {
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0.24px;
+  color: var(--color-text-disabled);
+  font-style: italic;
+}
+
+.profile-goal-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+/* ── shared thin progress bar (time elapsed / metric-to-target) ────────────── */
+.profile-goal-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-divider-soft);
+  overflow: hidden;
+}
+
+.profile-goal-bar-fill {
+  height: 100%;
+  background: var(--color-text-tertiary);
+  border-radius: var(--radius-full);
+  transition: width var(--motion-hover);
+}
+
+.profile-goal-desc {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.profile-goal-desc--expanded {
+  -webkit-line-clamp: unset;
+}
+
+/* ── metric block ────────────────────────────────────────────────────────── */
+/* Absorbs the card's fixed-height overflow: shrinks and crops when collapsed
+   (min-height: 0 lets flex actually shrink it) so the action row never moves. */
+.profile-goal-metric {
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.profile-goal-card--expanded .profile-goal-metric {
+  overflow: visible;
+}
+
+.profile-goal-metric--pending {
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.profile-goal-metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.profile-goal-metric-name {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.profile-goal-metric-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.profile-goal-metric-range {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.profile-goal-metric-delta {
+  color: var(--color-text-tertiary);
+}
+
+.profile-goal-metric-desc {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.profile-metric-empty {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+}
+
+/* ── goal actions ────────────────────────────────────────────────────────── */
+.profile-goal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+/* ── modal (mirrors injury-modal) ───────────────────────────────────────── */
+.profile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.profile-modal {
+  width: 100%;
+  max-width: 520px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.profile-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.profile-modal-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.profile-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.profile-modal-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.profile-modal-close:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.profile-modal-body {
+  padding: var(--space-lg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.profile-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.profile-field-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.profile-field-hint {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.profile-input,
+.profile-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  resize: vertical;
+}
+
+.profile-input::placeholder,
+.profile-textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.profile-input:focus-visible,
+.profile-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.profile-modal-actions {
+  display: flex;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+.profile-btn {
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 0 16px;
+  height: 40px;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.profile-btn:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+
+.profile-btn:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.profile-btn--primary {
+  background: var(--color-text);
+  color: var(--color-on-emphasis);
+}
+
+.profile-btn--primary:hover:not(:disabled) {
+  background: var(--color-emphasis-pressed);
+}
+
+/* Outranks .profile-btn:disabled, whose dim-gray text is invisible on the
+   emphasis background. */
+.profile-btn--primary:disabled {
+  color: var(--color-on-emphasis);
+  opacity: 0.4;
+}

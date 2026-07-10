@@ -173,6 +173,45 @@ export interface PlanItemCheck {
   source: string
 }
 
+export interface Goal {
+  id: string
+  title: string
+  description: string | null
+  status: 'active' | 'on_hold' | 'completed' | 'abandoned'
+  started_at: string
+  duration_days: number | null
+  created_by: 'user' | 'chat'
+  // AI-built progress metric — all null until the chat agent defines it.
+  metric_name: string | null
+  metric_description: string | null
+  metric_sql: string | null
+  metric_direction: 'up' | 'down' | null
+  metric_unit: string | null
+  metric_baseline: number | null
+  metric_target: number | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface GoalProgressPoint {
+  goal_id: string
+  date: string
+  value: number
+}
+
+// User-created goal card from the Profile tab (created_by is set to 'user' by
+// the main process — not caller-controlled). Metric fields are agent-owned and
+// intentionally absent here.
+export interface NewGoal {
+  title: string
+  description: string | null
+  duration_days: number | null
+  started_at?: string // YYYY-MM-DD, defaults to today
+}
+
+// User-editable subset of an existing goal. Metric fields stay agent-owned.
+export type GoalPatch = Partial<Pick<Goal, 'title' | 'description' | 'status' | 'duration_days'>>
+
 // The typed surface exposed on window.api by the preload script.
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
@@ -188,6 +227,13 @@ export interface HealthApi {
   getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]>
   getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
   setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<void>
+  getGoals(): Promise<Goal[]>
+  getGoalProgress(goalId: string): Promise<GoalProgressPoint[]>
+  addGoal(goal: NewGoal): Promise<Goal>
+  updateGoal(id: string, patch: GoalPatch): Promise<Goal>
+  // Spawns a headless chat-agent run (cwd chatctx/) that designs the goal's
+  // progress metric via goals.py; resolves when the run exits. Long-running.
+  buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
   getDbStatus(): Promise<DbStatus>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
@@ -215,6 +261,12 @@ export const IPC_CHANNELS = {
   getInjuryPlan: 'db:getInjuryPlan',
   getInjuryPlanChecks: 'db:getInjuryPlanChecks',
   setPlanItemCheck: 'db:setPlanItemCheck',
+  getGoals: 'db:getGoals',
+  getGoalProgress: 'db:getGoalProgress',
+  addGoal: 'db:addGoal',
+  updateGoal: 'db:updateGoal',
+  // Handler in index.ts delegates to chat.ts, which owns CLI process spawning.
+  buildGoalMetric: 'goals:buildMetric',
   getDbStatus: 'db:getDbStatus',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',

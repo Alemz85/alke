@@ -53,6 +53,36 @@ def local_date(ts_iso: str, tz: ZoneInfo) -> date:
     return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone(tz).date()
 
 
+def goal_progress_rows(goal_id: str, result: list[dict]) -> list[dict]:
+    """Normalize exec_readonly_sql output (agent-authored metric_sql, one row
+    per day) into goal_progress upsert rows. Tolerant of schema drift: rows
+    missing a parseable date or a numeric value are dropped rather than
+    failing the goal. ISO timestamps are truncated to date; later rows for a
+    duplicate date win."""
+    by_date: dict[str, float] = {}
+    for row in result:
+        raw_date = row.get("date")
+        raw_value = row.get("value")
+        if raw_date is None or raw_value is None:
+            continue
+        try:
+            day = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if value != value:  # NaN
+            continue
+        by_date[day.isoformat()] = round(value, 4)
+
+    return [
+        {"goal_id": goal_id, "date": d, "value": v}
+        for d, v in sorted(by_date.items())
+    ]
+
+
 def rhr_recent_for(day: date, rhr_by_date: dict[date, float]) -> float:
     """7-day median resting HR ending `day`; fallback 60-day median; fallback 60."""
     for window in (7, 60):
@@ -202,6 +232,9 @@ def run(full: bool) -> None:
     # ---- insights (SPEC §5.4) ----
     run_insights(sb, all_workouts, daily_metrics, daily_rows, tz)
 
+    # ---- goal progress (AI-authored metric_sql, evaluated read-only) ----
+    run_goals(sb)
+
 
 def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     import pandas as pd
@@ -284,6 +317,23 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
         print(f"insight_models: ef_on_sleep_dlm (n={model['diagnostics']['n']})")
     else:
         print("insight_models: skipped (fewer than 40 EF observations)")
+
+
+def run_goals(sb) -> None:
+    """Materialize each active goal's AI-authored metric_sql into
+    goal_progress. A goal with broken SQL (schema drift, etc.) is skipped
+    with a warning — it must never fail the nightly job."""
+    goals = db.fetch_active_goals(sb)
+    points_written = 0
+    for goal in goals:
+        try:
+            result = db.exec_readonly(sb, goal["metric_sql"])
+            rows = goal_progress_rows(goal["id"], result)
+            db.upsert_goal_progress(sb, rows)
+            points_written += len(rows)
+        except Exception as e:  # noqa: BLE001 — one bad goal must not fail the job
+            print(f"goal {goal['id']}: skipped ({e})")
+    print(f"goal_progress: {len(goals)} goals evaluated, {points_written} points written")
 
 
 def main() -> None:

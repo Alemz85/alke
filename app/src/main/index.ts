@@ -21,7 +21,14 @@ if (envPath) {
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { IPC_CHANNELS, type UserConfigPatch, type Flag, type NewInjuryLog } from '@shared/types'
+import {
+  IPC_CHANNELS,
+  type UserConfigPatch,
+  type Flag,
+  type GoalPatch,
+  type NewGoal,
+  type NewInjuryLog
+} from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
 
@@ -123,6 +130,17 @@ function registerIpcHandlers(): void {
     IPC_CHANNELS.setPlanItemCheck,
     (_event, itemId: string, doneDate: string, done: boolean) =>
       db.setPlanItemCheck(itemId, doneDate, done)
+  )
+  ipcMain.handle(IPC_CHANNELS.getGoals, () => db.getGoals())
+  ipcMain.handle(IPC_CHANNELS.getGoalProgress, (_event, goalId: string) =>
+    db.getGoalProgress(goalId)
+  )
+  ipcMain.handle(IPC_CHANNELS.addGoal, (_event, goal: NewGoal) => db.addGoal(goal))
+  ipcMain.handle(IPC_CHANNELS.updateGoal, (_event, id: string, patch: GoalPatch) =>
+    db.updateGoal(id, patch)
+  )
+  ipcMain.handle(IPC_CHANNELS.buildGoalMetric, (_event, goalId: string) =>
+    chat.buildGoalMetric(goalId)
   )
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())

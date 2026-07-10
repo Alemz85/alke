@@ -13,6 +13,7 @@ import { RecoveryView } from './views/RecoveryView'
 import { InsightsView } from './views/InsightsView'
 import { InjuriesView } from './views/InjuriesView'
 import { ChatView } from './views/ChatView'
+import { ProfileView } from './views/ProfileView'
 import { SettingsView } from './views/SettingsView'
 import './App.css'
 
@@ -24,6 +25,7 @@ const VIEWS: Record<TabId, () => ReactElement> = {
   insights: InsightsView,
   injuries: InjuriesView,
   chat: ChatView,
+  profile: ProfileView,
   settings: SettingsView
 }
 

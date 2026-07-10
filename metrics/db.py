@@ -100,3 +100,25 @@ def replace_insight_correlations(sb: Client, rows: list[dict]) -> None:
 
 def upsert_insight_model(sb: Client, row: dict) -> None:
     sb.table("insight_models").upsert(row).execute()
+
+
+def fetch_active_goals(sb: Client) -> list[dict]:
+    return (
+        sb.table("goals")
+        .select("id, metric_sql")
+        .eq("status", "active")
+        .not_.is_("metric_sql", "null")
+        .execute()
+        .data
+    )
+
+
+def exec_readonly(sb: Client, sql: str) -> list[dict]:
+    """Evaluate agent-authored SQL via the hardened exec_readonly_sql RPC
+    (SELECT-only, read-only txn). Never run goal metric_sql any other way."""
+    return sb.rpc("exec_readonly_sql", {"query": sql}).execute().data
+
+
+def upsert_goal_progress(sb: Client, rows: list[dict]) -> None:
+    for i in range(0, len(rows), WRITE_CHUNK):
+        sb.table("goal_progress").upsert(rows[i : i + WRITE_CHUNK], on_conflict="goal_id,date").execute()

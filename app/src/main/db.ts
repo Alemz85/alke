@@ -19,8 +19,12 @@ import {
   type DailyMetric,
   type DbStatus,
   type Flag,
+  type Goal,
+  type GoalPatch,
+  type GoalProgressPoint,
   type Injury,
   type InjuryLogEntry,
+  type NewGoal,
   type NewInjuryLog,
   type PlanItemCheck,
   type RecoveryPlanItem,
@@ -533,6 +537,122 @@ export async function setPlanItemCheck(
 
     if (error) throw new Error(`setPlanItemCheck: ${error.message}`)
   }
+}
+
+const GOAL_COLUMNS =
+  'id, title, description, status, started_at, duration_days, created_by, metric_name, metric_description, metric_sql, metric_direction, metric_unit, metric_baseline, metric_target, created_at, updated_at'
+
+const GOAL_NUMERIC_KEYS: (keyof Goal)[] = ['duration_days', 'metric_baseline', 'metric_target']
+
+const GOAL_STATUSES = ['active', 'on_hold', 'completed', 'abandoned'] as const
+
+function assertGoalTitle(title: unknown): void {
+  if (typeof title !== 'string' || title.trim().length === 0 || title.length > 200) {
+    throw new Error('invalid title')
+  }
+}
+
+function assertGoalDescription(description: unknown): void {
+  if (description !== null && (typeof description !== 'string' || description.length > 5000)) {
+    throw new Error('invalid description')
+  }
+}
+
+function assertGoalDuration(days: unknown): void {
+  if (days !== null && (typeof days !== 'number' || !Number.isInteger(days) || days < 1)) {
+    throw new Error('invalid duration_days')
+  }
+}
+
+export async function getGoals(): Promise<Goal[]> {
+  const supabase = getClient()
+
+  const { data, error } = await supabase
+    .from('goals')
+    .select(GOAL_COLUMNS)
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(`getGoals: ${error.message}`)
+
+  return (data ?? []).map((row) => normalizeNumeric(row as Goal, GOAL_NUMERIC_KEYS))
+}
+
+export async function getGoalProgress(goalId: string): Promise<GoalProgressPoint[]> {
+  const supabase = getClient()
+
+  assertUuid(goalId, 'goal_id')
+
+  const { data, error } = await supabase
+    .from('goal_progress')
+    .select('goal_id, date, value')
+    .eq('goal_id', goalId)
+    .order('date', { ascending: true })
+
+  if (error) throw new Error(`getGoalProgress: ${error.message}`)
+
+  return (data ?? []).map((row) => normalizeNumeric(row as GoalProgressPoint, ['value']))
+}
+
+// Metric columns are agent-owned (written by chatctx/goals.py); the app only
+// creates/edits the card fields the user declares.
+export async function addGoal(goal: NewGoal): Promise<Goal> {
+  const supabase = getClient()
+
+  assertGoalTitle(goal.title)
+  assertGoalDescription(goal.description)
+  assertGoalDuration(goal.duration_days)
+  if (goal.started_at !== undefined) assertDate(goal.started_at, 'started_at')
+
+  const row: Record<string, unknown> = {
+    title: goal.title.trim(),
+    description: goal.description,
+    duration_days: goal.duration_days,
+    created_by: 'user'
+  }
+  if (goal.started_at !== undefined) row.started_at = goal.started_at
+
+  const { data, error } = await supabase.from('goals').insert(row).select(GOAL_COLUMNS).single()
+
+  if (error) throw new Error(`addGoal: ${error.message}`)
+
+  return normalizeNumeric(data as Goal, GOAL_NUMERIC_KEYS)
+}
+
+export async function updateGoal(id: string, patch: GoalPatch): Promise<Goal> {
+  const supabase = getClient()
+
+  assertUuid(id, 'goal_id')
+
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (patch.title !== undefined) {
+    assertGoalTitle(patch.title)
+    row.title = patch.title.trim()
+  }
+  if (patch.description !== undefined) {
+    assertGoalDescription(patch.description)
+    row.description = patch.description
+  }
+  if (patch.duration_days !== undefined) {
+    assertGoalDuration(patch.duration_days)
+    row.duration_days = patch.duration_days
+  }
+  if (patch.status !== undefined) {
+    if (!(GOAL_STATUSES as readonly string[]).includes(patch.status)) {
+      throw new Error('invalid status')
+    }
+    row.status = patch.status
+  }
+
+  const { data, error } = await supabase
+    .from('goals')
+    .update(row)
+    .eq('id', id)
+    .select(GOAL_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateGoal: ${error.message}`)
+
+  return normalizeNumeric(data as Goal, GOAL_NUMERIC_KEYS)
 }
 
 export async function getDbStatus(): Promise<DbStatus> {

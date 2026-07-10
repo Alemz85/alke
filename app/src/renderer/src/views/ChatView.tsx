@@ -72,6 +72,10 @@ export function ChatView(): ReactElement {
       })
       setBusy(false)
       void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+      // Chat conversations can create/update goals out-of-band — keep the
+      // Profile tab's goal cards and progress curves fresh after a reply.
+      void queryClient.invalidateQueries({ queryKey: ['goals'] })
+      void queryClient.invalidateQueries({ queryKey: ['goal-progress'] })
       textareaRef.current?.focus()
     } else if (event.kind === 'error') {
       setError(event.message)
