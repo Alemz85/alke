@@ -101,6 +101,7 @@ Note: the green/yellow/red adherence-efficacy framing used for injury recovery p
 - **EF (efficiency factor)**: swims only — (meters per minute) ÷ average HR, computed only when ≥70% of the session sat in Z1–Z2 and it lasted ≥20 min. Rising EF at constant effort = aerobic base improving.
 - **Decoupling**: for EF-eligible swims, HR drift between first and second half of the session ((avgHR₂−avgHR₁)/avgHR₁ × 100). Under ~5% = aerobically steady.
 - **HRR60**: heart-rate drop 60s after a workout ends; usually null (the export rarely includes post-workout samples).
+- **SWOLF₍25₎**: per swim set, (seconds + strokes) normalized per 25 m of that set. Strokes are Apple watch-arm counts (≈ one per stroke cycle for freestyle), so values are self-relative — comparable across the user's own sessions but lower than a coach counting both hand entries. Lower is better at equal effort; compare within similar set distances.
 - **rhr_dev / hrv_dev**: 7-day median resting HR (or HRV) minus its 60-day baseline median.
 - **weight_7d_slope**: body-weight trend in kg/week — the 7-day rolling mean of daily weight (forward-filled up to 3 days to bridge sparse weigh-ins) minus that same rolling mean 7 days earlier. Treated as a slow OUTCOME variable in the insights layer, not a daily driver — correlations test it against sleep, rhr_dev, hrv_dev, and prior training load, not the other way around.
 
@@ -108,6 +109,8 @@ Note: the green/yellow/red adherence-efficacy framing used for injury recovery p
 
 - `workouts(id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, avg_hr, max_hr, raw)` — types like `pool_swim`, `functional_strength_training`, `indoor_cycling`, `rowing`.
 - `workout_hr_samples(workout_id, offset_s, bpm)` — per-second HR traces.
+- `workout_swim_samples(workout_id, offset_s, distance_m, strokes)` — per-second swim series for pool swims (meters/strokes attributed to each second; seconds with no row = resting).
+- `swim_sets(workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s)` — ingest-detected swim sets (new set after a >10s sampling gap; `rest_after_s` null on the last set). Pace and SWOLF are derived, not stored: `pace_s_per_100m = 100*duration_s/distance_m`; `swolf25 = (duration_s + strokes)/(distance_m/25)`.
 - `daily_metrics(date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, state_of_mind, weight_kg)`.
 - `computed_workout(workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60)`.
 - `computed_daily(date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags)`.
