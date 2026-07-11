@@ -5,6 +5,7 @@ import {
   clusterStructure,
   dpsMPerCycle,
   groupByWorkout,
+  normalizeHrTrack,
   paceSecPer100m,
   restRecoveryBpm,
   sessionFadePct,
@@ -109,6 +110,27 @@ describe('stroke mechanics', () => {
     ])
     expect(summary.dpsMPerCycle).toBeCloseTo(2) // 100m / 50 cycles
     expect(summary.strokeRatePerMin).toBeCloseTo(25) // 50 cycles / 2 min
+  })
+})
+
+describe('normalizeHrTrack', () => {
+  it('maps time and bpm to the unit square over the window', () => {
+    const samples = hrTrace([
+      { fromS: 10, toS: 12, bpm: 100 },
+      { fromS: 12, toS: 14, bpm: 140 }
+    ])
+    const track = normalizeHrTrack(samples, 10, 20)
+    expect(track[0]).toEqual({ t: 0, v: 0 })
+    expect(track[track.length - 1]).toEqual({ t: 0.3, v: 1 }) // offset 13 of [10,20], 140 of [100,140]
+  })
+  it('excludes samples outside the window', () => {
+    const samples = hrTrace([{ fromS: 0, toS: 100, bpm: 120 }, { fromS: 100, toS: 101, bpm: 150 }])
+    // window [0,50]: only the flat 120 stretch -> no bpm range -> empty
+    expect(normalizeHrTrack(samples, 0, 50)).toEqual([])
+  })
+  it('is empty for degenerate windows or sparse traces', () => {
+    expect(normalizeHrTrack([], 0, 100)).toEqual([])
+    expect(normalizeHrTrack(hrTrace([{ fromS: 0, toS: 90, bpm: 130 }]), 50, 50)).toEqual([])
   })
 })
 

@@ -201,18 +201,11 @@
   margin-top: var(--space-md);
 }
 
-.day-drawer-swim-bars {
-  display: flex;
-  align-items: flex-end;
-  height: 28px;
+.day-drawer-swim-timeline {
+  display: block;
+  width: 100%;
+  height: 64px;
   margin: var(--space-xs) 0 var(--space-sm);
-}
-
-.day-drawer-swim-bar {
-  flex-basis: 0;
-  height: 100%;
-  border-radius: 2px;
-  min-width: 3px;
 }
 
 .day-drawer-swim-table {

@@ -7,7 +7,14 @@ import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
-import { paceSecPer100m, restRecoveryBpm, setAvgHr, summarizeSession, swolf25 } from '../lib/swimSets'
+import {
+  normalizeHrTrack,
+  paceSecPer100m,
+  restRecoveryBpm,
+  setAvgHr,
+  summarizeSession,
+  swolf25
+} from '../lib/swimSets'
 import './DayDetailDrawer.css'
 
 const EM_DASH = '—'
@@ -254,9 +261,81 @@ function fmtPace(pace: number | null): string {
   return pace === null ? EM_DASH : fmtSetTime(pace)
 }
 
+// Time-proportional session timeline: set blocks sit on the real time axis
+// (opacity = pace within the session, strong = fast; gaps = rest) with the HR
+// trace overlaid, so recovery dips during rests are visible at a glance.
+function SwimTimeline({
+  sets,
+  paces,
+  hrSamples
+}: {
+  sets: SwimSet[]
+  paces: (number | null)[]
+  hrSamples: WorkoutHrSample[]
+}): ReactElement {
+  const first = sets[0]
+  const last = sets[sets.length - 1]
+  const fromS = first.start_offset_s
+  const toS = last.start_offset_s + last.duration_s
+  const totalS = Math.max(toS - fromS, 1)
+  const known = paces.filter((p): p is number => p !== null)
+  const fastest = known.length > 0 ? Math.min(...known) : 0
+  const slowest = known.length > 0 ? Math.max(...known) : 0
+  const span = Math.max(slowest - fastest, 1e-9)
+
+  const W = 1000
+  const H = 64
+  const BAR_H = 14
+  const track = normalizeHrTrack(hrSamples, fromS, toS)
+  const hrPath = track
+    .map(
+      (p, i) =>
+        `${i === 0 ? 'M' : 'L'}${(p.t * W).toFixed(1)},${(4 + (1 - p.v) * (H - BAR_H - 12)).toFixed(1)}`
+    )
+    .join(' ')
+
+  return (
+    <svg
+      className="day-drawer-swim-timeline"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="Set timeline with heart-rate overlay"
+    >
+      {sets.map((s, i) => {
+        const pace = paces[i]
+        // 0 = slowest, 1 = fastest within this session
+        const speed = pace === null ? 0.5 : (slowest - pace) / span
+        return (
+          <rect
+            key={s.set_index}
+            x={((s.start_offset_s - fromS) / totalS) * W}
+            y={H - BAR_H}
+            width={(s.duration_s / totalS) * W}
+            height={BAR_H}
+            rx={2}
+            fill={`color-mix(in srgb, var(--color-aerobic) ${Math.round(35 + speed * 65)}%, transparent)`}
+          >
+            <title>{`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)} (${fmtPace(pace)} /100m)`}</title>
+          </rect>
+        )
+      })}
+      {hrPath && (
+        <path
+          d={hrPath}
+          fill="none"
+          stroke="var(--color-text-tertiary)"
+          strokeWidth={1.2}
+          vectorEffect="non-scaling-stroke"
+          opacity={0.8}
+        />
+      )}
+    </svg>
+  )
+}
+
 // Swim set breakdown — ingest-detected sets from the watch's per-second swim
-// series. Bars: width ∝ set duration, gap ∝ rest, opacity scaled by pace
-// within the session (strong = fast) so the fade reads at a glance.
+// series, with the timeline above and the per-set table below.
 function SwimSetsSection({
   sets,
   hrSamples
@@ -266,12 +345,6 @@ function SwimSetsSection({
 }): ReactElement {
   const summary = summarizeSession(sets)
   const paces = sets.map(paceSecPer100m)
-  const known = paces.filter((p): p is number => p !== null)
-  const fastest = Math.min(...known)
-  const slowest = Math.max(...known)
-  const span = Math.max(slowest - fastest, 1e-9)
-  const maxRest = Math.max(...sets.map((s) => s.rest_after_s ?? 0), 1)
-
   const setHrs = sets.map((s) => setAvgHr(s, hrSamples))
   const hasHr = setHrs.some((v) => v !== null)
   const recoveries = sets
@@ -289,25 +362,7 @@ function SwimSetsSection({
         {summary.medianRestS !== null ? ` · rest ~${Math.round(summary.medianRestS)}s` : ''}
       </div>
 
-      <div className="day-drawer-swim-bars" aria-hidden="true">
-        {sets.map((s, i) => {
-          const pace = paces[i]
-          // 0 = slowest, 1 = fastest within this session
-          const speed = pace === null ? 0.5 : (slowest - pace) / span
-          return (
-            <div
-              key={s.set_index}
-              className="day-drawer-swim-bar"
-              style={{
-                flexGrow: s.duration_s,
-                marginRight: s.rest_after_s ? `${(s.rest_after_s / maxRest) * 14 + 2}px` : 0,
-                background: `color-mix(in srgb, var(--color-aerobic) ${Math.round(35 + speed * 65)}%, transparent)`
-              }}
-              title={`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)} (${fmtPace(pace)} /100m)`}
-            />
-          )
-        })}
-      </div>
+      <SwimTimeline sets={sets} paces={paces} hrSamples={hrSamples} />
 
       <table className="day-drawer-swim-table">
         <thead>

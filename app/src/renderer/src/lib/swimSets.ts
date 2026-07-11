@@ -175,6 +175,29 @@ export function bestEfforts(byWorkout: Map<string, SwimSet[]>): BestEfforts {
   return out
 }
 
+/**
+ * HR trace normalized for a timeline overlay: time and bpm both mapped to
+ * [0, 1] over the given window (t: 0 = fromS, 1 = toS; v: 0 = lowest bpm in
+ * window, 1 = highest). Empty when the window has <2 samples or no HR range.
+ */
+export function normalizeHrTrack(
+  samples: WorkoutHrSample[],
+  fromS: number,
+  toS: number
+): { t: number; v: number }[] {
+  const span = toS - fromS
+  if (span <= 0) return []
+  const within = samples.filter((s) => s.offset_s >= fromS && s.offset_s <= toS)
+  if (within.length < 2) return []
+  const min = Math.min(...within.map((s) => s.bpm))
+  const max = Math.max(...within.map((s) => s.bpm))
+  if (max === min) return []
+  return within.map((s) => ({
+    t: (s.offset_s - fromS) / span,
+    v: (s.bpm - min) / (max - min)
+  }))
+}
+
 /** Groups a flat swim_sets read by workout, preserving set order. */
 export function groupByWorkout(sets: SwimSet[]): Map<string, SwimSet[]> {
   const byWorkout = new Map<string, SwimSet[]>()
