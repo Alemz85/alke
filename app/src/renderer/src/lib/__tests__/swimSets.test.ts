@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { SwimSet } from '@shared/types'
+import type { SwimSet, WorkoutHrSample } from '@shared/types'
 import {
+  bestEfforts,
   clusterStructure,
+  groupByWorkout,
   paceSecPer100m,
+  restRecoveryBpm,
   sessionFadePct,
+  setAvgHr,
   summarizeSession,
   swolf25
 } from '../swimSets'
@@ -30,12 +34,85 @@ describe('paceSecPer100m', () => {
 })
 
 describe('swolf25', () => {
-  it('normalizes time + strokes per 25m', () => {
-    // (67s + 23 strokes) / (50m / 25m) = 45
-    expect(swolf25(set({ set_index: 1 }))).toBeCloseTo(45)
+  it('normalizes time + both-hands strokes (2× watch-arm cycles) per 25m', () => {
+    // (67s + 2×23 strokes) / (50m / 25m) = 56.5
+    expect(swolf25(set({ set_index: 1 }))).toBeCloseTo(56.5)
   })
   it('returns null for zero distance', () => {
     expect(swolf25(set({ set_index: 1, distance_m: 0 }))).toBeNull()
+  })
+})
+
+function hrTrace(spans: { fromS: number; toS: number; bpm: number }[]): WorkoutHrSample[] {
+  const samples: WorkoutHrSample[] = []
+  for (const span of spans) {
+    for (let t = span.fromS; t < span.toS; t++) {
+      samples.push({ workout_id: 'w1', offset_s: t, bpm: span.bpm })
+    }
+  }
+  return samples
+}
+
+describe('setAvgHr', () => {
+  it('averages bpm inside the set window only', () => {
+    const samples = hrTrace([
+      { fromS: 0, toS: 60, bpm: 130 }, // in set
+      { fromS: 60, toS: 95, bpm: 110 } // rest — excluded
+    ])
+    expect(setAvgHr(set({ set_index: 1, start_offset_s: 0, duration_s: 60 }), samples)).toBe(130)
+  })
+  it('returns null when the trace is too sparse', () => {
+    const samples = hrTrace([{ fromS: 0, toS: 3, bpm: 130 }])
+    expect(setAvgHr(set({ set_index: 1, start_offset_s: 0, duration_s: 60 }), samples)).toBeNull()
+  })
+})
+
+describe('restRecoveryBpm', () => {
+  it('measures peak-of-set-end minus rest minimum', () => {
+    const samples = hrTrace([
+      { fromS: 0, toS: 60, bpm: 138 }, // set
+      { fromS: 60, toS: 80, bpm: 122 }, // rest, falling
+      { fromS: 80, toS: 95, bpm: 118 } // rest floor
+    ])
+    expect(
+      restRecoveryBpm(set({ set_index: 1, start_offset_s: 0, duration_s: 60, rest_after_s: 35 }), samples)
+    ).toBe(20) // 138 - 118
+  })
+  it('returns null for short rests', () => {
+    expect(
+      restRecoveryBpm(set({ set_index: 1, rest_after_s: 10 }), hrTrace([{ fromS: 0, toS: 90, bpm: 130 }]))
+    ).toBeNull()
+  })
+  it('returns null on the last set (no rest)', () => {
+    expect(
+      restRecoveryBpm(set({ set_index: 1, rest_after_s: null }), hrTrace([{ fromS: 0, toS: 90, bpm: 130 }]))
+    ).toBeNull()
+  })
+})
+
+describe('bestEfforts', () => {
+  it('finds fastest qualifying set, best session pace, and best session SWOLF', () => {
+    const byWorkout = groupByWorkout([
+      // session A: one fast 50m set, slow overall
+      set({ set_index: 1, workout_id: 'a', duration_s: 55, distance_m: 50 }), // 110 s/100m
+      set({ set_index: 2, workout_id: 'a', duration_s: 80, distance_m: 50 }),
+      // session B: steadier — best session pace
+      set({ set_index: 1, workout_id: 'b', duration_s: 62, distance_m: 50 }),
+      set({ set_index: 2, workout_id: 'b', duration_s: 63, distance_m: 50, strokes: 20 }),
+      // a short 25m block must not win fastest set despite the burst pace
+      set({ set_index: 3, workout_id: 'b', duration_s: 25, distance_m: 25 }) // 100 s/100m but <45m
+    ])
+    const best = bestEfforts(byWorkout)
+    expect(best.fastestSet?.workoutId).toBe('a')
+    expect(best.fastestSet?.paceSecPer100m).toBeCloseTo(110)
+    expect(best.bestSessionPace?.workoutId).toBe('b')
+    expect(best.bestSessionSwolf25).not.toBeNull()
+  })
+  it('is all-null on empty input', () => {
+    const best = bestEfforts(new Map())
+    expect(best.fastestSet).toBeNull()
+    expect(best.bestSessionPace).toBeNull()
+    expect(best.bestSessionSwolf25).toBeNull()
   })
 })
 

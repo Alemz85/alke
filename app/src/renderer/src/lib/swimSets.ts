@@ -2,19 +2,25 @@
 // Formulas live here — NOT in the DB — so they stay tunable (spec:
 // docs/superpowers/specs/2026-07-11-swim-set-analytics-design.md).
 //
-// SWOLF caveat: Apple counts watch-arm strokes (≈ one per cycle for
-// freestyle), so swolf25 is self-relative — lower than a both-hands count.
-import type { SwimSet } from '@shared/types'
+// SWOLF caveat: Apple counts watch-arm strokes (≈ one cycle for freestyle),
+// so swolf25 doubles them to the textbook both-hands convention. Exact for
+// alternating strokes (free/back); overcounts breast/fly — acceptable, the
+// app assumes freestyle and HAE never sends stroke style.
+import type { SwimSet, WorkoutHrSample } from '@shared/types'
 
 export function paceSecPer100m(set: SwimSet): number | null {
   if (set.distance_m <= 0) return null
   return (100 * set.duration_s) / set.distance_m
 }
 
-/** SWOLF normalized per 25m: (seconds + watch-arm strokes) per 25m swum. */
+/**
+ * SWOLF normalized per 25m: (seconds + both-hands strokes) per 25m swum.
+ * Stored strokes are watch-arm cycles, so they count double (freestyle
+ * assumption — see header comment).
+ */
 export function swolf25(set: SwimSet): number | null {
   if (set.distance_m <= 0) return null
-  return (set.duration_s + set.strokes) / (set.distance_m / 25)
+  return (set.duration_s + 2 * set.strokes) / (set.distance_m / 25)
 }
 
 function median(values: number[]): number | null {
@@ -81,6 +87,72 @@ export function summarizeSession(sets: SwimSet[]): SwimSessionSummary {
     fadePct: sessionFadePct(sets),
     structure: clusterStructure(sets)
   }
+}
+
+/** Mean bpm over the samples inside a set's swim window; null under 5 samples. */
+export function setAvgHr(set: SwimSet, samples: WorkoutHrSample[]): number | null {
+  const end = set.start_offset_s + set.duration_s
+  const within = samples.filter((s) => s.offset_s >= set.start_offset_s && s.offset_s < end)
+  if (within.length < 5) return null
+  return within.reduce((sum, s) => sum + s.bpm, 0) / within.length
+}
+
+/**
+ * HR recovery during the rest after a set: peak bpm in the set's final 15s
+ * minus the lowest bpm reached before the next set starts. Positive = the
+ * heart came down; shrinking values late in a session signal accumulating
+ * fatigue. Null when the rest is under 15s or the trace is too sparse.
+ */
+export function restRecoveryBpm(set: SwimSet, samples: WorkoutHrSample[]): number | null {
+  const restAfter = set.rest_after_s
+  if (restAfter === null || restAfter < 15) return null
+  const end = set.start_offset_s + set.duration_s
+  const tail = samples.filter((s) => s.offset_s >= end - 15 && s.offset_s < end)
+  const rest = samples.filter((s) => s.offset_s >= end && s.offset_s < end + restAfter)
+  if (tail.length === 0 || rest.length < 5) return null
+  const peakEnd = Math.max(...tail.map((s) => s.bpm))
+  const minRest = Math.min(...rest.map((s) => s.bpm))
+  return peakEnd - minRest
+}
+
+// A "set" must be at least this long to qualify for the fastest-set effort —
+// short blocks (a single 25m length) reward burst over sustained pace.
+const BEST_EFFORT_MIN_SET_M = 45
+
+export interface BestEfforts {
+  /** Fastest set of ≥45m, by pace. */
+  fastestSet: { paceSecPer100m: number; distanceM: number; workoutId: string } | null
+  /** Best session-wide set-weighted pace. */
+  bestSessionPace: { paceSecPer100m: number; workoutId: string } | null
+  /** Lowest session median SWOLF₍25₎. */
+  bestSessionSwolf25: { swolf: number; workoutId: string } | null
+}
+
+export function bestEfforts(byWorkout: Map<string, SwimSet[]>): BestEfforts {
+  const out: BestEfforts = { fastestSet: null, bestSessionPace: null, bestSessionSwolf25: null }
+  for (const [workoutId, sets] of byWorkout) {
+    for (const s of sets) {
+      const pace = paceSecPer100m(s)
+      if (pace === null || s.distance_m < BEST_EFFORT_MIN_SET_M) continue
+      if (!out.fastestSet || pace < out.fastestSet.paceSecPer100m) {
+        out.fastestSet = { paceSecPer100m: pace, distanceM: s.distance_m, workoutId }
+      }
+    }
+    const summary = summarizeSession(sets)
+    if (
+      summary.avgPaceSecPer100m !== null &&
+      (!out.bestSessionPace || summary.avgPaceSecPer100m < out.bestSessionPace.paceSecPer100m)
+    ) {
+      out.bestSessionPace = { paceSecPer100m: summary.avgPaceSecPer100m, workoutId }
+    }
+    if (
+      summary.medianSwolf25 !== null &&
+      (!out.bestSessionSwolf25 || summary.medianSwolf25 < out.bestSessionSwolf25.swolf)
+    ) {
+      out.bestSessionSwolf25 = { swolf: summary.medianSwolf25, workoutId }
+    }
+  }
+  return out
 }
 
 /** Groups a flat swim_sets read by workout, preserving set order. */

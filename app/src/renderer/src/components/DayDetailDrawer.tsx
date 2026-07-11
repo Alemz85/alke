@@ -1,13 +1,13 @@
 import { useEffect, type ReactElement } from 'react'
 import { X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
-import type { SwimSet, Workout } from '@shared/types'
+import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
-import { paceSecPer100m, summarizeSession, swolf25 } from '../lib/swimSets'
+import { paceSecPer100m, restRecoveryBpm, setAvgHr, summarizeSession, swolf25 } from '../lib/swimSets'
 import './DayDetailDrawer.css'
 
 const EM_DASH = '—'
@@ -180,7 +180,7 @@ function SessionCard({
         )}
       </div>
 
-      {swimSets.length > 0 && <SwimSetsSection sets={swimSets} />}
+      {swimSets.length > 0 && <SwimSetsSection sets={swimSets} hrSamples={hrSamples} />}
     </div>
   )
 }
@@ -257,7 +257,13 @@ function fmtPace(pace: number | null): string {
 // Swim set breakdown — ingest-detected sets from the watch's per-second swim
 // series. Bars: width ∝ set duration, gap ∝ rest, opacity scaled by pace
 // within the session (strong = fast) so the fade reads at a glance.
-function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
+function SwimSetsSection({
+  sets,
+  hrSamples
+}: {
+  sets: SwimSet[]
+  hrSamples: WorkoutHrSample[]
+}): ReactElement {
   const summary = summarizeSession(sets)
   const paces = sets.map(paceSecPer100m)
   const known = paces.filter((p): p is number => p !== null)
@@ -265,6 +271,16 @@ function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
   const slowest = Math.max(...known)
   const span = Math.max(slowest - fastest, 1e-9)
   const maxRest = Math.max(...sets.map((s) => s.rest_after_s ?? 0), 1)
+
+  const setHrs = sets.map((s) => setAvgHr(s, hrSamples))
+  const hasHr = setHrs.some((v) => v !== null)
+  const recoveries = sets
+    .map((s) => restRecoveryBpm(s, hrSamples))
+    .filter((v): v is number => v !== null)
+  const medianRecovery =
+    recoveries.length >= 3
+      ? [...recoveries].sort((a, b) => a - b)[Math.floor(recoveries.length / 2)]
+      : null
 
   return (
     <div className="day-drawer-swim">
@@ -301,15 +317,17 @@ function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
             <th>time</th>
             <th>/100m</th>
             <th>strokes</th>
-            <th title="Time + strokes per 25m. Self-relative: the watch counts one stroke per arm cycle, so this reads lower than a both-hands count.">
+            {hasHr && <th title="Average heart rate while swimming this set.">HR</th>}
+            <th title="Time + strokes (both hands) per 25m, lower is better. The watch counts arm cycles; they are doubled here assuming freestyle.">
               SWOLF
             </th>
             <th>rest</th>
           </tr>
         </thead>
         <tbody>
-          {sets.map((s) => {
+          {sets.map((s, i) => {
             const sw = swolf25(s)
+            const hr = setHrs[i]
             return (
               <tr key={s.set_index}>
                 <td className="tabular-nums">{s.set_index}</td>
@@ -317,6 +335,7 @@ function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
                 <td className="tabular-nums">{fmtSetTime(s.duration_s)}</td>
                 <td className="tabular-nums">{fmtPace(paceSecPer100m(s))}</td>
                 <td className="tabular-nums">{Math.round(s.strokes)}</td>
+                {hasHr && <td className="tabular-nums">{hr === null ? EM_DASH : Math.round(hr)}</td>}
                 <td className="tabular-nums">{sw === null ? EM_DASH : sw.toFixed(1)}</td>
                 <td className="tabular-nums">{s.rest_after_s === null ? EM_DASH : `${s.rest_after_s}s`}</td>
               </tr>
@@ -325,7 +344,11 @@ function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
         </tbody>
       </table>
       <p className="day-drawer-swim-caption">
-        Sets detected from the watch&apos;s per-second swim samples; strokes are watch-arm counts.
+        Sets detected from the watch&apos;s per-second swim samples; strokes are watch-arm counts
+        (SWOLF doubles them, assuming freestyle).
+        {medianRecovery !== null
+          ? ` Rests recover ~${Math.round(medianRecovery)} bpm (median) — shrinking recovery late in a session signals fatigue.`
+          : ''}
       </p>
     </div>
   )

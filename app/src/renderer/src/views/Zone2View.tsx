@@ -25,7 +25,7 @@ import {
   cardioModalityOf,
   type CardioModalityKey
 } from '../lib/cardioModality'
-import { groupByWorkout, summarizeSession } from '../lib/swimSets'
+import { bestEfforts, groupByWorkout, summarizeSession } from '../lib/swimSets'
 import './Zone2View.css'
 
 const AEROBIC = 'var(--color-aerobic)'
@@ -55,6 +55,13 @@ function isCardio(type: string | null): boolean {
 
 function hasZones(w: Workout): boolean {
   return w.computed?.time_in_zones != null
+}
+
+/** Formats a sec/100m pace as m:ss. */
+function fmtPace100(pace: number): string {
+  const m = Math.floor(pace / 60)
+  const s = Math.round(pace % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 const tooltipStyle = {
@@ -482,6 +489,16 @@ function ModalityView({
       }))
   }, [isSwim, swimSets, workouts, timezone])
 
+  // Best efforts across all sessions with set data, dated for the captions.
+  const swimBest = useMemo(() => {
+    if (!isSwim || swimSets.length === 0) return null
+    const dateOf = (id: string): string => {
+      const w = workouts.find((x) => x.id === id)
+      return w ? localDateKey(w.start_at, timezone) : ''
+    }
+    return { ...bestEfforts(groupByWorkout(swimSets)), dateOf }
+  }, [isSwim, swimSets, workouts, timezone])
+
   // --- stat row: this-week Z2 min (modality), sessions 90d, avg Z2 share 90d ---
   const weekly = useMemo(() => weeklyZ2(modalityWorkouts, timezone, 12), [modalityWorkouts, timezone])
   const thisWeekMin = weekly.length > 0 ? weekly[weekly.length - 1].minutes : 0
@@ -522,6 +539,40 @@ function ModalityView({
           caption="Z2 / classified time, 90d"
         />
       </div>
+
+      {swimBest && (
+        <div className="zone2-stat-row">
+          <MetricCard
+            eyebrow="Swim · fastest set"
+            value={swimBest.fastestSet ? fmtPace100(swimBest.fastestSet.paceSecPer100m) : '—'}
+            domain="aerobic"
+            caption={
+              swimBest.fastestSet
+                ? `/100m · ${Math.round(swimBest.fastestSet.distanceM)}m set · ${swimBest.dateOf(swimBest.fastestSet.workoutId)}`
+                : 'needs a set of 45m or more'
+            }
+          />
+          <MetricCard
+            eyebrow="Swim · best session pace"
+            value={swimBest.bestSessionPace ? fmtPace100(swimBest.bestSessionPace.paceSecPer100m) : '—'}
+            domain="aerobic"
+            caption={
+              swimBest.bestSessionPace
+                ? `/100m set-weighted · ${swimBest.dateOf(swimBest.bestSessionPace.workoutId)}`
+                : 'no sessions with set data yet'
+            }
+          />
+          <MetricCard
+            eyebrow="Swim · best SWOLF"
+            value={swimBest.bestSessionSwolf25 ? swimBest.bestSessionSwolf25.swolf.toFixed(1) : '—'}
+            caption={
+              swimBest.bestSessionSwolf25
+                ? `session median per 25m · ${swimBest.dateOf(swimBest.bestSessionSwolf25.workoutId)}`
+                : 'no sessions with set data yet'
+            }
+          />
+        </div>
+      )}
 
       <div className="zone2-grid">
         <ChartCard title={`Weekly Zone 2 minutes — ${modality.label.toLowerCase()}`} span={12}>
@@ -587,7 +638,7 @@ function ModalityView({
                 <>
                   <SwimTrendChart data={swimSessionRows} dataKey="medianSwolf25" format={(v) => v.toFixed(1)} />
                   <p className="zone2-caption">
-                    Median (time + watch-arm strokes) per 25m — self-relative efficiency, lower is better.
+                    Median (time + both-hands strokes) per 25m — freestyle assumption, lower is better.
                   </p>
                 </>
               )}
