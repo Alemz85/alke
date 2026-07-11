@@ -1,15 +1,33 @@
-// Sessions-tab-scoped data hooks. Kept in its own file per the "own file,
-// dedupe later" convention shared with useDashboardData.ts — this tab fetches
-// overlapping workout ranges (visible month, full year for streaks) with its
-// own query keys so it doesn't collide with other views' caches.
+// THE canonical data-hooks module ("dedupe later" arrived): every view that
+// needs config, workouts, daily metrics, or the zone2 model fetches through
+// these hooks. Query keys are view-neutral ('health', …) so consumers share
+// one cache entry by construction instead of by key-string convention.
 import { useQuery } from '@tanstack/react-query'
-import type { UserConfig, Workout, WorkoutDetail } from '@shared/types'
+import type { DailyMetric, UserConfig, Workout, WorkoutDetail, Zone2Fitness } from '@shared/types'
 import { addDays, isoWeekStart, todayYMD, ymdToIsoStart, type YMD } from './sessionsDate'
 
 export function useUserConfig() {
   return useQuery<UserConfig>({
-    queryKey: ['sessions', 'userConfig'],
+    queryKey: ['health', 'userConfig'],
     queryFn: () => window.api.getUserConfig()
+  })
+}
+
+/** Daily metrics rows for [fromDate, toDate] ('YYYY-MM-DD', inclusive). */
+export function useDailyMetricsRange(fromDate: string, toDate: string) {
+  return useQuery<DailyMetric[]>({
+    queryKey: ['health', 'dailyMetrics', fromDate, toDate],
+    queryFn: () => window.api.getDailyMetrics(fromDate, toDate),
+    staleTime: 60_000
+  })
+}
+
+/** Nightly zone2 model rows for [fromDate, toDate] ('YYYY-MM-DD', inclusive). */
+export function useZone2FitnessRange(fromDate: string, toDate: string) {
+  return useQuery<Zone2Fitness[]>({
+    queryKey: ['health', 'zone2Fitness', fromDate, toDate],
+    queryFn: () => window.api.getZone2Fitness(fromDate, toDate),
+    staleTime: 60_000
   })
 }
 
@@ -28,7 +46,7 @@ export function useMonthWorkouts(year: number, month: number) {
   const toIso = ymdToIsoStart(addDays(monthEnd, 8)) // +1 day to make range end-exclusive-safe, +7 buffer
 
   return useQuery<Workout[]>({
-    queryKey: ['sessions', 'monthWorkouts', year, month],
+    queryKey: ['health', 'monthWorkouts', year, month],
     queryFn: () => window.api.getWorkouts(fromIso, toIso),
     staleTime: 60_000
   })
@@ -45,7 +63,7 @@ export function useYearWorkouts(timezone: string | null | undefined) {
   const toIso = ymdToIsoStart(addDays(today, 1))
 
   return useQuery<Workout[]>({
-    queryKey: ['sessions', 'yearWorkouts', fromIso.slice(0, 10)],
+    queryKey: ['health', 'yearWorkouts', fromIso.slice(0, 10)],
     queryFn: () => window.api.getWorkouts(fromIso, toIso),
     staleTime: 60_000
   })
@@ -53,7 +71,7 @@ export function useYearWorkouts(timezone: string | null | undefined) {
 
 export function useWorkoutDetail(id: string | null) {
   return useQuery<WorkoutDetail>({
-    queryKey: ['sessions', 'workoutDetail', id],
+    queryKey: ['health', 'workoutDetail', id],
     queryFn: () => window.api.getWorkoutDetail(id as string),
     enabled: id !== null
   })
