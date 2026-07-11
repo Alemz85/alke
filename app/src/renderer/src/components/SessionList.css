@@ -52,6 +52,17 @@
   color: var(--color-text-secondary);
 }
 
+.session-list-cell--modality {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.session-list-modality-icon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
 .session-list-cell--duration,
 .session-list-cell--distance,
 .session-list-cell--trimp {

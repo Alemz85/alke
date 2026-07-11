@@ -4,11 +4,11 @@ import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { SessionList } from '../components/SessionList'
 import { modalityLabel } from '../components/modalityAccent'
-import { EmptyState, HeroMetric, MetricCard, StatTable } from '../components'
+import { EmptyState, HeroMetric, StatTable } from '../components'
 import type { StatTableRow } from '../components'
 import { useMonthWorkouts, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import { formatDuration, groupWorkoutsByDay, longestWeeklyStreak } from '../hooks/sessionsCompute'
-import { isoWeekKey, localDateKey, MONTH_NAMES, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
+import { isoWeekKey, localDateKey, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
 import { formatWorkoutDuration } from '../lib/calendarDayLabel'
 import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
 import './SessionsView.css'
@@ -78,7 +78,6 @@ export function SessionsView(): ReactElement {
     return y === viewYear && m === viewMonth
   })
   const sessionsCount = monthCellsInMonth.reduce((sum, b) => sum + b.workouts.length, 0)
-  const totalDurationS = monthCellsInMonth.reduce((sum, b) => sum + b.totalDurationS, 0)
 
   const durationByModality = new Map<string, number>()
   for (const bucket of monthCellsInMonth) {
@@ -95,17 +94,6 @@ export function SessionsView(): ReactElement {
   )
 
   const hasAnySessionThisMonth = sessionsCount > 0
-  const statRows: StatTableRow[] = hasAnySessionThisMonth
-    ? [
-        { label: 'Sessions', value: sessionsCount.toString() },
-        { label: 'Total time', value: formatDuration(totalDurationS) },
-        ...Array.from(durationByModality.entries()).map(([type, durS]) => ({
-          label: modalityLabel(type),
-          value: formatDuration(durS)
-        })),
-        { label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }
-      ]
-    : [{ label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }]
 
   // --- Month / year pill summaries (lib/periodSummary.ts) ---
   const summaryItems: SummaryItem[] = useMemo(
@@ -129,6 +117,34 @@ export function SessionsView(): ReactElement {
     () => yearSummary(summaryItems, viewYear),
     [summaryItems, viewYear]
   )
+
+  // Merged "Month summary" table: monthSum's workouts/time/gym/cardio/trend
+  // (new values win over the pre-existing sessions/total-time rows), plus the
+  // pre-existing per-modality breakdown and longest-streak rows.
+  const monthStatRows: StatTableRow[] = hasAnySessionThisMonth
+    ? [
+        { label: 'Workouts', value: monthSum.workouts.toString() },
+        { label: 'Total time', value: formatWorkoutDuration(monthSum.totalDurationS) },
+        { label: 'Gym sessions', value: monthSum.gymSessions.toString() },
+        { label: 'Cardio sessions', value: monthSum.cardioSessions.toString() },
+        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` },
+        ...Array.from(durationByModality.entries()).map(([type, durS]) => ({
+          label: modalityLabel(type),
+          value: formatDuration(durS)
+        })),
+        { label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }
+      ]
+    : [
+        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` },
+        { label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }
+      ]
+
+  const yearStatRows: StatTableRow[] = [
+    { label: 'Workouts/mo', value: fmtPerMonth(yearSum.avgWorkoutsPerMonth) },
+    { label: 'Time/mo', value: formatWorkoutDuration(yearSum.avgDurationSPerMonth) },
+    { label: 'Gym/mo', value: fmtPerMonth(yearSum.avgGymPerMonth) },
+    { label: 'Cardio/mo', value: fmtPerMonth(yearSum.avgCardioPerMonth) }
+  ]
 
   const selectedBucket = selectedDayKey
     ? (daysByKey.get(selectedDayKey) ?? summaryDaysByKey.get(selectedDayKey))
@@ -182,32 +198,6 @@ export function SessionsView(): ReactElement {
         domain="sessions"
       />
 
-      <div className="sessions-month-pills">
-        <MetricCard eyebrow={`${MONTH_NAMES[viewMonth - 1]} · Workouts`} value={monthSum.workouts.toString()} />
-        <MetricCard
-          eyebrow={`${MONTH_NAMES[viewMonth - 1]} · Total time`}
-          value={formatWorkoutDuration(monthSum.totalDurationS)}
-        />
-        <MetricCard eyebrow="Gym sessions" value={monthSum.gymSessions.toString()} />
-        <MetricCard eyebrow="Cardio sessions" value={monthSum.cardioSessions.toString()} />
-        <MetricCard
-          eyebrow="Time trend"
-          value={fmtTrendPct(monthSum.timeTrendPct)}
-          domain={
-            monthSum.timeTrendPct === null ? undefined : monthSum.timeTrendPct >= 0 ? 'aerobic' : 'flag'
-          }
-          caption="vs last month"
-        />
-      </div>
-
-      <div className="sessions-year-row">
-        <span className="sessions-year-row-label">{viewYear} · monthly average</span>
-        <span className="sessions-year-row-stats tabular-nums">
-          {fmtPerMonth(yearSum.avgWorkoutsPerMonth)} workouts/mo · {formatWorkoutDuration(yearSum.avgDurationSPerMonth)}/mo
-          · {fmtPerMonth(yearSum.avgGymPerMonth)} gym/mo · {fmtPerMonth(yearSum.avgCardioPerMonth)} cardio/mo
-        </span>
-      </div>
-
       <div className="sessions-grid">
         <div className="sessions-grid-calendar">
           <CalendarHeatmap
@@ -230,7 +220,11 @@ export function SessionsView(): ReactElement {
         <div className="sessions-grid-summary">
           <div className="sessions-summary-card">
             <h3 className="sessions-summary-title">Month summary</h3>
-            <StatTable rows={statRows} />
+            <StatTable rows={monthStatRows} />
+          </div>
+          <div className="sessions-summary-card">
+            <h3 className="sessions-summary-title">{viewYear} · monthly average</h3>
+            <StatTable rows={yearStatRows} />
           </div>
         </div>
       </div>

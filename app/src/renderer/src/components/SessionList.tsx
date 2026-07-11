@@ -3,6 +3,7 @@ import type { Workout } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { EmptyState } from './EmptyState'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
+import { ModalityIcon } from './ModalityIcon'
 import { formatWorkoutDuration } from '../lib/calendarDayLabel'
 import { localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import './SessionList.css'
@@ -70,6 +71,7 @@ export function SessionList({ workouts, timezone, onSelectDay }: SessionListProp
                 {fmtDateTime(w.start_at, timezone)}
               </span>
               <span className="session-list-cell session-list-cell--modality">
+                <ModalityIcon type={w.type} className="session-list-modality-icon" />
                 <BadgeDomain domain={badgeDomain} label={modalityLabel(w.type)} />
               </span>
               <span className="session-list-cell session-list-cell--duration tabular-nums">
