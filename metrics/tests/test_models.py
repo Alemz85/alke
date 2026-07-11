@@ -72,13 +72,25 @@ def test_ef_formula():
     assert ef(1400, 0, 120) is None
 
 
-def test_ef_eligibility_swims_z1z2_70pct_20min():
+def test_ef_eligibility_swims_and_bikes_z1z2_70pct_20min():
     tiz_ok = {1: 900, 2: 300, 3: 300, 4: 0, 5: 0}  # 80% z1-z2, 25 min
     assert ef_eligibility("pool_swim", tiz_ok, 1500)
-    assert not ef_eligibility("indoor_cycling", tiz_ok, 1500)  # swims only
+    # v3: cycling is EF-eligible too — bike EF is the lead durable-calibration
+    # signal, so it must be able to exist (indoor rides without distance still
+    # yield ef=None downstream, which is fine).
+    assert ef_eligibility("indoor_cycling", tiz_ok, 1500)
+    assert ef_eligibility("cycling", tiz_ok, 1500)
+    assert ef_eligibility("biking", tiz_ok, 1500)
+    # everything else stays ineligible
+    assert not ef_eligibility("running", tiz_ok, 1500)
+    assert not ef_eligibility("functional_strength_training", tiz_ok, 1500)
+    assert not ef_eligibility(None, tiz_ok, 1500)
+    # gates apply to bikes exactly as to swims
     assert not ef_eligibility("pool_swim", tiz_ok, 1100)  # <20 min
+    assert not ef_eligibility("indoor_cycling", tiz_ok, 1100)
     tiz_hot = {1: 300, 2: 300, 3: 900, 4: 0, 5: 0}  # 40% z1-z2
     assert not ef_eligibility("pool_swim", tiz_hot, 1500)
+    assert not ef_eligibility("indoor_cycling", tiz_hot, 1500)
 
 
 def test_hr_drift_pct_half_split():

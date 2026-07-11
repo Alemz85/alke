@@ -20,6 +20,15 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-xl);
   align-items: stretch;
+  /* "Fast" (provisional) tone shared by the bar fill/ghost AND the swatches in
+     the readout — component-scoped so [data-theme='light'] can override both
+     from one place instead of duplicating rgba literals per usage. */
+  --z2f-fast-fill: rgba(45, 212, 191, 0.42);
+  --z2f-fast-ghost: rgba(45, 212, 191, 0.07);
+}
+[data-theme='light'] .z2f-panel {
+  --z2f-fast-fill: rgba(15, 118, 110, 0.5);
+  --z2f-fast-ghost: rgba(15, 118, 110, 0.12);
 }
 
 /* Whole panel greyed when evidence is not ok (insufficient / ambiguous / low-confidence). */
@@ -67,25 +76,26 @@
   background: var(--color-aerobic-dim);
 }
 
-/* Fast = top zone. Lighter/translucent "provisional" teal; ONE fainter ghost. */
+/* Fast = top zone. Lighter/translucent "provisional" teal; ONE fainter ghost.
+   Tone comes from the --z2f-fast-* custom properties defined on .z2f-panel
+   (shared with the swatches below) so both re-derive together under
+   [data-theme='light'] instead of duplicating rgba literals per usage. */
 .z2f-bar-seg--fast-fill {
-  background: rgba(45, 212, 191, 0.42);
+  background: var(--z2f-fast-fill);
 }
 .z2f-bar-seg--fast-ghost {
-  background: rgba(45, 212, 191, 0.07);
+  background: var(--z2f-fast-ghost);
 }
 
-/* Single thin divider at the 70 ceiling (the seam between the two zones). */
+/* Single thin divider at the 70 ceiling (the seam between the two zones) —
+   uses the shared hairline token so it stays legible in both themes. */
 .z2f-bar-divider {
   position: absolute;
   left: 0;
   right: 0;
   height: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.24);
+  border-top: 1px solid var(--color-hairline);
   pointer-events: none;
-}
-[data-theme='light'] .z2f-bar-divider {
-  border-top-color: rgba(0, 0, 0, 0.18);
 }
 
 /* One quiet 1px tick at the index level — the only on-bar uncertainty cue.
@@ -187,7 +197,8 @@
   background: var(--color-aerobic);
 }
 .z2f-swatch--fast {
-  background: rgba(45, 212, 191, 0.42);
+  /* Mirrors the bar's fast-fill tone (--z2f-fast-fill, defined on .z2f-panel above). */
+  background: var(--z2f-fast-fill);
 }
 
 /* Quiet legend labelling the two bar tones — no text lives on the bar itself. */
@@ -346,4 +357,36 @@
   line-height: var(--type-body-md-line-height);
   letter-spacing: var(--type-body-md-letter-spacing);
   color: var(--color-text-secondary);
+}
+
+/* ── Loading skeleton — reserves the panel + calendar block's layout height so
+   the tab doesn't jump once the query resolves (was: render nothing). ─────── */
+.z2f-panel--skeleton {
+  align-items: stretch;
+}
+
+.z2f-bar--skeleton {
+  background: var(--color-surface);
+}
+
+.z2f-skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+.z2f-skeleton-line--eyebrow {
+  width: 40%;
+  height: 11px;
+}
+.z2f-skeleton-line--hero {
+  width: 30%;
+  height: 40px;
+  margin-top: var(--space-xs);
+}
+.z2f-skeleton-line--body {
+  width: 80%;
+}
+
+.z2f-calendar-block--skeleton {
+  min-height: 360px;
 }

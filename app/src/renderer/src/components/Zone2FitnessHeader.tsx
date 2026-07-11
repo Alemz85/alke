@@ -3,6 +3,7 @@ import type { CSSProperties, ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Workout, Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
+import { BadgeDomain } from './BadgeDomain'
 import { CalendarHeatmap } from './CalendarHeatmap'
 import { EmptyState } from './EmptyState'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
@@ -143,8 +144,26 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     }
   }
 
-  // Loading: render nothing (the rest of the tab still shows).
-  if (fitnessQuery.isLoading) return null
+  // Loading: reserve the panel's layout height so the rest of the tab doesn't jump
+  // once the query resolves.
+  if (fitnessQuery.isLoading) {
+    return (
+      <section className="z2f" aria-label="Zone 2 fitness level">
+        <div className="z2f-panel z2f-panel--skeleton" aria-hidden="true">
+          <div className="z2f-barwrap">
+            <div className="z2f-bar z2f-bar--skeleton" />
+          </div>
+          <div className="z2f-readout">
+            <div className="z2f-skeleton-line z2f-skeleton-line--eyebrow" />
+            <div className="z2f-skeleton-line z2f-skeleton-line--hero" />
+            <div className="z2f-skeleton-line z2f-skeleton-line--body" />
+            <div className="z2f-skeleton-line z2f-skeleton-line--body" />
+          </div>
+        </div>
+        <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
+      </section>
+    )
+  }
 
   // No rows yet → a muted note, never a crash.
   if (!latest || latest.durable_base == null) {
@@ -176,14 +195,14 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
 
   // Any guidance marker that falls outside the visible month is called out in the
   // summary line instead of the grid (dates are still shown, just not annotated).
-  const markerInMonth = (key: string): boolean => {
+  // A null marker (horizon column not yet populated) is simply absent — never off-month.
+  const markerInMonth = (key: string | null): boolean => {
+    if (key == null) return true
     const [y, m] = key.split('-').map(Number)
     return y === viewYear && m === viewMonth
   }
   const anyMarkerOffMonth =
-    !markerInMonth(guidance.buildBy) ||
-    !markerInMonth(guidance.maintainBy) ||
-    !markerInMonth(guidance.decayFrom)
+    !markerInMonth(guidance.buildBy) || !markerInMonth(guidance.maintainBy) || !markerInMonth(guidance.decayFrom)
 
   return (
     <section className="z2f" aria-label="Zone 2 fitness level">
@@ -281,34 +300,43 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           </p>
         )}
 
-        {/* Compact legend explaining the three markers. */}
+        {/* Compact legend explaining the three markers. A marker whose horizon column
+            isn't populated yet (older rows) is simply omitted from the legend too. */}
         <div className="z2f-guidance-legend">
-          <span className="z2f-guidance-legend-item">
-            <span className="z2f-guidance-swatch z2f-guidance-swatch--build" />
-            <span>
-              <strong>Build</strong> — next session to keep climbing. {guidance.doses.build}
+          {guidance.doses.build != null && (
+            <span className="z2f-guidance-legend-item">
+              <span className="z2f-guidance-swatch z2f-guidance-swatch--build" />
+              <span>
+                <strong>Build</strong> — next session to keep climbing. {guidance.doses.build}
+              </span>
             </span>
-          </span>
-          <span className="z2f-guidance-legend-item">
-            <span className="z2f-guidance-swatch z2f-guidance-swatch--maintain" />
-            <span>
-              <strong>Maintain</strong> — latest day to hold. {guidance.doses.maintain}
+          )}
+          {guidance.maintainBy != null && (
+            <span className="z2f-guidance-legend-item">
+              <span className="z2f-guidance-swatch z2f-guidance-swatch--maintain" />
+              <span>
+                <strong>Maintain</strong> — latest day to hold. {guidance.doses.maintain}
+              </span>
             </span>
-          </span>
-          <span className="z2f-guidance-legend-item">
-            <span className="z2f-guidance-swatch z2f-guidance-swatch--decay" />
-            <span>
-              <strong>Eases</strong> — the index starts to erode without a Zone 2 session.
+          )}
+          {guidance.decayFrom != null && (
+            <span className="z2f-guidance-legend-item">
+              <span className="z2f-guidance-swatch z2f-guidance-swatch--decay" />
+              <span>
+                <strong>{guidance.alreadyEasing ? 'Easing' : 'Eases'}</strong> — the index
+                {guidance.alreadyEasing ? ' is already ' : ' starts to '}
+                erode without a Zone 2 session.
+              </span>
             </span>
-          </span>
+          )}
         </div>
       </div>
 
       {/* ── Maintenance nudge (neutral inset, never the red flag banner) ── */}
       {atRisk && (
         <div className="z2f-maintenance" role="note">
-          <span className="badge-domain badge-domain--aerobic z2f-maintenance-badge">
-            <span className="tabular-nums">ZONE 2</span>
+          <span className="z2f-maintenance-badge">
+            <BadgeDomain domain="aerobic" label="ZONE 2" />
           </span>
           <p className="z2f-maintenance-copy">{maintenanceMessage(latest) ?? MAINTENANCE_COPY}</p>
         </div>

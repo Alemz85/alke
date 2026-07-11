@@ -116,7 +116,6 @@ const ZONE2_FITNESS_NUMERIC_KEYS: (keyof Zone2Fitness)[] = [
   'durable_band_hi',
   'sharpness',
   'vo2max_anchor_score',
-  'anchor_beta',
   'days_since_vo2max',
   'durable_load',
   'sharp_load',
@@ -124,7 +123,10 @@ const ZONE2_FITNESS_NUMERIC_KEYS: (keyof Zone2Fitness)[] = [
   'tau_slow_days',
   'floor_score',
   'confidence',
-  'warn_after_days'
+  'warn_after_days',
+  'maintain_horizon_days',
+  'build_interval_days',
+  'expected_session_build'
 ]
 
 const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
@@ -160,7 +162,7 @@ const COMPUTED_DAILY_COLUMNS =
   'date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags, computed_at'
 
 const ZONE2_FITNESS_COLUMNS =
-  'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, anchor_beta, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, flags, computed_at'
+  'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, maintain_horizon_days, build_interval_days, expected_session_build, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
   'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, weekly_min_sessions, timezone'

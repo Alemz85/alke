@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import {
-  DEFAULT_WARN_AFTER_DAYS,
   durableBandCaption,
   durableBandHalfWidth,
   evidenceReason,
@@ -11,20 +10,19 @@ import {
   indexBandHalfWidth,
   latestZone2Row,
   maintenanceMessage,
-  sharpnessSparkline,
   stageLabel,
-  TAU_FAST_DAYS,
   zone2BarGeometry,
   zone2CalendarGuidance,
-  zone2GuidanceIntervals,
-  zone2IndexValue,
-  zone2ProjectionSeries
+  zone2IndexValue
 } from '../zone2Fitness'
 
 const C_D = ZONE2_DURABLE_CEILING // 70
 const C_F = ZONE2_FAST_CEILING // 30
 
 // Minimal row factory — only the fields under test carry meaning; the rest are nulled.
+// NOTE: anchor_beta was removed from the shared Zone2Fitness type (v3 amendment) —
+// deliberately absent here. maintain_horizon_days / build_interval_days /
+// expected_session_build are the new v3 horizon columns.
 function row(overrides: Partial<Zone2Fitness>): Zone2Fitness {
   return {
     date: '2026-07-10',
@@ -33,7 +31,6 @@ function row(overrides: Partial<Zone2Fitness>): Zone2Fitness {
     durable_band_hi: null,
     sharpness: null,
     vo2max_anchor_score: null,
-    anchor_beta: null,
     days_since_vo2max: null,
     durable_load: null,
     sharp_load: null,
@@ -46,6 +43,9 @@ function row(overrides: Partial<Zone2Fitness>): Zone2Fitness {
     stage: 'literature',
     maintenance_met: null,
     warn_after_days: null,
+    maintain_horizon_days: null,
+    build_interval_days: null,
+    expected_session_build: null,
     flags: [],
     computed_at: null,
     ...overrides
@@ -86,8 +86,15 @@ describe('durableBandHalfWidth', () => {
     expect(durableBandHalfWidth(row({ durable_band_lo: null, durable_band_hi: 40 }))).toBeNull()
   })
 
-  it('never returns a negative width', () => {
-    expect(durableBandHalfWidth(row({ durable_band_lo: 50, durable_band_hi: 40 }))).toBe(0)
+  it('never returns a negative width — an inverted band is order-insensitive (abs), matching indexBandHalfWidth', () => {
+    // Unified band-half-width helper (bandHalfWidth): abs(hi-lo)/2, never negative,
+    // never silently zeroed. durable_band_lo/hi ARE the index band columns (v2), so
+    // durableBandHalfWidth and indexBandHalfWidth must agree on every input, including
+    // an inverted one — they previously disagreed here (0 vs 5).
+    expect(durableBandHalfWidth(row({ durable_band_lo: 50, durable_band_hi: 40 }))).toBe(5)
+    expect(durableBandHalfWidth(row({ durable_band_lo: 50, durable_band_hi: 40 }))).toBe(
+      indexBandHalfWidth(row({ durable_band_lo: 50, durable_band_hi: 40 }))
+    )
   })
 })
 
@@ -142,82 +149,6 @@ describe('evidenceReason', () => {
   })
 })
 
-describe('zone2ProjectionSeries', () => {
-  it('returns historical points unchanged and appends a dotted tail', () => {
-    const rows = [
-      row({ date: '2026-07-08', durable_base: 40, sharpness: 50, floor_score: 10, tau_slow_days: 45 }),
-      row({ date: '2026-07-10', durable_base: 42, sharpness: 48, floor_score: 10, tau_slow_days: 45 })
-    ]
-    const series = zone2ProjectionSeries(rows, 14)
-
-    // Two historical points, both solid.
-    const historical = series.filter((p) => !p.projected)
-    expect(historical).toHaveLength(2)
-    expect(historical[0].durable).toBe(40)
-    expect(historical[1].sharpness).toBe(48)
-
-    // The seam (last historical point) also carries projected values so the dotted line connects.
-    const seam = historical[1]
-    expect(seam.durableProjected).toBe(42)
-    expect(seam.sharpnessProjected).toBe(48)
-
-    // 14 projected days appended.
-    const projected = series.filter((p) => p.projected)
-    expect(projected).toHaveLength(14)
-    expect(projected[0].date).toBe('2026-07-11')
-    expect(projected[13].date).toBe('2026-07-24')
-  })
-
-  it('decays sharpness toward 0 with tau_fast and durable toward floor with tau_slow', () => {
-    const rows = [row({ date: '2026-07-10', durable_base: 42, sharpness: 48, floor_score: 10, tau_slow_days: 45 })]
-    const series = zone2ProjectionSeries(rows, 14)
-    const projected = series.filter((p) => p.projected)
-
-    // Day 14 sharpness ≈ 48·e^(-14/14) = 48·e^-1 ≈ 17.66 → 17.7
-    const day14 = projected[13]
-    expect(day14.sharpnessProjected).toBeCloseTo(48 * Math.exp(-14 / TAU_FAST_DAYS), 1)
-    // Durable stays above its floor and below the start.
-    expect(day14.durableProjected!).toBeGreaterThan(10)
-    expect(day14.durableProjected!).toBeLessThan(42)
-    // Durable monotonically decreases toward the floor.
-    expect(projected[0].durableProjected!).toBeGreaterThan(day14.durableProjected!)
-  })
-
-  it('never projects durable below the floor', () => {
-    const rows = [row({ date: '2026-07-10', durable_base: 42, sharpness: 48, floor_score: 30, tau_slow_days: 45 })]
-    const series = zone2ProjectionSeries(rows, 90)
-    for (const p of series.filter((x) => x.projected)) {
-      expect(p.durableProjected!).toBeGreaterThanOrEqual(30)
-    }
-  })
-
-  it('returns only the historical points when the latest row has no values', () => {
-    const rows = [row({ date: '2026-07-10', durable_base: null, sharpness: null })]
-    const series = zone2ProjectionSeries(rows, 14)
-    expect(series.every((p) => !p.projected)).toBe(true)
-    expect(series).toHaveLength(1)
-  })
-
-  it('returns an empty series for no rows', () => {
-    expect(zone2ProjectionSeries([], 14)).toEqual([])
-  })
-})
-
-describe('sharpnessSparkline', () => {
-  it('returns the last N non-null sharpness values oldest→newest, reindexed', () => {
-    const rows = [
-      row({ date: '2026-07-08', sharpness: 30 }),
-      row({ date: '2026-07-09', sharpness: null }),
-      row({ date: '2026-07-10', sharpness: 40 })
-    ]
-    const spark = sharpnessSparkline(rows, 10)
-    expect(spark).toEqual([
-      { i: 0, value: 30 },
-      { i: 1, value: 40 }
-    ])
-  })
-})
-
 describe('formatGuidanceDate', () => {
   it('formats a date key as "Wkd D Mon" with the correct weekday', () => {
     expect(formatGuidanceDate('2026-07-10')).toBe('Fri 10 Jul') // 2026-07-10 is a Friday
@@ -226,200 +157,183 @@ describe('formatGuidanceDate', () => {
   })
 })
 
-describe('zone2GuidanceIntervals', () => {
-  // A representative thin-base state (mostly fast layer on a low durable base).
-  const thin = row({ durable_base: 3, sharpness: 9, floor_score: 1, tau_slow_days: 49 })
-  // A banked state (high durable + floor, small fast cap).
-  const banked = row({ durable_base: 55, sharpness: 6, floor_score: 38, tau_slow_days: 80 })
-
-  it('places build < maintain < decay by inverting the projection at fractions of the decay drop', () => {
-    for (const [r, warn] of [
-      [thin, 3],
-      [banked, 20]
-    ] as const) {
-      const { buildInterval, maintInterval } = zone2GuidanceIntervals(r, warn)
-      expect(buildInterval).toBeGreaterThan(0)
-      expect(buildInterval).toBeLessThanOrEqual(maintInterval)
-      expect(maintInterval).toBeLessThan(warn)
-    }
-  })
-
-  it('is continuous in the fitness state — a small change in durable produces a small change', () => {
-    const a = zone2GuidanceIntervals(row({ durable_base: 3, sharpness: 9, floor_score: 1, tau_slow_days: 49 }), 6)
-    const b = zone2GuidanceIntervals(row({ durable_base: 3.01, sharpness: 9, floor_score: 1, tau_slow_days: 49 }), 6)
-    expect(Math.abs(a.buildInterval - b.buildInterval)).toBeLessThan(0.1)
-    expect(Math.abs(a.maintInterval - b.maintInterval)).toBeLessThan(0.1)
-  })
-
-  it('inverts the projection: at each interval the index has dropped the intended fraction of the decay drop', () => {
-    const r = thin
-    const warn = 4
-    const idx0 = (r.durable_base ?? 0) + (r.sharpness ?? 0)
-    const floor = r.floor_score ?? 0
-    const tauSlow = r.tau_slow_days ?? 45
-    const drop = (t: number): number =>
-      idx0 - (floor + ((r.durable_base ?? 0) - floor) * Math.exp(-t / tauSlow) + (r.sharpness ?? 0) * Math.exp(-t / TAU_FAST_DAYS))
-    const dropAtDecay = drop(warn)
-    const { buildInterval, maintInterval } = zone2GuidanceIntervals(r, warn)
-    // build ≈ horizon where drop = 0.3×dropAtDecay, maintain ≈ 0.6×.
-    expect(drop(buildInterval)).toBeCloseTo(0.3 * dropAtDecay, 1)
-    expect(drop(maintInterval)).toBeCloseTo(0.6 * dropAtDecay, 1)
-  })
-
-  it('falls back to ordered fractions of the horizon for a null row or degenerate (at-floor) state', () => {
-    const nullRes = zone2GuidanceIntervals(null, 10)
-    expect(nullRes.buildInterval).toBeLessThan(nullRes.maintInterval)
-    expect(nullRes.maintInterval).toBeLessThan(10)
-    // At floor with no fast layer → no projected drop → fallback, still ordered.
-    const atFloor = zone2GuidanceIntervals(row({ durable_base: 1, sharpness: 0, floor_score: 1, tau_slow_days: 49 }), 10)
-    expect(atFloor.buildInterval).toBeLessThan(atFloor.maintInterval)
-    expect(atFloor.maintInterval).toBeLessThan(10)
-  })
-})
-
 describe('zone2CalendarGuidance', () => {
   const TODAY = '2026-07-10' // Friday
 
-  it('places projection-derived markers off a RECENT session using the model warn window', () => {
-    // Last session 2 days ago; warn_after_days = 14 (model-derived); a real
-    // fitness state so the build/maintain intervals invert the projection.
+  it('anchors every marker at the ROW DATE (not the last session), adding each stored horizon', () => {
+    // Row dated 07-08; last session on record is 07-01 (a week earlier — the row's
+    // own state already embeds that gap, so re-anchoring at 07-01 would double count it).
     const g = zone2CalendarGuidance(
       {
+        date: '2026-07-08',
         warn_after_days: 14,
-        maintenance_met: true,
-        base_accum_b: 0.1,
-        durable_base: 20,
-        sharpness: 12,
-        floor_score: 2,
-        tau_slow_days: 49
+        maintain_horizon_days: 6,
+        build_interval_days: 2
       },
-      ['2026-07-08'],
+      ['2026-07-01'],
       TODAY
     )
-    expect(g.lastSession).toBe('2026-07-08')
-    // decayFrom = anchor + warn_after_days = 07-08 + 14 = 07-22 (the model's own horizon, untouched).
+    expect(g.lastSession).toBe('2026-07-01') // kept for copy only
+    // decayFrom = rowDate(07-08) + 14 = 07-22.
     expect(g.decayFrom).toBe('2026-07-22')
-    // maintainBy is projection-derived, NOT decayFrom - 1d (the old fixed formula).
-    expect(g.maintainBy).not.toBe('2026-07-21')
-    // Ordering invariant holds.
-    expect(g.buildBy <= g.maintainBy).toBe(true)
-    expect(g.maintainBy < g.decayFrom).toBe(true)
-    // Marker record carries the three kinds at their derived dates.
-    expect(g.markers[g.buildBy].kind).toBe('build')
-    expect(g.markers[g.maintainBy].kind).toBe('maintain')
-    expect(g.markers['2026-07-22'].kind).toBe('decay')
-    expect(g.summary).toContain('eases from Wed 22 Jul')
-  })
-
-  it('gives a thinner base a shorter decay window than a banked base (same anchor)', () => {
-    // Continuity/monotonicity of build/maintain across the projection state is
-    // pinned in the zone2GuidanceIntervals suite; here we check the end-to-end
-    // ordering holds and the model's own (shorter) thin-base decay horizon wins.
-    const thin = zone2CalendarGuidance(
-      { warn_after_days: 5, maintenance_met: true, base_accum_b: 0.05, durable_base: 3, sharpness: 10, floor_score: 1, tau_slow_days: 49 },
-      ['2026-07-08'],
-      TODAY
-    )
-    const banked = zone2CalendarGuidance(
-      { warn_after_days: 24, maintenance_met: true, base_accum_b: 0.95, durable_base: 55, sharpness: 6, floor_score: 38, tau_slow_days: 80 },
-      ['2026-07-08'],
-      TODAY
-    )
-    expect(thin.decayFrom < banked.decayFrom).toBe(true)
-    for (const g of [thin, banked]) {
-      expect(g.buildBy <= g.maintainBy).toBe(true)
-      expect(g.maintainBy < g.decayFrom).toBe(true)
-    }
-  })
-
-  it('moves decayFrom continuously as warn_after_days varies (not banded into 9/14/24)', () => {
-    const anchor = '2026-07-08'
-    const warnSamples = [7, 10, 13, 16, 19, 22, 25]
-    const results = warnSamples.map((warnAfter) =>
-      zone2CalendarGuidance({ warn_after_days: warnAfter, maintenance_met: true, base_accum_b: 0.4 }, [anchor], TODAY)
-    )
-    // decayFrom must be strictly increasing with warn_after_days — a continuous
-    // function traces every intermediate value, unlike a 9/14/24 band lookup
-    // which would only ever emit three dates.
-    for (let i = 1; i < results.length; i++) {
-      expect(results[i].decayFrom > results[i - 1].decayFrom).toBe(true)
-    }
-    const distinctDecayDates = new Set(results.map((r) => r.decayFrom))
-    expect(distinctDecayDates.size).toBe(warnSamples.length)
-  })
-
-  it('clamps every marker to today-or-later when the session is STALE', () => {
-    // Last session 40 days ago; warn window long past → all markers must land from today forward.
-    const g = zone2CalendarGuidance(
-      { warn_after_days: 9, maintenance_met: false, base_accum_b: 0.2 },
-      ['2026-05-31'],
-      TODAY
-    )
-    expect(g.lastSession).toBe('2026-05-31')
-    // buildBy clamps to today (nothing in the past).
+    // maintainBy = rowDate(07-08) + 6 = 07-14.
+    expect(g.maintainBy).toBe('2026-07-14')
+    // buildBy = rowDate(07-08) + 2 = 07-10 (today — still valid, not in the past).
     expect(g.buildBy).toBe('2026-07-10')
-    // decayFrom = max(today+1, staleSession + 9) → today+1
-    expect(g.decayFrom).toBe('2026-07-11')
-    expect(g.maintainBy).toBe('2026-07-10')
-    // Ordering invariant still holds even in the clamped branch.
-    expect(g.buildBy <= g.maintainBy).toBe(true)
-    expect(g.maintainBy < g.decayFrom).toBe(true)
-    // No marker is dated before today.
-    for (const key of Object.keys(g.markers)) {
-      expect(key >= TODAY).toBe(true)
-    }
+    expect(g.markers[g.buildBy!].kind).toBe('build')
+    expect(g.markers[g.maintainBy!].kind).toBe('maintain')
+    expect(g.markers[g.decayFrom!].kind).toBe('decay')
+    expect(g.alreadyEasing).toBe(false)
   })
 
-  it('falls back to the default warn window when warn_after_days is missing', () => {
-    // Recent session, null warn_after_days → DEFAULT_WARN_AFTER_DAYS (9); no
-    // projection state → the intervals fall back to ordered fractions of the horizon.
+  it('keeps fractional horizons intact until the single date-key rounding point', () => {
+    // 4.6 days from 07-08 rounds to +5d = 07-13; 3.4 days rounds to +3d = 07-11
+    // (addDaysKey rounds once, at materialization — not before).
     const g = zone2CalendarGuidance(
-      { warn_after_days: null, maintenance_met: null, base_accum_b: null, durable_base: null, sharpness: null, floor_score: null, tau_slow_days: null },
-      ['2026-07-08'],
+      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 4.6, build_interval_days: 3.4 },
+      [],
       TODAY
     )
-    expect(DEFAULT_WARN_AFTER_DAYS).toBe(9)
-    // decayFrom = max(today+1, lastSession + 9) = max(07-11, 07-17) = 07-17
-    expect(g.decayFrom).toBe('2026-07-17')
-    // maintainBy lands strictly before decayFrom (not decay-1), and after buildBy.
-    expect(g.maintainBy < g.decayFrom).toBe(true)
-    expect(g.maintainBy).not.toBe('2026-07-16') // not the old decay-1 formula
-    expect(g.buildBy <= g.maintainBy).toBe(true)
+    expect(g.maintainBy).toBe('2026-07-13') // 07-08 + round(4.6) = +5d
+    expect(g.buildBy).toBe('2026-07-11') // 07-08 + round(3.4) = +3d
   })
 
-  it('handles no sessions on record by anchoring on today', () => {
-    const g = zone2CalendarGuidance({ warn_after_days: 14, maintenance_met: false, base_accum_b: 0.5 }, [], TODAY)
-    expect(g.lastSession).toBeNull()
-    expect(g.sessions7d).toBe(0)
-    // anchor = today → every marker derives from today forward.
-    expect(g.buildBy >= TODAY).toBe(true)
-    expect(g.decayFrom).toBe('2026-07-24')
-    expect(g.buildBy <= g.maintainBy).toBe(true)
-    expect(g.maintainBy < g.decayFrom).toBe(true)
+  it('clamps a marker whose raw horizon lands before today to display on today', () => {
+    // build_interval_days = 1.2 from row date 07-08 raw-computes to 07-09, which
+    // is before TODAY (07-10) — display clamps to today rather than the past date.
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 4.6, build_interval_days: 1.2 },
+      [],
+      TODAY
+    )
+    expect(g.buildBy).toBe(TODAY)
   })
 
-  it('counts sessions in the trailing 7 days and ignores future-dated rows', () => {
+  it('treats warn_after_days = 0 as valid "already easing" data, not missing data', () => {
+    // Row date is today; decay horizon is 0 → decays as of today itself.
+    const g = zone2CalendarGuidance(
+      { date: TODAY, warn_after_days: 0, maintain_horizon_days: null, build_interval_days: null },
+      [],
+      TODAY
+    )
+    expect(g.decayFrom).toBe(TODAY)
+    expect(g.alreadyEasing).toBe(true)
+    expect(g.markers[TODAY].kind).toBe('decay')
+    expect(g.markers[TODAY].label).toMatch(/easing now/i)
+    expect(g.summary).toMatch(/easing now/i)
+  })
+
+  it('treats a decayFrom that lands before today as overdue — clamped display, honest copy', () => {
+    // Row is 20 days stale; warn_after_days=5 means the model's own horizon is
+    // long past — the raw date is well before today.
+    const g = zone2CalendarGuidance(
+      { date: '2026-06-20', warn_after_days: 5, maintain_horizon_days: null, build_interval_days: null },
+      [],
+      TODAY
+    )
+    // Raw decayFrom (06-25) is before today; display clamps to today, never a fake future date.
+    expect(g.decayFrom).toBe(TODAY)
+    expect(g.alreadyEasing).toBe(true)
+    expect(g.markers[TODAY].label).toMatch(/already past its hold window/i)
+  })
+
+  it('omits a marker entirely when its horizon column is null (old pre-migration rows)', () => {
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 12, maintain_horizon_days: null, build_interval_days: null },
+      [],
+      TODAY
+    )
+    expect(g.decayFrom).toBe('2026-07-20')
+    expect(g.maintainBy).toBeNull()
+    expect(g.buildBy).toBeNull()
+    expect(g.doses.build).toBeNull()
+    // No maintain/build entries in the marker record — only decay.
+    expect(Object.values(g.markers).map((m) => m.kind).sort()).toEqual(['decay'])
+    expect(g.summary).not.toMatch(/keep building/i)
+    expect(g.summary).not.toMatch(/holds through/i)
+  })
+
+  it('returns an all-null, marker-free guidance when the row itself is missing', () => {
+    const g = zone2CalendarGuidance(null, ['2026-07-08'], TODAY)
+    expect(g.buildBy).toBeNull()
+    expect(g.maintainBy).toBeNull()
+    expect(g.decayFrom).toBeNull()
+    expect(g.markers).toEqual({})
+    expect(g.doses.build).toBeNull()
+    // lastSession/sessions7d still computed from session history (copy only).
+    expect(g.lastSession).toBe('2026-07-08')
+  })
+
+  it('resolves a same-day collision with priority build > maintain > decay', () => {
+    // All three horizons land on the same day (07-15) from the same row date.
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 7, maintain_horizon_days: 7, build_interval_days: 7 },
+      [],
+      TODAY
+    )
+    expect(g.buildBy).toBe('2026-07-15')
+    expect(g.maintainBy).toBe('2026-07-15')
+    expect(g.decayFrom).toBe('2026-07-15')
+    // Only one marker survives the collision, and it's the most actionable kind.
+    expect(Object.keys(g.markers)).toEqual(['2026-07-15'])
+    expect(g.markers['2026-07-15'].kind).toBe('build')
+  })
+
+  it('resolves a maintain/decay collision (no build) with maintain winning over decay', () => {
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 6, maintain_horizon_days: 6, build_interval_days: null },
+      [],
+      TODAY
+    )
+    expect(g.maintainBy).toBe('2026-07-14')
+    expect(g.decayFrom).toBe('2026-07-14')
+    expect(Object.keys(g.markers)).toEqual(['2026-07-14'])
+    expect(g.markers['2026-07-14'].kind).toBe('maintain')
+  })
+
+  it('counts sessions in the trailing 7 days and ignores future-dated rows (copy only)', () => {
     // 07-04..07-10 inclusive is the window; 07-03 is out, 07-11 is future.
     const g = zone2CalendarGuidance(
-      { warn_after_days: 14, maintenance_met: true, base_accum_b: 0.4 },
+      { date: '2026-07-08', warn_after_days: 14, maintain_horizon_days: 6, build_interval_days: 3 },
       ['2026-07-03', '2026-07-04', '2026-07-08', '2026-07-10', '2026-07-11'],
       TODAY
     )
     expect(g.sessions7d).toBe(3) // 07-04, 07-08, 07-10
     // A future-dated session is clamped to today, so lastSession never exceeds today.
     expect(g.lastSession).toBe('2026-07-10')
+    // None of this affects the anchor — still the row date.
+    expect(g.decayFrom).toBe('2026-07-22')
   })
 
-  it('exposes dose copy noting maintenance is for an already-built base', () => {
-    const g = zone2CalendarGuidance(
-      { warn_after_days: 14, maintenance_met: true, base_accum_b: 0.4 },
-      ['2026-07-08'],
+  it('derives the build dose frequency from build_interval_days, not a hardcoded dose', () => {
+    const everyTwo = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 10, build_interval_days: 2 },
+      [],
       TODAY
     )
-    expect(g.doses.build).toContain('3–4 Zone 2 sessions/wk')
+    expect(everyTwo.doses.build).toContain('every ~2 days')
+    expect(everyTwo.doses.build).toMatch(/≈3\.5\/wk/)
+    expect(everyTwo.doses.build).toContain('at Zone 2 intensity')
+    expect(everyTwo.doses.build).not.toContain('40–50 min')
+
+    const everyFive = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 10, build_interval_days: 5 },
+      [],
+      TODAY
+    )
+    expect(everyFive.doses.build).toContain('every ~5 days')
+    expect(everyFive.doses.build).toMatch(/≈1\.4\/wk/)
+  })
+
+  it('keeps the maintain dose as the licensed Hickson literature constant', () => {
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 14, maintain_horizon_days: 6, build_interval_days: 3 },
+      [],
+      TODAY
+    )
     expect(g.doses.maintain).toContain('2 Zone 2 sessions/wk')
+    expect(g.doses.maintain).toContain('≥20 min')
     expect(g.doses.maintain).toMatch(/already.built|base you.ve already built/i)
-    expect(g.doses.maintain).toMatch(/build cadence.*priority/i)
   })
 })
 
@@ -514,5 +428,19 @@ describe('zone2BarGeometry', () => {
     // Both edges sit on the index (50) so the caller renders no error zone.
     expect(g.bandLoPct).toBeCloseTo(50, 5)
     expect(g.bandHiPct).toBeCloseTo(50, 5)
+  })
+
+  it('orders an INVERTED band (lo > hi in storage) so bandLoPct never exceeds bandHiPct', () => {
+    // Columns stored backwards: durable_band_lo=56, durable_band_hi=44 (lo > hi).
+    const g = zone2BarGeometry(
+      row({ durable_base: 40, sharpness: 10, durable_band_lo: 56, durable_band_hi: 44 }),
+      C_D,
+      C_F
+    )
+    expect(g.hasBand).toBe(true)
+    // min/max re-orders regardless of which column carried which value.
+    expect(g.bandLoPct).toBeCloseTo(44, 5)
+    expect(g.bandHiPct).toBeCloseTo(56, 5)
+    expect(g.bandHiPct).toBeGreaterThanOrEqual(g.bandLoPct)
   })
 })

@@ -8,8 +8,10 @@ import math
 import pytest
 
 from metrics.models import (
-    Z2_ANCHOR_BETA0,
+    Z2_BUILD_INTERVAL_CAP_DAYS,
+    Z2_MAINTENANCE_SESSION_LOAD,
     Z2_RHR_POP_BASELINE,
+    Z2_SIGNAL_STALENESS_TAU_DAYS,
     Z2_SWC_MIN_POINTS,
     Z2_VO2MAX_POP_BASELINE,
     ZONE2_DURABLE_CEILING,
@@ -17,20 +19,26 @@ from metrics.models import (
     ZONE2_FAST_SAT,
     ZONE2_INDEX_CEILING,
     ZONE2_MAINTENANCE_MESSAGE,
-    anchor_beta,
     base_consolidation,
+    base_consolidation_series,
     blended_baseline,
+    build_interval_days,
+    confidence_from_posterior,
     decay_onset_days,
     durable_base_series,
+    durable_calibration_slope,
     durable_floor_score,
-    durable_level_score,
     durable_score_from_percentile,
     ewma_alpha,
+    expected_session_build,
+    expected_session_stimulus,
     fast_score_from_load,
     fuse_inverse_variance,
+    is_aerobic_modality,
     personal_baseline_weight,
     project_index,
     signal_elevation_score,
+    staleness_inflated_variance,
     swc_from_index,
     tau_slow,
     vo2max_to_score,
@@ -202,17 +210,27 @@ def test_durable_decay_to_zero_floor_for_beginner():
 
 
 # ---------------------------------------------------------------------------
-# §4c — anchor_beta = beta0 * exp(-days_since/45) * confidence
+# §4c (v3 fix) — continuous staleness decay of a signal's evidential weight:
+# variance_eff = variance · exp(days_since / τ_staleness). Replaces the dead
+# anchor_beta machinery: a months-old reading yields instead of pinning the level.
 # ---------------------------------------------------------------------------
-def test_anchor_beta_formula():
-    assert anchor_beta(0, 1.0) == pytest.approx(Z2_ANCHOR_BETA0)
-    assert anchor_beta(45, 1.0) == pytest.approx(Z2_ANCHOR_BETA0 * math.exp(-1))
-    # confidence scales the weight linearly
-    assert anchor_beta(0, 0.5) == pytest.approx(Z2_ANCHOR_BETA0 * 0.5)
+def test_staleness_inflated_variance_formula():
+    # fresh reading: unchanged. one τ old: ×e. two τ old: ×e².
+    assert staleness_inflated_variance(4.0, 0) == pytest.approx(4.0)
+    assert staleness_inflated_variance(4.0, Z2_SIGNAL_STALENESS_TAU_DAYS) == pytest.approx(
+        4.0 * math.e
+    )
+    assert staleness_inflated_variance(4.0, 2 * Z2_SIGNAL_STALENESS_TAU_DAYS) == pytest.approx(
+        4.0 * math.e**2
+    )
 
 
-def test_anchor_beta_none_when_no_vo2max():
-    assert anchor_beta(None, 1.0) == 0.0
+def test_staleness_is_continuous_and_monotone_never_gains_weight():
+    # variance strictly grows with age (weight strictly falls) — no freshness band.
+    variances = [staleness_inflated_variance(1.0, d) for d in (0, 1, 10, 45, 100, 365)]
+    assert all(b > a for a, b in zip(variances, variances[1:]))
+    # a (nonsensical) negative age clamps at 0: a reading can never GAIN weight.
+    assert staleness_inflated_variance(1.0, -30) == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -243,18 +261,39 @@ def test_fuse_inverse_variance_none_when_no_usable():
 # continuously (thin < banked), NOT as a step function.
 # ===========================================================================
 
-# ---- SWC is DATA-DERIVED from the user's own index variability (0.5×CV) ----
-def test_swc_from_index_is_half_cv_scale():
-    # A series with a known SD: SWC = 0.5 * SD (= 0.5 * CV * mean, since CV=SD/mean).
-    vals = [40.0, 42.0, 44.0, 46.0, 48.0]  # sample SD = sqrt(10) ≈ 3.162
-    mean = sum(vals) / len(vals)
-    var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
-    sd = math.sqrt(var)
-    assert swc_from_index(vals) == pytest.approx(max(Z2_SWC_MIN_POINTS, 0.5 * sd))
+# ---- SWC is DATA-DERIVED from the user's own day-to-day index NOISE: SD of the
+# residuals vs a trailing 7-day rolling mean (§6d "SWC on any 7-day rolling
+# mean") — a build block's RAMP must not masquerade as noise. ----
+def test_swc_ignores_the_trend_of_a_build_ramp():
+    # A clean 0→25 ramp over 60 days. The RAW SD is ~7.3 (0.5×SD ≈ 3.6 — the old
+    # defect stretched decay_onset exactly when a thin, freshly-built base needed
+    # a short window). Residuals vs the trailing 7-day mean are near-constant
+    # (~3×step), so the noise-SD is tiny and SWC sits at the floor.
+    ramp = [i * 25.0 / 59.0 for i in range(60)]
+    raw_sd = math.sqrt(
+        sum((v - sum(ramp) / 60) ** 2 for v in ramp) / 59
+    )
+    assert 0.5 * raw_sd > 3.0  # the old formula would have returned this
+    assert swc_from_index(ramp) == pytest.approx(Z2_SWC_MIN_POINTS)
+
+
+def test_swc_from_index_is_half_residual_sd():
+    # A noisy series: hand-derive the expected value from the documented
+    # definition (residual_i = x_i − mean(x[max(0,i−6)..i]); SWC = 0.5·SD(resid)).
+    vals = [50.0, 52.0, 48.0, 53.0, 47.0, 51.0, 49.0, 54.0, 46.0, 50.0, 52.0, 48.0]
+    residuals = []
+    for i, v in enumerate(vals):
+        window = vals[max(0, i - 6): i + 1]
+        residuals.append(v - sum(window) / len(window))
+    mean_r = sum(residuals) / len(residuals)
+    sd = math.sqrt(sum((r - mean_r) ** 2 for r in residuals) / (len(residuals) - 1))
+    expected = max(Z2_SWC_MIN_POINTS, 0.5 * sd)
+    assert swc_from_index(vals) == pytest.approx(expected)
+    assert expected > Z2_SWC_MIN_POINTS  # genuine day-to-day noise DOES register
 
 
 def test_swc_floored_when_index_flat():
-    # A pathologically-flat index (CV≈0) still yields a finite floor, not 0.
+    # A pathologically-flat index (no noise) still yields a finite floor, not 0.
     assert swc_from_index([50.0] * 40) == pytest.approx(Z2_SWC_MIN_POINTS)
     assert swc_from_index([]) == pytest.approx(Z2_SWC_MIN_POINTS)
     assert swc_from_index([50.0]) == pytest.approx(Z2_SWC_MIN_POINTS)
@@ -345,16 +384,17 @@ def test_decay_onset_caps_when_base_holds():
 
 
 # ---------------------------------------------------------------------------
-# §5c — zone2_maintenance fires only after warn_after_days consecutive unmet
-# days AND sharpness < durable, and is suppressed on an injury/plan hold.
+# §5c — zone2_maintenance fires only after the warn window's worth of consecutive
+# unmet days AND form fading below the base on NORMALIZED shares (F/C_F < D/C_D —
+# the raw F<D comparison was tautological once D>30), suppressed on injury hold.
 # ---------------------------------------------------------------------------
 def test_maintenance_flag_fires_after_window_with_form_fading():
     flags = zone2_maintenance_flag(
         maintenance_met=False,
-        consecutive_unmet_days=9,  # == warn_window for B<0.33
-        warn_window=9,
-        sharpness=30.0,
-        durable_base=45.0,  # sharpness has dropped below durable
+        consecutive_unmet_days=9,
+        warn_after_days=9.0,
+        sharpness=6.0,       # F share 6/30 = 0.20
+        durable_base=45.0,   # D share 45/70 ≈ 0.64 — form genuinely fading
         hold_active=False,
     )
     assert len(flags) == 1
@@ -364,35 +404,61 @@ def test_maintenance_flag_fires_after_window_with_form_fading():
 
 
 def test_maintenance_flag_silent_before_window_elapses():
-    # One day short of the window: no fire even with form fading.
+    # One day short of the (rounded continuous) window: no fire even with form fading.
     assert zone2_maintenance_flag(
         maintenance_met=False,
         consecutive_unmet_days=8,
-        warn_window=9,
-        sharpness=30.0,
+        warn_after_days=8.6,  # rounds to a 9-day persistence threshold
+        sharpness=6.0,
         durable_base=45.0,
         hold_active=False,
     ) == []
 
 
-def test_maintenance_flag_silent_when_sharpness_not_below_durable():
-    # Window elapsed but form has NOT faded below the base -> no fire (spec §5c.2).
+def test_maintenance_flag_compares_normalized_shares_not_raw_scales():
+    # Raw 28 < 40 would have fired under the old rule, but the SHARES say form is
+    # fine: F 28/30 = 0.93 vs D 40/70 = 0.57 — the fast pool is nearly full.
     assert zone2_maintenance_flag(
         maintenance_met=False,
         consecutive_unmet_days=20,
-        warn_window=9,
-        sharpness=50.0,
-        durable_base=45.0,
+        warn_after_days=9.0,
+        sharpness=28.0,
+        durable_base=40.0,
         hold_active=False,
     ) == []
+    # And the shares respect custom ceilings.
+    assert zone2_maintenance_flag(
+        maintenance_met=False,
+        consecutive_unmet_days=20,
+        warn_after_days=9.0,
+        sharpness=28.0,       # share 28/40 = 0.70
+        durable_base=60.0,    # share 60/80 = 0.75 -> fires
+        hold_active=False,
+        fast_ceiling=40.0,
+        durable_ceiling=80.0,
+    ) != []
+
+
+def test_maintenance_flag_sub_day_horizon_still_needs_one_full_unmet_day():
+    # A detrained sub-day horizon (0.3 d) must not fire with zero unmet days...
+    base = dict(
+        maintenance_met=False,
+        warn_after_days=0.3,
+        sharpness=2.0,       # share 0.067
+        durable_base=20.0,   # share 0.29
+        hold_active=False,
+    )
+    assert zone2_maintenance_flag(consecutive_unmet_days=0, **base) == []
+    # ...but one full unmet day suffices (threshold = max(1, round(0.3)) = 1).
+    assert len(zone2_maintenance_flag(consecutive_unmet_days=1, **base)) == 1
 
 
 def test_maintenance_flag_silent_when_maintenance_met():
     assert zone2_maintenance_flag(
         maintenance_met=True,
         consecutive_unmet_days=9,
-        warn_window=9,
-        sharpness=30.0,
+        warn_after_days=9.0,
+        sharpness=6.0,
         durable_base=45.0,
         hold_active=False,
     ) == []
@@ -404,8 +470,8 @@ def test_maintenance_flag_suppressed_on_injury_hold():
     assert zone2_maintenance_flag(
         maintenance_met=False,
         consecutive_unmet_days=30,
-        warn_window=9,
-        sharpness=20.0,
+        warn_after_days=9.0,
+        sharpness=4.0,
         durable_base=50.0,
         hold_active=True,
     ) == []
@@ -484,50 +550,6 @@ def test_fast_score_honours_custom_ceiling_and_sat():
     assert fast_score_from_load(10.0, fast_ceiling=40.0, fast_sat=10.0) == pytest.approx(
         40.0 * (1.0 - math.exp(-1.0))
     )
-
-
-# ---- durable_level_score: own-sports blend; watch VO2max low-weight, not the cap ----
-def test_level_blend_uses_own_sports_only_when_no_vo2max_refresh():
-    # A day with bike EF at the 90th pct and no VO2max refresh: level tracks the
-    # own-sports signal, VO2max excluded entirely.
-    level = durable_level_score(
-        swim_ef_pct=None, bike_ef_pct=90.0, rhr_pct=60.0, hrv_pct=None,
-        vo2max_pct=10.0, vo2max_refreshed=False,
-    )
-    # weights: bike 0.35, rhr 0.20 -> (90*0.35 + 60*0.20)/0.55
-    assert level == pytest.approx((90 * 0.35 + 60 * 0.20) / 0.55)
-
-
-def test_level_blend_vo2max_only_counts_on_refresh_day_and_is_low_weight():
-    base = durable_level_score(
-        swim_ef_pct=80.0, bike_ef_pct=80.0, rhr_pct=80.0, hrv_pct=80.0,
-        vo2max_pct=0.0, vo2max_refreshed=False,
-    )
-    with_vo2 = durable_level_score(
-        swim_ef_pct=80.0, bike_ef_pct=80.0, rhr_pct=80.0, hrv_pct=80.0,
-        vo2max_pct=0.0, vo2max_refreshed=True,
-    )
-    # Without a refresh the own-sports level is a clean 80. A refreshed, contrary
-    # VO2max=0 can only nudge it down slightly (low weight), never dominate/cap it.
-    assert base == pytest.approx(80.0)
-    assert with_vo2 < base
-    assert with_vo2 > 70.0  # a hostile watch reading moves the level by <10 pts
-
-
-def test_level_blend_none_without_own_signal():
-    # A lone refreshed VO2max with NO own-sports signal cannot place the level:
-    # the watch may never let the swimmer reach his ceiling (docs v2 Thread 2).
-    assert durable_level_score(
-        swim_ef_pct=None, bike_ef_pct=None, rhr_pct=None, hrv_pct=None,
-        vo2max_pct=95.0, vo2max_refreshed=True,
-    ) is None
-    # and with no signals at all.
-    assert durable_level_score(None, None, None, None, None, False) is None
-
-
-def test_level_blend_is_bounded_0_100():
-    assert durable_level_score(100.0, 100.0, 100.0, 100.0, 100.0, True) == pytest.approx(100.0)
-    assert durable_level_score(0.0, 0.0, 0.0, 0.0, 0.0, True) == pytest.approx(0.0)
 
 
 # ---- The full index D + F stays within [0, 100]; each component within its ceiling ----
@@ -700,11 +722,293 @@ def test_v3_durable_base_series_is_load_driven_monotone():
         assert 5.0 <= d <= ZONE2_DURABLE_CEILING
 
 
-def test_v3_durable_base_series_falls_back_without_calibration():
-    # No calibration (no aerobic signal): D still maps the load track onto
-    # [floor, ceiling] via the range, and still decays with the load.
-    track = [30.0] * 30 + [0.0] * 5  # the plain EWMA won't zero this fast, but the
-    # top of the range anchors to the ceiling; a lower load -> lower D.
+def test_v3_durable_base_series_falls_back_to_floor_without_calibration():
+    # No calibration (no elevation signal at all): slope 0 → D IS the earned
+    # floor track. The most data-thin state must produce the most conservative
+    # number, not the most extreme — the old fallback anchored the user's own
+    # peak load to the CEILING (evidence_state 'insufficient' yet D=70).
+    track = [30.0] * 30 + [0.0] * 5
     D = durable_base_series(track, floor_d=8.0, calib_load=None, calib_score=None)
-    assert all(8.0 <= d <= ZONE2_DURABLE_CEILING for d in D)
-    assert max(D) == pytest.approx(ZONE2_DURABLE_CEILING)  # peak load -> ceiling
+    assert all(d == pytest.approx(8.0) for d in D)
+    assert max(D) < ZONE2_DURABLE_CEILING  # never the ceiling from load alone
+    # slope helper pins the same rule directly.
+    assert durable_calibration_slope(8.0, 2.0, calib_load=None, calib_score=None) == 0.0
+    # and with per-day floors the fallback reads the floor TRACK, day by day.
+    floors = [4.0] * 20 + [6.0] * 15
+    D2 = durable_base_series(track, floor_d=floors, calib_load=None, calib_score=None)
+    assert D2 == pytest.approx(floors)
+
+
+# ===========================================================================
+# v4 defect fixes — each block pins one confirmed defect's correction with
+# hand-computed values (never asserting the implementation against itself).
+# ===========================================================================
+
+# ---- fix 1: strength/core contamination of w(t) — modality classification ----
+def test_is_aerobic_modality_excludes_pressor_response_types():
+    for t in (
+        "functional_strength_training",
+        "traditional_strength_training",
+        "core_training",
+        "yoga",
+        "pilates",
+    ):
+        assert not is_aerobic_modality(t), t
+
+
+def test_is_aerobic_modality_counts_everything_else():
+    for t in (
+        "rowing", "pool_swim", "swimming", "indoor_cycling", "cycling",
+        "walking", "running", "hiking", "elliptical",
+    ):
+        assert is_aerobic_modality(t), t
+    # unknown/missing type cannot be shown non-aerobic; the intensity gates
+    # still apply downstream.
+    assert is_aerobic_modality(None)
+    assert is_aerobic_modality("")
+
+
+# ---- fix 3: B must decay through workout-free weeks (per-week causal series) ----
+def test_base_consolidation_series_decays_through_an_off_gap():
+    # ACCEPTANCE: 26 weeks @200 min/wk then 52 fully-empty weeks → final B < 0.1
+    # and B monotonically decaying through the entire gap. (The old feed skipped
+    # workout-free weeks, freezing B across gaps — the exact bug class v3 kills.)
+    series = base_consolidation_series([200.0] * 26 + [0.0] * 52, b_ref=200.0)
+    assert len(series) == 78
+    peak = series[25]
+    gap = series[26:]
+    assert peak > 0.5  # a real base was banked first
+    # strictly decreasing through the gap:
+    assert all(later < earlier for earlier, later in zip([peak] + gap[:-1], gap))
+    assert series[-1] < 0.1
+    # hand-check the EWMA closed form at the end of the gap:
+    alpha_b = 1 - math.exp(-7 / 180)
+    b_raw = 0.0
+    for wk in [200.0] * 26 + [0.0] * 52:
+        b_raw += alpha_b * (wk - b_raw)
+    assert series[-1] == pytest.approx(b_raw / 200.0)
+
+
+def test_base_consolidation_final_value_matches_series():
+    weeks = [120.0, 0.0, 60.0, 0.0, 0.0]
+    assert base_consolidation(weeks) == pytest.approx(base_consolidation_series(weeks)[-1])
+    assert base_consolidation([]) == 0.0
+
+
+def test_base_consolidation_guards_nonpositive_b_ref():
+    # fix 12: a corrupted params row (b_ref ≤ 0) falls back to the literature
+    # default instead of crashing/poisoning the nightly job.
+    weeks = [200.0] * 10
+    assert base_consolidation(weeks, b_ref=0.0) == pytest.approx(base_consolidation(weeks))
+    assert base_consolidation(weeks, b_ref=-5.0) == pytest.approx(base_consolidation(weeks))
+
+
+# ---- fix 4: the floor LIMITS decay, it never replaces the day's load; and a
+# sub-floor state must not RISE on a rest day. Closed form for prev > floor:
+#   durable(t) = prev·exp(−1/τ) + (1−exp(−1/τ))·max(w, floor)
+def test_floor_limits_decay_light_session_never_reads_below_pure_decay():
+    floor, tau = 12.0, 45.0
+    build = [30.0] * 40
+    prev = z2_durable_sharpness_series(build, tau_slow_days=tau, floor_load=floor)[-1][0]
+    decay = math.exp(-1.0 / tau)
+    alpha = 1.0 - decay
+
+    for w in (0.0, 5.0, 20.0):
+        got = z2_durable_sharpness_series(build + [w], tau_slow_days=tau, floor_load=floor)[-1][0]
+        newton = floor + (prev - floor) * decay          # pure Newton decay
+        plain = prev + alpha * (w - prev)                # plain EWMA update
+        assert got >= newton - 1e-12                     # never below pure decay
+        assert got >= plain - 1e-12                      # never below the plain EWMA
+        assert got == pytest.approx(prev * decay + alpha * max(w, floor))
+    # a session above the floor-equivalent stimulus reads STRICTLY above a rest day
+    rest = z2_durable_sharpness_series(build + [0.0], tau_slow_days=tau, floor_load=floor)[-1][0]
+    active = z2_durable_sharpness_series(build + [20.0], tau_slow_days=tau, floor_load=floor)[-1][0]
+    assert active > rest
+
+
+def test_sub_floor_state_never_rises_on_a_rest_day():
+    # Start below the floor (prev ≤ floor): w=0 days are a plain EWMA — durable
+    # keeps FALLING; the old rule RAISED it toward the floor (unearned fitness).
+    floor, tau = 12.0, 45.0
+    track = [d for d, _ in z2_durable_sharpness_series(
+        [5.0, 0.0, 0.0, 0.0], tau_slow_days=tau, floor_load=floor
+    )]
+    assert all(d < floor for d in track)                  # never jumps to the floor
+    assert all(later < earlier for earlier, later in zip(track, track[1:]))
+
+
+def test_series_accepts_per_day_sequences_and_matches_scalars():
+    loads = [20.0] * 10 + [0.0] * 20
+    n = len(loads)
+    scalar = z2_durable_sharpness_series(loads, tau_slow_days=60.0, floor_load=3.0)
+    seq = z2_durable_sharpness_series(loads, tau_slow_days=[60.0] * n, floor_load=[3.0] * n)
+    for (sd, ss), (qd, qs) in zip(scalar, seq):
+        assert sd == pytest.approx(qd)
+        assert ss == pytest.approx(qs)
+    with pytest.raises(ValueError):
+        z2_durable_sharpness_series(loads, tau_slow_days=[60.0] * (n - 1))
+
+
+# ---- fix 5: calibration abscissa in EWMA units (two-pass scheme). A steady
+# 3×/wk trainer at plateau with signals implying S must read ≈S, not ~0.43·S. ----
+def test_steady_trainer_reads_the_signal_implied_height():
+    tau = 45.0
+    loads = [40.0, 0.0, 0.0] * 120  # one 40-load session every 3 days, ~1 year
+    track = [d for d, _ in z2_durable_sharpness_series(loads, tau_slow_days=tau, floor_load=0.0)]
+    S = 50.0
+    # the two-pass scheme: calib_load = max of the (floorless) track over the
+    # trailing signal window — EWMA units, same as the track itself.
+    calib_load = max(track[-180:])
+    D = durable_base_series(
+        track, floor_d=5.0, calib_load=calib_load, calib_score=S, floor_load=0.0
+    )
+    # at the calibration point D reads exactly S…
+    assert max(D[-180:]) == pytest.approx(S)
+    # …and the whole plateau sits ≈S (small within-cycle ripple only), NOT the
+    # ~0.43·S the single-day 90th-percentile abscissa produced.
+    assert min(D[-30:]) > 0.9 * S
+    # the old defect for contrast: pinning the slope at the single-DAY session
+    # load (40) reads the plateau at less than half the implied height.
+    D_old = durable_base_series(track, floor_d=5.0, calib_load=40.0, calib_score=S, floor_load=0.0)
+    assert max(D_old[-30:]) < 0.55 * S
+
+
+def test_no_load_stretch_still_decays_toward_floor_with_constant_signals():
+    # the v3 pt1 acceptance survives the two-pass calibration: signals constant
+    # and favorable, training stops → D falls to the floor.
+    tau, floor_load = 45.0, 4.0
+    loads = [40.0, 0.0, 0.0] * 40 + [0.0] * 300
+    track = [d for d, _ in z2_durable_sharpness_series(loads, tau_slow_days=tau, floor_load=floor_load)]
+    calib_load = max(track)
+    D = durable_base_series(
+        track, floor_d=9.0, calib_load=calib_load, calib_score=55.0, floor_load=floor_load
+    )
+    assert max(D) > 40.0
+    assert D[-1] == pytest.approx(9.0, abs=1.5)  # decayed to the earned floor
+    assert D[-1] < max(D)
+
+
+# ---- fix 8: continuous confidence from the fused posterior vs the flat prior ----
+def test_confidence_from_posterior_continuous_and_bounded():
+    prior = ZONE2_DURABLE_CEILING / math.sqrt(12.0)  # flat prior over [0, C_D]
+    assert confidence_from_posterior(prior, prior) == pytest.approx(0.0)   # knows nothing
+    assert confidence_from_posterior(0.0, prior) == pytest.approx(1.0)     # exact knowledge
+    assert confidence_from_posterior(prior / 2, prior) == pytest.approx(0.5)
+    # worse-than-prior posterior clamps at 0; degenerate prior yields 0.
+    assert confidence_from_posterior(prior * 2, prior) == 0.0
+    assert confidence_from_posterior(1.0, 0.0) == 0.0
+    # strictly monotone in the posterior: more precise fusion → more confidence.
+    cs = [confidence_from_posterior(sd, prior) for sd in (18.0, 12.0, 6.0, 2.0)]
+    assert all(b > a for a, b in zip(cs, cs[1:]))
+
+
+# ---- fix 10: v3 pt6 horizons — expected session build, maintain, build cadence ----
+def test_expected_session_stimulus_median_with_hickson_fallback():
+    assert expected_session_stimulus([30.0, 50.0, 40.0]) == pytest.approx(40.0)
+    assert expected_session_stimulus([30.0, 50.0]) == pytest.approx(40.0)
+    # no qualifying sessions in the window → the marked Hickson maintenance dose.
+    assert expected_session_stimulus([]) == pytest.approx(Z2_MAINTENANCE_SESSION_LOAD)
+    assert expected_session_stimulus([0.0, 0.0]) == pytest.approx(Z2_MAINTENANCE_SESSION_LOAD)
+    assert Z2_MAINTENANCE_SESSION_LOAD == 40.0  # one 20-min Z2 session × Edwards 2
+
+
+def test_expected_session_build_hand_computed():
+    # State: durable_load=10, sharp_load=5; one session at w̄=40 vs a rest day.
+    tau_f, tau_s = 14.0, 45.0
+    slope, floor_d, floor_load = 1.5, 5.0, 2.0
+    a_f = 1 - math.exp(-1 / tau_f)
+    a_s = 1 - math.exp(-1 / tau_s)
+    d_s = math.exp(-1 / tau_s)
+
+    def hand(w):
+        sharp = 5.0 + a_f * (w - 5.0)
+        built = 10.0 + a_s * (w - 10.0)
+        built = max(built, floor_load + (10.0 - floor_load) * d_s)  # floor limit
+        d = max(floor_d, min(70.0, floor_d + slope * (built - floor_load)))
+        f = 30.0 * (1 - math.exp(-sharp / 26.0))
+        return d + f, f
+
+    i_s, f_s = hand(40.0)
+    i_r, f_r = hand(0.0)
+    di, df = expected_session_build(
+        10.0, 5.0, 40.0,
+        slope=slope, floor_d=floor_d, floor_load=floor_load,
+        tau_slow_days=tau_s, tau_fast=tau_f,
+        durable_ceiling=70.0, fast_ceiling=30.0, fast_sat=26.0,
+    )
+    assert di == pytest.approx(i_s - i_r)
+    assert df == pytest.approx(f_s - f_r)
+    assert 0 < df < di  # a session builds fast AND durable; ΔF is the fast part
+
+
+def test_maintain_horizon_is_decay_onset_at_one_session_build():
+    # Durable pinned at its floor → the projected drop is purely the fast layer:
+    # F(1 − e^(−t/τf)) ≥ ΔI ⇒ t = −τf·ln(1 − ΔI/F). F=10, ΔI=2, τf=14 → 3.1236 d.
+    t = decay_onset_days(
+        durable=20.0, fast=10.0, floor=20.0, tau_slow_days=90.0, swc=2.0, tau_fast=14.0
+    )
+    assert t == pytest.approx(-14.0 * math.log(1 - 2.0 / 10.0), abs=1e-6)
+
+
+def test_build_interval_fast_decay_limited_and_capped():
+    # Banked fast pool F=25, session gain ΔF=1: t = −14·ln(1 − 1/25) ≈ 0.5715 d.
+    t = build_interval_days(25.0, 1.0, tau_fast=14.0)
+    assert t == pytest.approx(-14.0 * math.log(1 - 1.0 / 25.0), abs=1e-6)
+    assert t < Z2_BUILD_INTERVAL_CAP_DAYS
+    # Detrained (F≈0): nothing banked to lose → the fast bound never trips and the
+    # licensed beginner build dose caps the interval at 2.0 d (3–4 sessions/wk).
+    assert build_interval_days(0.0, 3.0, tau_fast=14.0) == pytest.approx(2.0)
+    assert build_interval_days(1.0, 5.0, tau_fast=14.0) == pytest.approx(2.0)
+    assert Z2_BUILD_INTERVAL_CAP_DAYS == 2.0
+    # continuous in ΔF: a bigger session gain licenses a longer interval.
+    ts = [build_interval_days(25.0, df, tau_fast=14.0) for df in (0.5, 1.0, 2.0, 4.0)]
+    assert all(b > a for a, b in zip(ts, ts[1:]))
+
+
+# ===========================================================================
+# compute-side pure helpers (metrics/compute.py): the weekly axis MUST include
+# workout-free weeks (fix for B skipping gaps) and every per-day signal lookup
+# MUST be causal (no historical row reads its own future).
+# ===========================================================================
+from datetime import date, timedelta  # noqa: E402
+
+from metrics.compute import causal_latest, iso_weeks_spanning  # noqa: E402
+
+
+def test_iso_weeks_spanning_includes_empty_weeks():
+    # 2026-01-05 is a Monday (ISO week 2). Four contiguous weeks of days →
+    # exactly the four ISO keys, regardless of whether any workouts exist.
+    days = [date(2026, 1, 5) + timedelta(days=i) for i in range(28)]
+    assert iso_weeks_spanning(days) == [(2026, 2), (2026, 3), (2026, 4), (2026, 5)]
+    # a mid-week single day still yields its own week
+    assert iso_weeks_spanning([date(2026, 1, 7)]) == [(2026, 2)]
+    assert iso_weeks_spanning([]) == []
+
+
+def test_iso_weeks_spanning_covers_year_boundary_gap():
+    # Nov 2025 → Feb 2026 daily axis: the ISO week list is contiguous across the
+    # year boundary with NO missing weeks — a workout-free December still yields
+    # its weeks (each will carry 0.0 minutes into base_consolidation_series).
+    days = [date(2025, 11, 3) + timedelta(days=i) for i in range(100)]
+    weeks = iso_weeks_spanning(days)
+    assert len(weeks) == len(set(weeks)) == 15  # 100 days from a Monday = 15 ISO weeks
+    # every day's own ISO week is present (so a per-day B lookup can never miss)
+    for d in days:
+        iso = d.isocalendar()
+        assert (iso.year, iso.week) in weeks
+
+
+def test_causal_latest_never_reads_the_future():
+    d0 = date(2026, 6, 1)
+    days = [d0 + timedelta(days=i) for i in range(8)]
+    series = [(d0 + timedelta(days=1), 50.0), (d0 + timedelta(days=5), 60.0)]
+    got = causal_latest(series, days)
+    assert got[0] is None                                # before the first reading
+    assert got[1] == (d0 + timedelta(days=1), 50.0)      # the day it lands
+    assert got[4] == (d0 + timedelta(days=1), 50.0)      # holds until the next
+    assert got[5] == (d0 + timedelta(days=5), 60.0)
+    assert got[7] == (d0 + timedelta(days=5), 60.0)
+    # days-since derived from these can never be negative
+    for day, obs in zip(days, got):
+        if obs is not None:
+            assert (day - obs[0]).days >= 0

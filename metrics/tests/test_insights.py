@@ -155,3 +155,33 @@ def test_perfs_constant_includes_weight_slope():
     from metrics.insights import PERFS
 
     assert "weight_7d_slope" in PERFS
+
+
+def test_perf_series_by_date_ef_is_swim_only():
+    # ef_eligibility now extends to bikes (bike EF feeds the zone2 durable
+    # calibration), but swim EF (~0.5–1.5 m/min/bpm) and bike EF (~2–4) are
+    # incomparable units — the insights per-day EF series must stay SWIM-ONLY,
+    # while decoupling/hrr60 (relative/HR-domain) stay cross-sport.
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import perf_series_by_date
+
+    tz = ZoneInfo("Europe/Berlin")
+    workouts = [
+        {"id": "w-swim", "type": "pool_swim", "start_at": "2026-07-01T10:00:00Z"},
+        {"id": "w-bike", "type": "indoor_cycling", "start_at": "2026-07-01T18:00:00Z"},
+        {"id": "w-none", "type": "cycling", "start_at": "2026-07-02T10:00:00Z"},
+    ]
+    perf_by_id = {
+        "w-swim": {"ef": 1.2, "decoupling_pct": 3.0, "hrr60": None},
+        "w-bike": {"ef": 3.1, "decoupling_pct": 5.0, "hrr60": 22.0},
+        # no computed row for w-none -> skipped entirely
+    }
+    out = perf_series_by_date(workouts, perf_by_id, tz)
+    from datetime import date
+
+    day = date(2026, 7, 1)
+    assert out[day]["ef"] == [1.2]                 # bike EF excluded from the series
+    assert sorted(out[day]["decoupling"]) == [3.0, 5.0]  # cross-sport preserved
+    assert out[day]["hrr60"] == [22.0]
+    assert date(2026, 7, 2) not in out

@@ -62,8 +62,14 @@ def ef(distance_m: float | None, duration_s: float | None, avg_hr: float | None)
 
 
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
-    """EF/decoupling are swim-only, ≥20 min, ≥70% of classified time in Z1–Z2."""
-    if not workout_type or "swim" not in workout_type.lower():
+    """EF/decoupling eligibility: swim AND bike (v3 pt3 — bike EF is the LEAD
+    durable-calibration signal, so cycling workouts must produce EF), each gated
+    ≥20 min and ≥70% of classified time in Z1–Z2. Indoor rides without distance
+    still yield ef=None downstream (ef() requires distance) — that is fine."""
+    if not workout_type:
+        return False
+    t = workout_type.lower()
+    if "swim" not in t and "cycl" not in t and "bik" not in t:
         return False
     if not duration_s or duration_s < 20 * 60:
         return False
@@ -205,7 +211,17 @@ Z2_F_MAX = 0.55
 Z2_FLOOR_P = 1.5
 Z2_B_REF_MIN_PER_WK = 200.0
 Z2_ANCHOR_VO2_100 = 62.0
-Z2_ANCHOR_BETA0 = 0.7
+# [LITERATURE PRIOR] Top-amateur signal targets for the x-intercept elevation maps
+# (docs v3 pt2: baseline → 0, top-decile amateur → C_D). Both overridable via
+# zone2_fitness_params (columns rhr_top_amateur / ef_top_factor):
+#   RHR ~48 bpm — trained-endurance-amateur resting HR (untrained ~68 bpm →
+#   trained amateurs mid-to-high 40s; endurance-training bradycardia is one of the
+#   most replicated autonomic adaptations, e.g. Mujika & Padilla 2000).
+#   EF top = 1.6 × the user's OWN detrained EF baseline — submaximal economy
+#   improves ~40–60% detrained→trained, so the target is PERSONAL (a factor on the
+#   user's own baseline), never an absolute EF constant.
+Z2_RHR_TOP_AMATEUR = 48.0
+Z2_EF_TOP_FACTOR = 1.6
 
 # ── v3 x-intercept population priors (docs v3 pt2/pt5) ──
 # Population untrained baselines, used ONLY to seed a signal's elevation baseline
@@ -227,7 +243,46 @@ Z2_PERSONAL_BASELINE_HALFLIFE_DAYS = 60.0
 Z2_SWC_MIN_POINTS = 0.5
 Z2_SWC_CV_FRACTION = 0.5       # SWC = 0.5 × CV (Plews/Buchheit, docs §6d)
 Z2_DECAY_ONSET_MAX_DAYS = 120.0  # projection horizon we bother to search (4 mo)
-Z2_ANCHOR_BETA_TAU_DAYS = 45.0
+# [LITERATURE PRIOR] Signal-staleness time constant (spec §4c / v2 amendment: a
+# stale reading must yield to load dynamics). 45 d = the durable compartment's own
+# minimum time constant — a reading older than that describes a state the body may
+# no longer hold. Reused from the retired v2 anchor-beta machinery (same 45 d
+# physiology); now inflates each fusion signal's variance CONTINUOUSLY with age:
+#   variance_eff = variance × exp(days_since_signal / 45)
+Z2_SIGNAL_STALENESS_TAU_DAYS = 45.0
+# ── Level-fusion variances: honest ABSOLUTE D-space variances (points²), NOT
+# relative weights. (The old 1/4/9 were relative-only; treating them as absolute
+# overstated precision ~5× — conf 0.92 / band ±3.3 with no aerobic anchor at all.)
+# Each is still × the staleness inflation above. Derivations:
+# [LITERATURE PRIOR] bike EF: day-to-day submaximal EF CV ≈ 4%; the elevation map
+#   spans baseline→1.6×baseline (a 0.6·baseline span) onto C_D = 70 pts, so
+#   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22. The aerobic-specific trusted LEAD.
+Z2_BIKE_EF_VARIANCE = 22.0
+# [LITERATURE PRIOR] watch VO2max: Lambe 2025 LoA ≈ ±12 ml/kg/min → sd ≈ 6 ml;
+#   elevation slope ≈ C_D/(62−32) ≈ 2.33 pts per ml → sd ≈ 14 pts → var ≈ 196.
+#   (EF:VO2 var ratio ≈ 1:9 — the same RATIO as the old relative weights; only
+#   the absolute scale changed.)
+Z2_VO2MAX_VARIANCE = 196.0
+# [LITERATURE PRIOR] B-prior softness. The level fusion always includes the
+# estimate (C_D·B_t, (C_D·this)²): B is the normalized ~180-d EWMA of weekly Z2
+# minutes — literally the accumulated structural base — with B=1 ≡ a consolidated
+# club-level base ≡ the C_D anchor ("top-decile consistently-training amateur")
+# and B=0 ≡ no banked base ≡ 0. This variance is the SOFTNESS of that map (a
+# marked prior, like f_max): sd = C_D/4 (≈17.5 pts, var ≈ 306 at C_D=70) — soft
+# enough that any fresh aerobic-specific signal dominates it, firm enough to set
+# the level when no trusted signal exists (v3 pt1: "a sparse Zone-2 trainer reads
+# LOW" — the load history is the default level-setter).
+Z2_B_PRIOR_SD_FRACTION = 0.25  # sd = C_D/4 → var = (C_D/4)²
+# [LITERATURE PRIOR — Hickson dose] Fallback expected-session stimulus w̄ when no
+# qualifying session exists in the data window: one 20-min true-Z2 session →
+# 20 min × Edwards zone-2 weight 2 = 40 load units (Hickson 1981/1985 minimum
+# effective maintenance session, docs §5a).
+Z2_MAINTENANCE_SESSION_LOAD = 40.0
+# [LITERATURE PRIOR] Build-cadence cap: the licensed beginner BUILD dose is 3–4
+# sessions/wk (docs §5a scope note) → an interval of 7/3.5 = 2.0 days. Binds when
+# the fast pool has nothing banked to lose (detrained: F≈0, so between-session
+# fast-decay can never exceed a session's build and the interval is unbounded).
+Z2_BUILD_INTERVAL_CAP_DAYS = 2.0
 
 # ---- v2 fixed-ceiling amendment (docs/zone2-fitness-model.md "v2 — locked
 # amendments"). The headline index I = D + F, each component bounded by its OWN
@@ -250,15 +305,27 @@ ZONE2_INDEX_CEILING = 100.0   # I = D + F tops out here
 # volume, they do not scale linearly. Tunable via zone2_fitness_params.fast_sat.
 ZONE2_FAST_SAT = 26.0
 
-# The durable LEVEL is re-anchored to the user's OWN sports (v2 Thread 2), not to
-# the swim/indoor-bike-blind watch VO2max. Blend weights over the available
-# submaximal-efficiency + autonomic signals; watch VO2max is LOW-WEIGHT occasional
-# calibration only (applied on days it refreshed), NEVER the cap.
-ZONE2_LEVEL_W_SWIM_EF = 0.30   # own swim submaximal efficiency (pace/HR percentile)
-ZONE2_LEVEL_W_BIKE_EF = 0.35   # own bike efficiency proxy — cleaner (no stroke confound)
-ZONE2_LEVEL_W_RHR = 0.20       # resting-HR trend (technique-free, robust)
-ZONE2_LEVEL_W_HRV = 0.15       # HRV trend (PPG-noisy, lowest own-signal weight)
-ZONE2_LEVEL_W_VO2MAX = 0.10    # watch VO2max — occasional low-weight calibration only
+# Non-aerobic workout-type markers for is_aerobic_modality. Categorical modality
+# classification (like the swim/bike splits elsewhere), NOT a state/timing constant
+# — no v3 dynamic-principle violation.
+Z2_NON_AEROBIC_MARKERS = ("strength", "core", "yoga", "pilates")
+
+
+def is_aerobic_modality(workout_type: str | None) -> bool:
+    """Whether a workout's Zone-2-band HR time is a genuine AEROBIC stimulus
+    eligible to feed w(t), the intensity-correct session count, and B's weekly
+    minutes. Weight-room / core work raises HR into the Z2 band via the pressor
+    response (static contractions, intrathoracic pressure) and sympathetic drive
+    — NOT via sustained elevated cardiac output and muscle O2 flux, so it builds
+    no capillary/mitochondrial base and must not read as Zone-2 aerobic load.
+    Yoga/pilates are excluded defensively for the same reason (breath-hold and
+    isometric HR elevation). Everything else — rowing, swimming, cycling, walking,
+    running, hiking, elliptical, ... — counts; an unknown/missing type counts
+    (cannot be shown non-aerobic, and the intensity gates still apply)."""
+    if not workout_type:
+        return True
+    t = workout_type.lower()
+    return not any(marker in t for marker in Z2_NON_AEROBIC_MARKERS)
 
 
 def z2_trimp_from_zones(time_in_zones: dict) -> float:
@@ -322,77 +389,42 @@ def fast_score_from_load(
     return fast_ceiling * (1.0 - math.exp(-fast_load / fast_sat))
 
 
-def durable_level_score(
-    swim_ef_pct: float | None,
-    bike_ef_pct: float | None,
-    rhr_pct: float | None,
-    hrv_pct: float | None,
-    vo2max_pct: float | None,
-    vo2max_refreshed: bool = False,
-) -> float | None:
-    """v2 re-anchored durable LEVEL (docs v2 "Re-anchoring"; Thread 2). Returns a
-    percentile-style level in [0,100] blended from the user's OWN sports, NOT the
-    swim/indoor-bike-blind watch VO2max:
-
-      - swim_ef_pct / bike_ef_pct: own submaximal efficiency mapped to a percentile
-      - rhr_pct / hrv_pct: own resting-HR / HRV trend percentiles
-      - vo2max_pct: watch VO2max percentile — LOW-WEIGHT occasional calibration
-        ONLY, and only counted on days it refreshed (vo2max_refreshed=True). It is
-        NEVER the cap: it enters as one weighted term among many, so it can neither
-        push the level above what the sports imply nor floor it below.
-
-    Each argument is a percentile-style value in [0,100] or None when unavailable;
-    missing signals drop out and the present weights renormalize. Returns None when
-    NO own-sports signal is available (caller then falls back to load dynamics and
-    a WIDE band — no fabricated precision).
-
-    The caller maps this [0,100] level onto [0, C_D] via durable_score_from_percentile."""
-    terms: list[tuple[float, float]] = []
-    if swim_ef_pct is not None:
-        terms.append((swim_ef_pct, ZONE2_LEVEL_W_SWIM_EF))
-    if bike_ef_pct is not None:
-        terms.append((bike_ef_pct, ZONE2_LEVEL_W_BIKE_EF))
-    if rhr_pct is not None:
-        terms.append((rhr_pct, ZONE2_LEVEL_W_RHR))
-    if hrv_pct is not None:
-        terms.append((hrv_pct, ZONE2_LEVEL_W_HRV))
-    # Watch VO2max is included ONLY when it actually refreshed that day, and always
-    # at low weight — the demotion from v1's primary anchor (docs v2 Thread 2).
-    if vo2max_pct is not None and vo2max_refreshed:
-        terms.append((vo2max_pct, ZONE2_LEVEL_W_VO2MAX))
-
-    # Level requires at least one OWN-sports signal; a lone refreshed VO2max is not
-    # enough to place the level (it may never let the swimmer reach his ceiling).
-    own_signal = any(
-        v is not None for v in (swim_ef_pct, bike_ef_pct, rhr_pct, hrv_pct)
-    )
-    if not own_signal or not terms:
-        return None
-
-    wsum = sum(w for _, w in terms)
-    if wsum <= 0:
-        return None
-    level = sum(v * w for v, w in terms) / wsum
-    return max(0.0, min(100.0, level))
-
-
 def ewma_alpha(tau: float) -> float:
     """Daily smoothing factor for a decay time constant tau (spec §2)."""
     return 1.0 - math.exp(-1.0 / tau)
+
+
+def base_consolidation_series(
+    weekly_z2_minutes: list[float],
+    b_ref: float = Z2_B_REF_MIN_PER_WK,
+) -> list[float]:
+    """Per-week B ∈ [0,1] — accumulated-base consolidation (spec §3): a ~180-day
+    EWMA of weekly Zone-2 minutes (weekly step), normalized by b_ref and clamped,
+    seeded at 0. Element i is B after week i, so the caller can stamp each
+    historical day with the CAUSAL B of its own week — never today's B (v3
+    dynamic principle: no fictional history). The weekly axis MUST include
+    workout-free weeks as 0.0 so B decays through a fully-off gap.
+
+    b_ref ≤ 0 (a corrupted params row) falls back to the literature default
+    rather than crashing the nightly job."""
+    if b_ref is None or b_ref <= 0:
+        b_ref = Z2_B_REF_MIN_PER_WK
+    alpha_b = 1.0 - math.exp(-7.0 / 180.0)
+    out: list[float] = []
+    b_raw = 0.0
+    for wk in weekly_z2_minutes:
+        b_raw += alpha_b * (float(wk) - b_raw)
+        out.append(max(0.0, min(1.0, b_raw / b_ref)))
+    return out
 
 
 def base_consolidation(
     weekly_z2_minutes: list[float],
     b_ref: float = Z2_B_REF_MIN_PER_WK,
 ) -> float:
-    """B ∈ [0,1] — accumulated-base consolidation (spec §3): a ~180-day EWMA of
-    weekly Zone-2 minutes (weekly step), normalized by b_ref and clamped. Seeded
-    at 0. Returns the final B; an empty history is B=0 (brand-new)."""
-    alpha_b = 1.0 - math.exp(-7.0 / 180.0)
-    b_raw = 0.0
-    for wk in weekly_z2_minutes:
-        b_raw += alpha_b * (float(wk) - b_raw)
-    return max(0.0, min(1.0, b_raw / b_ref))
+    """Final B of base_consolidation_series; an empty history is B=0 (brand-new)."""
+    series = base_consolidation_series(weekly_z2_minutes, b_ref=b_ref)
+    return series[-1] if series else 0.0
 
 
 def tau_slow(
@@ -494,49 +526,100 @@ def signal_elevation_score(
     return max(0.0, min(ceiling, frac * ceiling))
 
 
+def _per_day(value, n: int) -> list[float]:
+    """Broadcast a scalar to n days, or validate a per-day sequence of length n.
+    Lets the series functions take per-day CAUSAL τ_slow/floor tracks (v3: every
+    quantity a continuous function of the actual data, per-day — no stamping
+    today's state onto history) while keeping scalar convenience for tests."""
+    if isinstance(value, (int, float)):
+        return [float(value)] * n
+    seq = [float(v) for v in value]
+    if len(seq) != n:
+        raise ValueError(f"per-day sequence has length {len(seq)}, expected {n}")
+    return seq
+
+
 def z2_durable_sharpness_series(
     daily_z2_load: list[float],
     tau_fast: float = Z2_TAU_FAST_DAYS,
-    tau_slow_days: float = Z2_TAU_SLOW_MIN_DAYS,
-    floor_load: float = 0.0,
+    tau_slow_days=Z2_TAU_SLOW_MIN_DAYS,
+    floor_load=0.0,
 ) -> list[tuple[float, float]]:
     """Per-day (durable_load, sharp_load), both EWMAs over the same daily Z2
     load, seeded at 0 (spec §2).
 
     - sharp_load: plain fast EWMA, alpha_fast = 1-exp(-1/tau_fast).
-    - durable_load: slow EWMA build, then on any *falling* day the Newton-cooling
-      floor rule (spec §2c) replaces the value so it decays toward floor_load,
-      never below it: durable = floor + (prev - floor)*exp(-1/tau_slow).
+    - durable_load: slow EWMA build, with the Newton-cooling floor (spec §2c) as
+      a LIMIT on decay, never a replacement for the day's load:
 
-    tau_slow_days and floor_load are held fixed across the series (resolved from
-    B by the caller); this matches the nightly single-pass usage and keeps the
-    math pinnable."""
+        prev > floor:  durable = max( plain EWMA update,
+                                      floor + (prev − floor)·exp(−1/τ_slow) )
+        prev ≤ floor:  durable = plain EWMA update
+
+      The max form means the floor bounds how far a day can fall while the day's
+      actual load w still counts — a light Z2 session never reads below the pure
+      Newton decay NOR below the plain EWMA (algebraically the day's effective
+      input is max(w, floor)). Below the floor the plain EWMA applies unmodified,
+      so a rest day can never RAISE durable toward an unearned floor.
+
+    tau_slow_days and floor_load are scalars OR per-day sequences (the nightly
+    job passes the causal per-day τ_slow(B_t)/floor_t tracks)."""
+    n = len(daily_z2_load)
+    taus = _per_day(tau_slow_days, n)
+    floors = _per_day(floor_load, n)
     alpha_fast = ewma_alpha(tau_fast)
-    alpha_slow = ewma_alpha(tau_slow_days)
-    decay_slow = math.exp(-1.0 / tau_slow_days)
 
     out: list[tuple[float, float]] = []
     durable = sharp = 0.0
-    for w in daily_z2_load:
+    for i, w in enumerate(daily_z2_load):
         w = float(w)
         sharp += alpha_fast * (w - sharp)
 
-        prev_durable = durable
-        built = prev_durable + alpha_slow * (w - prev_durable)
-        if built < prev_durable:  # detraining day: decay toward the floor, not 0
-            built = floor_load + (prev_durable - floor_load) * decay_slow
-        durable = built
+        alpha_slow = ewma_alpha(taus[i])
+        decay_slow = math.exp(-1.0 / taus[i])
+        prev = durable
+        built = prev + alpha_slow * (w - prev)
+        if prev > floors[i]:
+            # floor LIMITS the fall; the day's load is never discarded.
+            durable = max(built, floors[i] + (prev - floors[i]) * decay_slow)
+        else:
+            durable = built  # at/below floor: plain EWMA — resting earns nothing
         out.append((durable, sharp))
     return out
 
 
+def durable_calibration_slope(
+    floor_d_now: float,
+    floor_load_now: float,
+    calib_load: float | None = None,
+    calib_score: float | None = None,
+) -> float:
+    """The affine load→score slope (docs v3 pt2/pt5), pinned at today's floor point
+    (floor_load → floor_d) and the calibration point (calib_load → calib_score).
+
+    NO CALIBRATION → slope 0: with no elevation signal at all there is NO EVIDENCE
+    of height above the earned floor, so D reads the floor track — the honest
+    data-thin answer (evidence_state is 'insufficient' there anyway). This replaces
+    the old fallback that anchored the user's own peak load to the CEILING, which
+    made the most data-thin state produce the most extreme number."""
+    if (
+        calib_load is not None
+        and calib_score is not None
+        and (float(calib_load) - float(floor_load_now)) > 1e-9
+    ):
+        return (float(calib_score) - float(floor_d_now)) / (
+            float(calib_load) - float(floor_load_now)
+        )
+    return 0.0
+
+
 def durable_base_series(
     durable_load_track: list[float],
-    floor_d: float,
+    floor_d,
     ceiling: float = ZONE2_DURABLE_CEILING,
     calib_load: float | None = None,
     calib_score: float | None = None,
-    floor_load: float = 0.0,
+    floor_load=0.0,
 ) -> list[float]:
     """v3 pt1 — durable D ∈ [floor_d, ceiling] as a LOAD-DRIVEN, DECAYING series.
 
@@ -548,49 +631,67 @@ def durable_base_series(
     during a zero-load stretch, D DECAYS TOWARD floor_d during that stretch — even
     if the elevation inputs are held constant favorable (docs v3 pt1 acceptance).
 
-    Calibration (docs v3 pt2/pt5) is an AFFINE load→score map pinned at two points:
+    Calibration (docs v3 pt2/pt5) is an AFFINE load→score map pinned at two points
+    (see durable_calibration_slope; the slope is anchored at TODAY's floor point —
+    the calibration signals are a current-state scale):
         floor_load → floor_d     (a fully-detrained load reads the earned floor)
-        calib_load → calib_score (the current load reads the elevation-implied height)
+        calib_load → calib_score (the recently-trained smoothed load reads the
+                                  elevation-implied height; the caller supplies
+                                  calib_load in EWMA units — the max of the
+                                  floorless track over the signal window — so the
+                                  abscissa is commensurate with the track)
 
-        slope = (calib_score − floor_d) / (calib_load − floor_load)
-        D(t)  = clamp( floor_d + slope·(load(t) − floor_load), floor_d, ceiling )
+        D(t) = clamp( floor_d(t) + slope·(load(t) − floor_load(t)), floor_d(t), ceiling )
 
-    When the load track sits at its floor, D = floor_d exactly — so a gap decays D
-    to the earned floor, not to some residual above it. Falls back to a
-    range-anchored map (max load → ceiling) when no calibration is supplied."""
+    floor_d and floor_load are scalars OR per-day sequences (causal per-day floors).
+    When the load track sits at its floor, D = floor_d exactly — a gap decays D to
+    the earned floor. With NO calibration, slope=0 and D IS the floor track."""
     track = [float(x) for x in durable_load_track]
     if not track:
         return []
-    fl = float(floor_load)
-    if (
-        calib_load is not None
-        and calib_score is not None
-        and (float(calib_load) - fl) > 1e-9
-    ):
-        # affine map pinned at (floor_load -> floor_d) and (calib_load -> calib_score).
-        slope = (float(calib_score) - floor_d) / (float(calib_load) - fl)
-    else:
-        ref = max((x for x in track), default=fl)
-        slope = ((ceiling - floor_d) / (ref - fl)) if (ref - fl) > 1e-9 else 0.0
+    n = len(track)
+    floors_d = _per_day(floor_d, n)
+    floors_load = _per_day(floor_load, n)
+    slope = durable_calibration_slope(
+        floors_d[-1], floors_load[-1], calib_load=calib_load, calib_score=calib_score
+    )
     out: list[float] = []
-    for load in track:
-        d = floor_d + slope * (load - fl)
-        out.append(max(floor_d, min(ceiling, d)))
+    for i, load in enumerate(track):
+        d = floors_d[i] + slope * (load - floors_load[i])
+        out.append(max(floors_d[i], min(ceiling, d)))
     return out
 
 
-def anchor_beta(
-    days_since_vo2max: int | None,
-    vo2max_confidence: float,
-    beta0: float = Z2_ANCHOR_BETA0,
-    tau_days: float = Z2_ANCHOR_BETA_TAU_DAYS,
+def staleness_inflated_variance(
+    variance: float,
+    days_since_signal: float,
+    tau_days: float = Z2_SIGNAL_STALENESS_TAU_DAYS,
 ) -> float:
-    """Weight on the VO2max anchor (spec §4c): beta0·exp(-days_since/45)·conf. A
-    fresh, corroborated VO2max dominates the level; a stale/uncorroborated one
-    yields to load dynamics. No VO2max at all → 0 (pure dynamics)."""
-    if days_since_vo2max is None:
+    """Continuous staleness decay of a fusion signal's evidential weight (spec §4c
+    / v2: a stale reading yields to load dynamics — the fix for months-old watch
+    VO2max co-anchoring the height forever at full weight):
+
+        variance_eff = variance × exp(days_since_signal / τ_staleness)
+
+    Weight (1/variance) halves every τ·ln2 ≈ 31 d. Age clamps at 0 so a reading
+    can never gain weight. Continuous in age — no freshness cutoff band."""
+    return float(variance) * math.exp(
+        max(0.0, float(days_since_signal)) / max(1e-9, tau_days)
+    )
+
+
+def confidence_from_posterior(posterior_sd: float, prior_sd: float) -> float:
+    """Confidence ∈ [0,1] as the fractional variance-reduction the signals achieve
+    over knowing nothing (docs §6c/§6d — the fused posterior SD drives the band):
+
+        confidence = clamp( 1 − posterior_sd / prior_sd , 0, 1 )
+
+    prior_sd is the SD of total ignorance — a flat prior over [0, C_D], i.e.
+    C_D/√12. No signals → posterior = prior → confidence 0. Continuous and
+    data-derived; replaces the valid_signals/4 step lookup."""
+    if prior_sd <= 0:
         return 0.0
-    return beta0 * math.exp(-max(0, days_since_vo2max) / tau_days) * max(0.0, min(1.0, vo2max_confidence))
+    return max(0.0, min(1.0, 1.0 - float(posterior_sd) / float(prior_sd)))
 
 
 def fuse_inverse_variance(estimates: list[tuple[float, float]]) -> tuple[float, float] | None:
@@ -631,21 +732,29 @@ def swc_from_index(
     swc_min: float = Z2_SWC_MIN_POINTS,
 ) -> float:
     """Smallest worthwhile change (index points), DATA-DERIVED from the user's own
-    index variability (docs v3 pt6, Plews/Buchheit): SWC ≈ 0.5 × CV of the recent
-    index, expressed in the index's own points (CV·mean = SD-scale), floored at a
-    small minimum so a pathologically-flat index still yields a finite horizon.
+    day-to-day index NOISE (docs §6d, Plews/Buchheit: "SWC on any 7-day rolling
+    mean"): SWC = cv_fraction × SD of the RESIDUALS of the index versus its own
+    trailing 7-day rolling mean, floored at swc_min.
 
-        SWC = max( cv_fraction × CV × mean , swc_min )
-            = max( cv_fraction × SD , swc_min )     [since CV = SD/mean]
+        residual_i = x_i − mean(x[i−6..i])
+        SWC = max( cv_fraction × SD(residuals) , swc_min )
 
-    A noisy index (large CV) demands a larger real move before we call it decay; a
-    stable one lets a small move count. Grounded in the user's OWN signal, not a
-    constant. Empty/degenerate history falls back to the floor."""
+    Residuals against the rolling mean strip the TREND, so a build block's ramp
+    (which dominates the raw SD — a 0→25 ramp reads SWC≈3.5 raw) no longer
+    stretches decay_onset exactly when a thin, freshly-built base needs a short
+    warning window. A steady ramp has near-constant residuals → SWC at the floor;
+    genuine day-to-day noise survives. swc_min (0.5 pt, [LITERATURE PRIOR] —
+    sub-integer display noise) keeps a pathologically-flat index from yielding an
+    infinite horizon."""
     vals = [float(v) for v in recent_index if v is not None]
     if len(vals) < 2:
         return swc_min
-    mean = sum(vals) / len(vals)
-    var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+    residuals = []
+    for i, v in enumerate(vals):
+        window = vals[max(0, i - 6): i + 1]
+        residuals.append(v - sum(window) / len(window))
+    mean_r = sum(residuals) / len(residuals)
+    var = sum((r - mean_r) ** 2 for r in residuals) / (len(residuals) - 1)
     sd = math.sqrt(max(0.0, var))
     return max(swc_min, cv_fraction * sd)
 
@@ -707,6 +816,90 @@ def decay_onset_days(
     return hi
 
 
+# ---------------------------------------------------------------------------
+# v3 pt6 — maintain/build horizons, derived from the model's own projection and
+# the user's data. maintain_horizon = decay_onset_days(..., swc=ΔI): the last day
+# a single expected session still holds the level. build_interval = the fast-
+# decay-limited cadence. Both continuous in the current state.
+# ---------------------------------------------------------------------------
+
+def expected_session_stimulus(
+    qualifying_day_loads: list[float],
+    fallback: float = Z2_MAINTENANCE_SESSION_LOAD,
+) -> float:
+    """Expected single-session stimulus w̄ (docs v3 pt6): the MEDIAN daily z2-TRIMP
+    of qualifying-session DAYS within the caller's trailing τ_slow window — the
+    window itself is data-linked (τ_slow(B_t)), so w̄ is what a typical recent
+    quality session actually delivered. With NO qualifying session in the window,
+    fall back to the maintenance-dose prior (one 20-min true-Z2 session → 40 load
+    units, [LITERATURE PRIOR — Hickson dose])."""
+    vals = [float(v) for v in qualifying_day_loads if v is not None and float(v) > 0]
+    return median(vals) if vals else fallback
+
+
+def expected_session_build(
+    durable_load: float,
+    sharp_load: float,
+    w_bar: float,
+    *,
+    slope: float,
+    floor_d: float,
+    floor_load: float,
+    tau_slow_days: float,
+    tau_fast: float = Z2_TAU_FAST_DAYS,
+    durable_ceiling: float = ZONE2_DURABLE_CEILING,
+    fast_ceiling: float = ZONE2_FAST_CEILING,
+    fast_sat: float = ZONE2_FAST_SAT,
+) -> tuple[float, float]:
+    """ΔI (and its fast-only component ΔF) of ONE session-day at w̄ taken FROM THE
+    CURRENT STATE (docs v3 pt6): advance both EWMAs one day with w=w̄ vs w=0 using
+    the exact series update rules, map each through the score functions, and
+    difference. Continuous in every state variable — near fast-saturation a
+    session buys less, when detrained it buys more. Returns (ΔI, ΔF)."""
+    alpha_fast = ewma_alpha(tau_fast)
+    alpha_slow = ewma_alpha(tau_slow_days)
+    decay_slow = math.exp(-1.0 / tau_slow_days)
+
+    def advance(w: float) -> tuple[float, float]:
+        sharp = sharp_load + alpha_fast * (w - sharp_load)
+        built = durable_load + alpha_slow * (w - durable_load)
+        if durable_load > floor_load:  # same max floor-limit rule as the series
+            built = max(built, floor_load + (durable_load - floor_load) * decay_slow)
+        d = max(floor_d, min(durable_ceiling, floor_d + slope * (built - floor_load)))
+        f = fast_score_from_load(sharp, fast_ceiling=fast_ceiling, fast_sat=fast_sat)
+        return d + f, f
+
+    i_session, f_session = advance(float(w_bar))
+    i_rest, f_rest = advance(0.0)
+    return i_session - i_rest, f_session - f_rest
+
+
+def build_interval_days(
+    fast_score: float,
+    delta_fast: float,
+    tau_fast: float = Z2_TAU_FAST_DAYS,
+    cap_days: float = Z2_BUILD_INTERVAL_CAP_DAYS,
+    max_days: float = Z2_DECAY_ONSET_MAX_DAYS,
+) -> float:
+    """Fast-decay-limited build cadence (docs v3 pt6): the smallest t where the
+    projected fast layer has lost one expected session's fast gain,
+    F(0) − F(0)·exp(−t/τ_fast) ≥ ΔF — train again before that and consecutive
+    sessions net-accumulate. Capped at Z2_BUILD_INTERVAL_CAP_DAYS (the licensed
+    beginner build dose 3–4/wk → 2.0 d, [LITERATURE PRIOR]), which binds exactly
+    when there is nothing banked to lose (F≈0 → the fast-decay bound is
+    unbounded, i.e. the detrained case). Continuous in F and ΔF."""
+    t = decay_onset_days(
+        durable=0.0,
+        fast=float(fast_score),
+        floor=0.0,
+        tau_slow_days=1.0,  # irrelevant: the durable term is identically 0
+        swc=max(0.0, float(delta_fast)),
+        tau_fast=tau_fast,
+        max_days=max_days,
+    )
+    return min(t, cap_days)
+
+
 ZONE2_MAINTENANCE_MESSAGE = (
     "You're below the dose that holds your level. Two Zone-2 sessions at target "
     "intensity in the next few days keeps it. Miss that and your sharpness fades "
@@ -717,21 +910,33 @@ ZONE2_MAINTENANCE_MESSAGE = (
 def zone2_maintenance_flag(
     maintenance_met: bool,
     consecutive_unmet_days: int,
-    warn_window: int,
+    warn_after_days: float,
     sharpness: float,
     durable_base: float,
     hold_active: bool,
+    fast_ceiling: float = ZONE2_FAST_CEILING,
+    durable_ceiling: float = ZONE2_DURABLE_CEILING,
 ) -> list[dict]:
     """The zone2_maintenance firing rule (spec §5c). Fires severity 'info' iff
-    ALL hold: maintenance unmet for `warn_window` consecutive days AND sharpness
-    has dropped below durable_base (form fading faster than the base) AND NOT
-    suppressed by an active injury/plan hold. Never red, never single-reading —
-    the multi-day window supplies persistence; the two numbers' relationship is
-    read, never summed."""
+    ALL hold: maintenance unmet for the warn window's worth of consecutive days
+    AND form is fading faster than the base AND NOT suppressed by an active
+    injury/plan hold. Never red, never single-reading.
+
+    "Form fading below the base" compares NORMALIZED shares, F/C_F < D/C_D — the
+    raw F < D comparison put F∈[0,30] against D∈[0,70], tautologically true
+    whenever D > 30 regardless of form. The shares put both pools on their own
+    saturation scale, which is the relationship §5c actually means.
+
+    warn_after_days is the CONTINUOUS projection-derived decay-onset horizon; the
+    firing threshold is max(1, round(warn_after_days)) unmet DAYS so even a
+    sub-day horizon still demands one full unmet day of persistence."""
+    threshold = max(1, round(float(warn_after_days)))
+    fast_share = sharpness / fast_ceiling if fast_ceiling > 0 else 0.0
+    durable_share = durable_base / durable_ceiling if durable_ceiling > 0 else 0.0
     fires = (
         not maintenance_met
-        and consecutive_unmet_days >= warn_window
-        and sharpness < durable_base
+        and consecutive_unmet_days >= threshold
+        and fast_share < durable_share
         and not hold_active
     )
     if not fires:

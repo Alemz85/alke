@@ -237,7 +237,6 @@ export interface Zone2Fitness {
   sharpness: number | null
   // provenance / anchor
   vo2max_anchor_score: number | null
-  anchor_beta: number | null
   days_since_vo2max: number | null
   // internal state (for the projection trail + audit)
   durable_load: number | null
@@ -250,9 +249,14 @@ export interface Zone2Fitness {
   evidence_state: Zone2EvidenceState
   contributing: Record<string, number> | null
   stage: Zone2Stage
-  // maintenance / degradation warning
+  // maintenance / degradation warning + coaching horizons — ALL derived by the
+  // nightly job from its own forward projection (docs v3 pt6). The renderer
+  // only places these as dates from the row's date; it derives nothing itself.
   maintenance_met: boolean | null
-  warn_after_days: number | null
+  warn_after_days: number | null // continuous decay-onset horizon (days from row date)
+  maintain_horizon_days: number | null // last day one session still holds the level
+  build_interval_days: number | null // cadence where a session's build outpaces fast decay
+  expected_session_build: number | null // per-session index increment used above (provenance)
   flags: Flag[]
   computed_at: string | null
 }
