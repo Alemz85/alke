@@ -1,0 +1,16 @@
+.z2traj-empty {
+  margin: var(--space-lg) 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.z2traj-caption {
+  margin: var(--space-xs) 0 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}

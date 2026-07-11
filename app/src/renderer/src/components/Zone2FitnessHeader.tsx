@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import type { Workout, Zone2Fitness } from '@shared/types'
+import type { UserConfig, Workout, Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { CalendarHeatmap } from './CalendarHeatmap'
@@ -14,6 +13,7 @@ import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
 import { addDays, localDateKey, todayYMD, ymdKey, ymdToIsoStart } from '../hooks/sessionsDate'
 import { cardioModalityOf } from '../lib/cardioModality'
 import { formatWorkoutDuration } from '../lib/calendarDayLabel'
+import { rhrRecent, zoneRanges } from '../lib/hrZones'
 import { isCardioType, monthSummary, yearSummary } from '../lib/periodSummary'
 import type { SummaryItem } from '../lib/periodSummary'
 import {
@@ -31,6 +31,15 @@ import {
 import './Zone2FitnessHeader.css'
 
 const EM_DASH = '—'
+
+// What each zone is FOR — the label a glance needs, not physiology prose.
+const ZONE_INTENT: Record<number, string> = {
+  1: 'recovery',
+  2: 'aerobic base',
+  3: 'tempo',
+  4: 'threshold',
+  5: 'max'
+}
 
 function fmtTrendPct(pct: number | null): string {
   if (pct === null) return EM_DASH
@@ -263,23 +272,60 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
       })
     : ''
 
-  // Trajectory series for the panel's right-hand neighbor: the fetched 150-day
-  // window rendered as index line + its real confidence band (same honesty rule
-  // as the ± on the score — the band is data, not decoration).
-  const trendData = useMemo(
-    () =>
-      rows
-        .filter((r) => r.durable_base != null)
-        .map((r) => ({
-          date: r.date.slice(5),
-          index: zone2IndexValue(r),
-          band:
-            r.durable_band_lo != null && r.durable_band_hi != null
-              ? [r.durable_band_lo, r.durable_band_hi]
-              : null
-        })),
-    [rows]
-  )
+  // HR-zone card data: the same Karvonen inputs the nightly job classifies
+  // with — max HR + Z2 band from user_config, resting HR as the 7-day median.
+  const configQuery = useQuery<UserConfig>({
+    queryKey: ['zone2', 'config'],
+    queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
+  const rhrWindow = useMemo(() => {
+    const from = addDays(today, -60)
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    return `${from.year}-${pad(from.month)}-${pad(from.day)}`
+  }, [today])
+  const restingQuery = useQuery({
+    queryKey: ['zone2-fitness', 'resting', rhrWindow, ymdKey(today)],
+    queryFn: () => window.api.getDailyMetrics(rhrWindow, ymdKey(today)),
+    staleTime: 60_000
+  })
+
+  const hrZones = useMemo(() => {
+    const hrMax = configQuery.data?.hr_max
+    if (hrMax == null) return null
+    const restingByDate = new Map<string, number>()
+    for (const d of restingQuery.data ?? []) {
+      if (d.resting_hr != null) restingByDate.set(d.date, d.resting_hr)
+    }
+    const rhr = rhrRecent(restingByDate, ymdKey(today))
+    return {
+      hrMax,
+      rhr: Math.round(rhr),
+      ranges: zoneRanges(
+        hrMax,
+        rhr,
+        configQuery.data?.zone2_low_frac ?? 0.6,
+        configQuery.data?.zone2_high_frac ?? 0.7
+      )
+    }
+  }, [configQuery.data, restingQuery.data, today])
+
+  // Share of classified training time per zone, last 90 days.
+  const zoneShares = useMemo(() => {
+    const cutoff = Date.now() - 90 * 86_400_000
+    const totals = [0, 0, 0, 0, 0]
+    for (const w of yearWorkoutsQuery.data ?? []) {
+      if (new Date(w.start_at).getTime() < cutoff) continue
+      const tiz = w.computed?.time_in_zones as Record<string, unknown> | null | undefined
+      if (!tiz) continue
+      for (let z = 1; z <= 5; z++) {
+        const v = tiz[`z${z}`]
+        if (typeof v === 'number') totals[z - 1] += v
+      }
+    }
+    const sum = totals.reduce((a, b) => a + b, 0)
+    return sum > 0 ? totals.map((t) => Math.round((t / sum) * 100)) : null
+  }, [yearWorkoutsQuery.data])
 
   function handlePrevMonth(): void {
     if (viewMonth === 1) {
@@ -312,7 +358,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
               <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
             </div>
           </div>
-          <div className="z2f-trend z2f-trend--skeleton" />
+          <div className="z2f-zones z2f-zones--skeleton" />
         </div>
         <div className="z2f-row z2f-row--cal">
           <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
@@ -459,71 +505,54 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
         </p>
       </div>
 
-      {/* ── Trajectory: the fetched 150-day window as index line + confidence band. ── */}
-      <div className="z2f-trend" aria-label="Cardio fitness trajectory, last 150 days">
-        <div className="z2f-trend-label">Trajectory · last 150 days</div>
-        {trendData.length >= 2 ? (
+      {/* ── HR zones: the exact Karvonen ranges the nightly job classifies with,
+          plus each zone's share of the last 90 days of training time. ── */}
+      <div className="z2f-zones" aria-label="Heart-rate zones">
+        <div className="z2f-zones-label">HR zones · Karvonen</div>
+        {hrZones ? (
           <>
-            <div className="z2f-trend-plot">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={trendData} margin={{ top: 6, right: 4, bottom: 0, left: -24 }}>
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
-                    axisLine={false}
-                    tickLine={false}
-                    minTickGap={36}
+            <div className="z2f-zones-rows">
+              {hrZones.ranges.map((r) => (
+                <div className="z2f-zone-row" key={r.zone}>
+                  <span
+                    className="z2f-zone-swatch"
+                    style={{ background: `var(--color-zone${r.zone})` }}
+                    aria-hidden="true"
                   />
-                  <YAxis
-                    domain={[0, (dataMax: number) => Math.max(40, Math.ceil((dataMax * 1.25) / 10) * 10)]}
-                    tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'var(--color-surface-hover)',
-                      border: 'none',
-                      borderRadius: 12,
-                      fontSize: 13,
-                      fontVariantNumeric: 'tabular-nums'
-                    }}
-                    formatter={(v, name) =>
-                      name === 'band'
-                        ? [
-                            Array.isArray(v)
-                              ? `${Math.round(Number(v[0]))}–${Math.round(Number(v[1]))}`
-                              : v,
-                            'band'
-                          ]
-                        : [typeof v === 'number' ? Math.round(v) : v, 'index']
-                    }
-                  />
-                  <Area
-                    dataKey="band"
-                    stroke="none"
-                    fill="var(--color-aerobic-dim)"
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    dataKey="index"
-                    stroke="var(--color-aerobic)"
-                    strokeWidth={1.5}
-                    dot={false}
-                    type="monotone"
-                    isAnimationActive={false}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
+                  <span className="z2f-zone-name">
+                    Z{r.zone}
+                    <span className="z2f-zone-intent">{ZONE_INTENT[r.zone]}</span>
+                  </span>
+                  <span className="z2f-zone-range tabular-nums">
+                    {r.fromBpm}–{r.toBpm ?? hrZones.hrMax} bpm
+                  </span>
+                  <div className="z2f-zone-share" aria-hidden="true">
+                    {zoneShares && (
+                      <div
+                        className="z2f-zone-share-fill"
+                        style={{
+                          width: `${zoneShares[r.zone - 1]}%`,
+                          background: `var(--color-zone${r.zone})`
+                        }}
+                      />
+                    )}
+                  </div>
+                  <span className="z2f-zone-pct tabular-nums">
+                    {zoneShares ? `${zoneShares[r.zone - 1]}%` : EM_DASH}
+                  </span>
+                </div>
+              ))}
             </div>
-            <p className="z2f-trend-caption">
-              Line is the index; the shaded band is its honest uncertainty. Direction matters more
-              than the number.
+            <p className="z2f-zones-caption">
+              From max HR {hrZones.hrMax} and your 7-day resting median {hrZones.rhr}. Swim
+              readings are counted ~{Math.abs(configQuery.data?.swim_hr_offset ?? -10)} bpm higher
+              (the wrist reads low in water). Bars: share of your last 90 days of classified
+              training time.
             </p>
           </>
         ) : (
-          <p className="z2f-trend-empty">
-            The trajectory draws here once the nightly model has a few days of history.
+          <p className="z2f-zones-empty">
+            Set your max HR in Settings and the personalized zone ranges appear here.
           </p>
         )}
       </div>

@@ -285,18 +285,18 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── Trajectory card: the score's right-hand neighbor. Index line + confidence
-   band over the fetched 150-day window — same honesty as the ± on the score. ── */
-.z2f-trend {
+/* ── HR zones card: the score's right-hand neighbor. Personalized Karvonen
+   ranges (the ones the nightly job classifies with) + 90-day time share. ── */
+.z2f-zones {
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   min-height: 0;
 }
-.z2f-trend-label {
+.z2f-zones-label {
   font-family: var(--font-body);
   font-size: var(--type-label-size);
   font-weight: var(--type-label-weight);
@@ -304,26 +304,77 @@
   text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
-.z2f-trend-plot {
+.z2f-zones-rows {
   flex: 1;
-  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: var(--space-xs);
 }
-.z2f-trend-caption {
+.z2f-zone-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto minmax(48px, 88px) 44px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.z2f-zone-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.z2f-zone-name {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.z2f-zone-intent {
+  margin-left: var(--space-xs);
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+.z2f-zone-range {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+.z2f-zone-share {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+.z2f-zone-share-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+}
+.z2f-zone-pct {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  text-align: right;
+}
+.z2f-zones-caption {
   margin: 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line-height);
   letter-spacing: var(--type-caption-letter-spacing);
   color: var(--color-text-tertiary);
 }
-.z2f-trend-empty {
+.z2f-zones-empty {
   margin: auto 0;
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
   text-align: center;
 }
-.z2f-trend--skeleton {
+.z2f-zones--skeleton {
   min-height: 240px;
 }
 
