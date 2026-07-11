@@ -54,7 +54,9 @@
 
 .calendar-heatmap-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0, …) lets tracks shrink below content min-width — without it the
+     grid can overflow the card horizontally at narrow widths. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -70,7 +72,7 @@
 
 .calendar-heatmap-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-auto-rows: 1fr;
   gap: 4px;
   /* Absorb the extra height the stretched .calendar-heatmap root gives us, so
@@ -82,11 +84,12 @@
 
 .calendar-heatmap-cell {
   position: relative;
-  /* aspect-ratio is a floor for intrinsic sizing (no stretching parent); once
-     grid-auto-rows: 1fr on a flex: 1 grid gives the row real height, the cell
-     grows to fill it and aspect-ratio no longer constrains it. */
-  aspect-ratio: 1 / 1;
-  min-height: 33px;
+  /* No aspect-ratio: under a stretched parent it feeds the cell's min-content
+     WIDTH (height × ratio), overflowing the card horizontally at certain
+     window sizes. Height comes from grid-auto-rows: 1fr with this floor. */
+  min-height: 44px;
+  min-width: 0;
+  overflow: hidden;
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   border: none;
