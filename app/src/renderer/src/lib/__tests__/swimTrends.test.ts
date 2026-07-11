@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fastest25, monthlyAvgPace } from '../swimTrends'
+import { fastest100, fastest25, monthlyAvgPace } from '../swimTrends'
 import type { SwimSet } from '@shared/types'
 
 function set(overrides: Partial<SwimSet> = {}): SwimSet {
@@ -97,5 +97,41 @@ describe('fastest25', () => {
   it('includes an exact 25m set', () => {
     const sets = [set({ workout_id: 'w1', duration_s: 31.2, distance_m: 25 })]
     expect(fastest25(sets)).toEqual({ seconds: 31.2, workoutId: 'w1' })
+  })
+})
+
+describe('fastest100', () => {
+  it('excludes an 80m set', () => {
+    const sets = [set({ workout_id: 'w1', duration_s: 60, distance_m: 80 })]
+    expect(fastest100(sets)).toBeNull()
+  })
+
+  it('picks a 100m set as the winner among mixed distances', () => {
+    const sets = [
+      set({ workout_id: 'w1', duration_s: 60, distance_m: 80 }),
+      set({ workout_id: 'w2', duration_s: 95, distance_m: 100 })
+    ]
+    expect(fastest100(sets)).toEqual({ paceSecPer100m: 95, workoutId: 'w2' })
+  })
+
+  it('tolerates a 95m set (5m smearing tolerance)', () => {
+    const sets = [set({ workout_id: 'w1', duration_s: 95, distance_m: 95 })]
+    const result = fastest100(sets)
+    expect(result).not.toBeNull()
+    expect(result!.workoutId).toBe('w1')
+    expect(result!.paceSecPer100m).toBeCloseTo((100 * 95) / 95, 5)
+  })
+
+  it('returns null for an empty set list', () => {
+    expect(fastest100([])).toBeNull()
+  })
+
+  it('picks the minimum pace across multiple qualifying sets', () => {
+    const sets = [
+      set({ workout_id: 'w1', duration_s: 100, distance_m: 100 }),
+      set({ workout_id: 'w2', duration_s: 190, distance_m: 200 })
+    ]
+    // w1: 100s/100m, w2: 95s/100m — w2 is faster
+    expect(fastest100(sets)).toEqual({ paceSecPer100m: 95, workoutId: 'w2' })
   })
 })

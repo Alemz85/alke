@@ -33,8 +33,8 @@ import {
   cardioModalityOf,
   type CardioModalityKey
 } from '../lib/cardioModality'
-import { bestEfforts, groupByWorkout, summarizeSession } from '../lib/swimSets'
-import { fastest25, monthlyAvgPace } from '../lib/swimTrends'
+import { groupByWorkout, summarizeSession } from '../lib/swimSets'
+import { fastest100, fastest25, monthlyAvgPace } from '../lib/swimTrends'
 import { weekLabel } from '../lib/weekLabel'
 import { monthSummary } from '../lib/periodSummary'
 import type { SummaryItem } from '../lib/periodSummary'
@@ -638,14 +638,14 @@ function ModalityView({
       }))
   }, [isSwim, swimSets, workouts, timezone])
 
-  // Best efforts across all sessions with set data, dated for the captions.
-  const swimBest = useMemo(() => {
+  // Fastest /100m pace among sets of ≥~100m (see swimTrends.fastest100 — an
+  // 80m set should never win this card), dated for the caption.
+  const swimFastest100 = useMemo(() => {
     if (!isSwim || swimSets.length === 0) return null
-    const dateOf = (id: string): string => {
-      const w = workouts.find((x) => x.id === id)
-      return w ? localDateKey(w.start_at, timezone) : ''
-    }
-    return { ...bestEfforts(groupByWorkout(swimSets)), dateOf }
+    const effort = fastest100(swimSets)
+    if (!effort) return null
+    const w = workouts.find((x) => x.id === effort.workoutId)
+    return { ...effort, date: w ? localDateKey(w.start_at, timezone) : '' }
   }, [isSwim, swimSets, workouts, timezone])
 
   // --- Swim stat area: sessions this week/month, monthly pace trend, fastest efforts ---
@@ -736,13 +736,9 @@ function ModalityView({
           </div>
           <MetricCard
             eyebrow="Swim · fastest /100m"
-            value={swimBest?.fastestSet ? fmtPace100(swimBest.fastestSet.paceSecPer100m) : '—'}
+            value={swimFastest100 ? fmtPace100(swimFastest100.paceSecPer100m) : EM_DASH}
             domain="aerobic"
-            caption={
-              swimBest?.fastestSet
-                ? `${Math.round(swimBest.fastestSet.distanceM)}m set · ${swimBest.dateOf(swimBest.fastestSet.workoutId)}`
-                : 'needs a set of 45m or more'
-            }
+            caption={swimFastest100 ? `100m set · ${swimFastest100.date}` : 'needs a 100m set'}
           />
           <MetricCard
             eyebrow="Swim · fastest 25m"

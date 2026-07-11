@@ -5,7 +5,7 @@
 .zone2-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
+  gap: var(--space-xl);
   margin-top: var(--space-lg);
   border-bottom: 1px solid var(--color-divider-soft);
 }
@@ -15,12 +15,12 @@
   background: transparent;
   border: none;
   color: var(--color-text-tertiary);
-  padding: var(--space-sm) var(--space-xs);
+  padding: var(--space-sm) var(--space-xxs);
   font-family: var(--font-body);
-  font-size: var(--type-button-sm-size);
-  font-weight: var(--type-button-sm-weight);
-  line-height: var(--type-button-sm-line-height);
-  letter-spacing: var(--type-button-sm-letter-spacing);
+  font-size: var(--type-button-md-size);
+  font-weight: var(--type-button-md-weight);
+  line-height: var(--type-button-md-line-height);
+  letter-spacing: var(--type-button-md-letter-spacing);
   min-height: 44px;
   cursor: pointer;
   transition: color var(--motion-hover);

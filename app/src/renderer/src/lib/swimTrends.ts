@@ -59,3 +59,31 @@ export function fastest25(sets: SwimSet[]): Fastest25 | null {
   }
   return best
 }
+
+// A set must be at least this long to count toward "fastest /100m" — 5m below
+// the true 100m mark, tolerating the per-second smearing HAE's distance/time
+// sampling introduces on real 100m reps (e.g. a 99.4m-recorded set that was
+// actually swum as 100m). Shorter sets (e.g. 80m) reward burst pace, not the
+// sustained 100m effort this card means to show.
+const FASTEST_100_MIN_SET_M = 95
+
+export interface Fastest100 {
+  paceSecPer100m: number
+  workoutId: string
+}
+
+/**
+ * Fastest /100m pace among sets of at least ~100m (see FASTEST_100_MIN_SET_M
+ * tolerance). Null when no set qualifies.
+ */
+export function fastest100(sets: SwimSet[]): Fastest100 | null {
+  let best: Fastest100 | null = null
+  for (const s of sets) {
+    if (s.distance_m < FASTEST_100_MIN_SET_M || s.distance_m <= 0) continue
+    const pace = (100 * s.duration_s) / s.distance_m
+    if (!best || pace < best.paceSecPer100m) {
+      best = { paceSecPer100m: pace, workoutId: s.workout_id }
+    }
+  }
+  return best
+}
