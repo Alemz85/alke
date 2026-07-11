@@ -2,13 +2,28 @@ import { useMemo, useState, type ReactElement } from 'react'
 import { TabHeader } from './TabHeader'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
+import { SessionList } from '../components/SessionList'
 import { modalityLabel } from '../components/modalityAccent'
-import { EmptyState, HeroMetric, StatTable } from '../components'
+import { EmptyState, HeroMetric, MetricCard, StatTable } from '../components'
 import type { StatTableRow } from '../components'
 import { useMonthWorkouts, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import { formatDuration, groupWorkoutsByDay, longestWeeklyStreak } from '../hooks/sessionsCompute'
-import { isoWeekKey, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
+import { isoWeekKey, localDateKey, MONTH_NAMES, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
+import { formatWorkoutDuration } from '../lib/calendarDayLabel'
+import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
 import './SessionsView.css'
+
+const EM_DASH = '—'
+
+function fmtTrendPct(pct: number | null): string {
+  if (pct === null) return EM_DASH
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${Math.round(pct)}%`
+}
+
+function fmtPerMonth(n: number): string {
+  return Number.isInteger(n) ? n.toString() : n.toFixed(1)
+}
 
 export function SessionsView(): ReactElement {
   const userConfigQuery = useUserConfig()
@@ -28,6 +43,26 @@ export function SessionsView(): ReactElement {
   const daysByKey = useMemo(
     () => groupWorkoutsByDay(monthWorkouts, timezone),
     [monthWorkouts, timezone]
+  )
+
+  // Combine the year window (365d trailing, covers "this year" stats) with the
+  // currently-viewed month window (covers months outside that trailing year
+  // when the user pages the calendar further back) — deduped by workout id so
+  // an overlapping workout isn't double-counted. Feeds the month/year pill
+  // summaries, the session list, and the drawer lookup for list rows outside
+  // the visible calendar month.
+  const summaryWorkouts = useMemo(() => {
+    const byId = new Map(yearWorkouts.map((w) => [w.id, w]))
+    for (const w of monthWorkouts) byId.set(w.id, w)
+    return Array.from(byId.values())
+  }, [yearWorkouts, monthWorkouts])
+
+  // Drawer needs to resolve a day bucket for ANY session-list row, not just
+  // days within the currently-viewed calendar month — so it looks up against
+  // a bucket map built from the wider summary window.
+  const summaryDaysByKey = useMemo(
+    () => groupWorkoutsByDay(summaryWorkouts, timezone),
+    [summaryWorkouts, timezone]
   )
 
   // --- Hero: sessions this ISO week ---
@@ -72,7 +107,32 @@ export function SessionsView(): ReactElement {
       ]
     : [{ label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }]
 
-  const selectedBucket = selectedDayKey ? daysByKey.get(selectedDayKey) : undefined
+  // --- Month / year pill summaries (lib/periodSummary.ts) ---
+  const summaryItems: SummaryItem[] = useMemo(
+    () =>
+      summaryWorkouts.map((w) => ({
+        dateKey: localDateKey(w.start_at, timezone),
+        durationS: w.duration_s ?? 0,
+        type: w.type
+      })),
+    [summaryWorkouts, timezone]
+  )
+
+  const todayKey = localDateKey(new Date().toISOString(), timezone)
+  const viewedYm = `${viewYear.toString().padStart(4, '0')}-${viewMonth.toString().padStart(2, '0')}`
+
+  const monthSum = useMemo(
+    () => monthSummary(summaryItems, viewedYm, todayKey),
+    [summaryItems, viewedYm, todayKey]
+  )
+  const yearSum = useMemo(
+    () => yearSummary(summaryItems, viewYear),
+    [summaryItems, viewYear]
+  )
+
+  const selectedBucket = selectedDayKey
+    ? (daysByKey.get(selectedDayKey) ?? summaryDaysByKey.get(selectedDayKey))
+    : undefined
   const selectedDateLabel = selectedDayKey
     ? new Date(`${selectedDayKey}T12:00:00Z`).toLocaleDateString('en-US', {
         weekday: 'long',
@@ -101,6 +161,16 @@ export function SessionsView(): ReactElement {
     }
   }
 
+  /** Session-list row click: jump the calendar to that day's month (if needed) and open its drawer. */
+  function handleSelectSessionDay(dateKey: string): void {
+    const [y, m] = dateKey.split('-').map(Number)
+    if (y !== viewYear || m !== viewMonth) {
+      setViewYear(y)
+      setViewMonth(m)
+    }
+    setSelectedDayKey(dateKey)
+  }
+
   return (
     <div className="view">
       <TabHeader eyebrow="Sessions · Adherence" title="Sessions" />
@@ -111,6 +181,32 @@ export function SessionsView(): ReactElement {
         unit={sessionsThisWeek === 1 ? 'session' : 'sessions'}
         domain="sessions"
       />
+
+      <div className="sessions-month-pills">
+        <MetricCard eyebrow={`${MONTH_NAMES[viewMonth - 1]} · Workouts`} value={monthSum.workouts.toString()} />
+        <MetricCard
+          eyebrow={`${MONTH_NAMES[viewMonth - 1]} · Total time`}
+          value={formatWorkoutDuration(monthSum.totalDurationS)}
+        />
+        <MetricCard eyebrow="Gym sessions" value={monthSum.gymSessions.toString()} />
+        <MetricCard eyebrow="Cardio sessions" value={monthSum.cardioSessions.toString()} />
+        <MetricCard
+          eyebrow="Time trend"
+          value={fmtTrendPct(monthSum.timeTrendPct)}
+          domain={
+            monthSum.timeTrendPct === null ? undefined : monthSum.timeTrendPct >= 0 ? 'aerobic' : 'flag'
+          }
+          caption="vs last month"
+        />
+      </div>
+
+      <div className="sessions-year-row">
+        <span className="sessions-year-row-label">{viewYear} · monthly average</span>
+        <span className="sessions-year-row-stats tabular-nums">
+          {fmtPerMonth(yearSum.avgWorkoutsPerMonth)} workouts/mo · {formatWorkoutDuration(yearSum.avgDurationSPerMonth)}/mo
+          · {fmtPerMonth(yearSum.avgGymPerMonth)} gym/mo · {fmtPerMonth(yearSum.avgCardioPerMonth)} cardio/mo
+        </span>
+      </div>
 
       <div className="sessions-grid">
         <div className="sessions-grid-calendar">
@@ -137,6 +233,15 @@ export function SessionsView(): ReactElement {
             <StatTable rows={statRows} />
           </div>
         </div>
+      </div>
+
+      <div className="sessions-list-section">
+        <h3 className="sessions-summary-title">All sessions</h3>
+        <SessionList
+          workouts={summaryWorkouts}
+          timezone={timezone}
+          onSelectDay={handleSelectSessionDay}
+        />
       </div>
 
       {selectedDayKey && selectedBucket && (

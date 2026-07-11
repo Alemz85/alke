@@ -70,11 +70,11 @@
 .calendar-heatmap-cell {
   position: relative;
   aspect-ratio: 1 / 1;
-  min-height: 40px;
+  min-height: 33px;
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   border: none;
-  padding: 6px;
+  padding: 5px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -101,7 +101,7 @@
 
 .calendar-heatmap-daynum {
   font-family: var(--font-body);
-  font-size: var(--type-caption-size);
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-tertiary);
 }
@@ -201,7 +201,7 @@
    on a narrow cell. */
 .calendar-heatmap-daylabel-name {
   max-width: 100%;
-  font-size: 11px;
+  font-size: 9px;
   line-height: 1.25;
   letter-spacing: 0.1px;
   font-weight: 600;
@@ -210,7 +210,7 @@
   text-overflow: ellipsis;
 }
 .calendar-heatmap-daylabel-time {
-  font-size: 10px;
+  font-size: 8px;
   line-height: 1.2;
   opacity: 0.78;
 }

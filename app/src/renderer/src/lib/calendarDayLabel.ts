@@ -52,14 +52,39 @@ export interface CalendarDayLabel {
   duration: string
 }
 
+/** Does `type` look like a gym workout (strength/core)? Mirrors lib/periodSummary.ts's isGymType. */
+function isGymType(type: string | null | undefined): boolean {
+  return !!type && /strength|core/.test(type.toLowerCase())
+}
+
+/** Does `type` look like cardio (anything but gym/other)? Mirrors lib/periodSummary.ts's isCardioType. */
+function isCardioType(type: string | null | undefined): boolean {
+  if (!type) return false
+  const t = type.toLowerCase()
+  return !/strength|core|other/.test(t)
+}
+
 /**
  * The bottom-corner calendar label for a day's workouts: the LONGEST workout's
  * display name over the day's TOTAL duration. Returns null for an empty/absent
  * day (no label rendered). For a multi-workout day the longest activity names
  * the cell and the total covers the day — compact by design for a small cell.
+ *
+ * Exception: when the day mixes at least one gym workout (strength/core) AND
+ * at least one cardio workout (anything but gym/other), the name becomes
+ * "Gym + Cardio" instead of just the longest activity's name — a mixed day
+ * deserves its own label rather than hiding one half of the work.
  */
 export function calendarDayLabel(bucket: DayBucket | undefined | null): CalendarDayLabel | null {
   if (!bucket || bucket.workouts.length === 0) return null
+  const hasGym = bucket.workouts.some((w) => isGymType(w.type))
+  const hasCardio = bucket.workouts.some((w) => isCardioType(w.type))
+  if (hasGym && hasCardio) {
+    return {
+      name: 'Gym + Cardio',
+      duration: formatWorkoutDuration(bucket.totalDurationS)
+    }
+  }
   const longest = bucket.workouts.reduce((best: Workout, w: Workout) =>
     (w.duration_s ?? 0) > (best.duration_s ?? 0) ? w : best
   )

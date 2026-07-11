@@ -81,17 +81,48 @@ describe('calendarDayLabel', () => {
   })
 
   it('names a multi-workout day after the LONGEST activity, with the day total', () => {
-    // Swim 30m + Gym 60m → longest is Gym, total 1h 30m.
+    // Swim 30m + Cycling 60m (both cardio, no gym) → longest is Cycling, total 1h 30m.
     expect(
-      calendarDayLabel(
-        bucket(workout('pool_swim', 30 * 60), workout('traditional_strength_training', 60 * 60))
-      )
-    ).toEqual({ name: 'Gym', duration: '1h 30m' })
+      calendarDayLabel(bucket(workout('pool_swim', 30 * 60), workout('indoor_cycling', 60 * 60)))
+    ).toEqual({ name: 'Cycling', duration: '1h 30m' })
   })
 
   it('returns null for an empty or absent day', () => {
     expect(calendarDayLabel(undefined)).toBeNull()
     expect(calendarDayLabel(null)).toBeNull()
     expect(calendarDayLabel(bucket())).toBeNull()
+  })
+
+  it('labels a mixed gym + cardio day "Gym + Cardio" with the day total, regardless of which is longer', () => {
+    // Swim 30m + Gym 60m -> mixed, even though gym is longer.
+    expect(
+      calendarDayLabel(
+        bucket(workout('pool_swim', 30 * 60), workout('traditional_strength_training', 60 * 60))
+      )
+    ).toEqual({ name: 'Gym + Cardio', duration: '1h 30m' })
+    // Gym 20m + Swim 50m -> mixed, even though cardio is longer.
+    expect(
+      calendarDayLabel(
+        bucket(workout('core_training', 20 * 60), workout('pool_swim', 50 * 60))
+      )
+    ).toEqual({ name: 'Gym + Cardio', duration: '1h 10m' })
+  })
+
+  it('does not label "Gym + Cardio" for gym-only or cardio-only days', () => {
+    expect(calendarDayLabel(bucket(workout('traditional_strength_training', 40 * 60)))).toEqual({
+      name: 'Gym',
+      duration: '40m'
+    })
+    expect(
+      calendarDayLabel(bucket(workout('pool_swim', 20 * 60), workout('indoor_cycling', 20 * 60)))
+    ).not.toEqual(expect.objectContaining({ name: 'Gym + Cardio' }))
+  })
+
+  it('does not label "Gym + Cardio" when the second activity is "other" (neither gym nor cardio)', () => {
+    expect(
+      calendarDayLabel(
+        bucket(workout('traditional_strength_training', 40 * 60), workout('other', 10 * 60))
+      )
+    ).not.toEqual(expect.objectContaining({ name: 'Gym + Cardio' }))
   })
 })

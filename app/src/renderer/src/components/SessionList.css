@@ -1,0 +1,107 @@
+.session-list {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.session-list-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-list-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr 0.8fr 0.8fr 0.6fr;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-xxs);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-divider-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.session-list-row:last-child {
+  border-bottom: none;
+}
+
+.session-list-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.session-list-cell {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: var(--type-body-sm-weight);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-list-cell--datetime {
+  color: var(--color-text-secondary);
+}
+
+.session-list-cell--duration,
+.session-list-cell--distance,
+.session-list-cell--trimp {
+  text-align: right;
+}
+
+.session-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding-top: var(--space-xs);
+}
+
+.session-list-page-btn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  height: 32px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  transition: background var(--motion-hover);
+}
+
+.session-list-page-btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.session-list-page-btn:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.session-list-page-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 700px) {
+  .session-list-row {
+    grid-template-columns: 1.6fr 1.2fr 0.8fr;
+  }
+  .session-list-cell--distance,
+  .session-list-cell--trimp {
+    display: none;
+  }
+}
