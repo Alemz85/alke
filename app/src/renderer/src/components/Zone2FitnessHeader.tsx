@@ -310,22 +310,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     }
   }, [configQuery.data, restingQuery.data, today])
 
-  // Share of classified training time per zone, last 90 days.
-  const zoneShares = useMemo(() => {
-    const cutoff = Date.now() - 90 * 86_400_000
-    const totals = [0, 0, 0, 0, 0]
-    for (const w of yearWorkoutsQuery.data ?? []) {
-      if (new Date(w.start_at).getTime() < cutoff) continue
-      const tiz = w.computed?.time_in_zones as Record<string, unknown> | null | undefined
-      if (!tiz) continue
-      for (let z = 1; z <= 5; z++) {
-        const v = tiz[`z${z}`]
-        if (typeof v === 'number') totals[z - 1] += v
-      }
-    }
-    const sum = totals.reduce((a, b) => a + b, 0)
-    return sum > 0 ? totals.map((t) => Math.round((t / sum) * 100)) : null
-  }, [yearWorkoutsQuery.data])
 
   function handlePrevMonth(): void {
     if (viewMonth === 1) {
@@ -526,28 +510,14 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
                   <span className="z2f-zone-range tabular-nums">
                     {r.fromBpm}–{r.toBpm ?? hrZones.hrMax} bpm
                   </span>
-                  <div className="z2f-zone-share" aria-hidden="true">
-                    {zoneShares && (
-                      <div
-                        className="z2f-zone-share-fill"
-                        style={{
-                          width: `${zoneShares[r.zone - 1]}%`,
-                          background: `var(--color-zone${r.zone})`
-                        }}
-                      />
-                    )}
-                  </div>
-                  <span className="z2f-zone-pct tabular-nums">
-                    {zoneShares ? `${zoneShares[r.zone - 1]}%` : EM_DASH}
-                  </span>
                 </div>
               ))}
             </div>
             <p className="z2f-zones-caption">
-              From max HR {hrZones.hrMax} and your 7-day resting median {hrZones.rhr}. Swim
-              readings are counted ~{Math.abs(configQuery.data?.swim_hr_offset ?? -10)} bpm higher
-              (the wrist reads low in water). Bars: share of your last 90 days of classified
-              training time.
+              From max HR {hrZones.hrMax} and your 7-day resting median {hrZones.rhr} (Karvonen —
+              the same math the nightly job classifies with). Swim readings are counted ~
+              {Math.abs(configQuery.data?.swim_hr_offset ?? -10)} bpm higher (the wrist reads low
+              in water).
             </p>
           </>
         ) : (

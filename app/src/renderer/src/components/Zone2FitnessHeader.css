@@ -313,7 +313,7 @@
 }
 .z2f-zone-row {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto minmax(48px, 88px) 44px;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-sm);
 }
@@ -340,22 +340,6 @@
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-secondary);
-}
-.z2f-zone-share {
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-surface);
-  overflow: hidden;
-}
-.z2f-zone-share-fill {
-  height: 100%;
-  border-radius: var(--radius-full);
-}
-.z2f-zone-pct {
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  color: var(--color-text-tertiary);
-  text-align: right;
 }
 .z2f-zones-caption {
   margin: 0;
