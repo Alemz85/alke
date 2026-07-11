@@ -22,7 +22,7 @@ TZ = ZoneInfo("Europe/Berlin")
 NOW = datetime(2026, 7, 11, 3, 30, tzinfo=timezone.utc)
 
 
-def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True):
+def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True, steps_per_day=8000):
     """400-day synthetic history. Toggles let the level-fusion tests isolate one
     signal at a time: with_ef=False drops ride EF (no distance in practice),
     with_rhr=False drops resting-HR data, with_vo2=False drops watch VO2max."""
@@ -57,6 +57,7 @@ def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True):
         {"date": d.isoformat(),
          "resting_hr": (58 if i % 2 == 0 else None) if with_rhr else None,
          "hrv_sdnn_ms": 45.0,
+         "steps": steps_per_day,
          "vo2max": 42.0 if (with_vo2 and i in (50, 200)) else None}
         for i, d in enumerate(days)
     ]
@@ -145,6 +146,36 @@ def test_run_zone2_fitness_wiring(monkeypatch, capsys):
     assert rows[-1]["flags"] == []                           # no maintenance flag when building
 
 
+def test_neat_activity_floor_raises_the_durable_floor(monkeypatch):
+    # v4.2: sustained daily steps raise the durable FLOOR (maintenance, not build).
+    from metrics import models as _m
+
+    active = _run_synthetic(monkeypatch, steps_per_day=9000)
+    # NEAT bonus present in provenance once the steps EWMA has seeded.
+    assert active[-1]["contributing"]["neat"] > 0
+    # The stored floor exceeds the training-age-only floor → steps genuinely raised it.
+    b_last = active[-1]["base_accum_b"]
+    age_only_floor_d = _m.durable_score_from_percentile(_m.durable_floor_score(b_last))
+    assert active[-1]["floor_score"] > age_only_floor_d + 1.0
+
+
+def test_neat_floor_is_zero_when_sedentary(monkeypatch):
+    # Below the sedentary step threshold → no floor bonus (steps don't fabricate base).
+    sedentary = _run_synthetic(monkeypatch, steps_per_day=1500)
+    assert all(r["contributing"]["neat"] == 0.0 for r in sedentary)
+
+
+def test_neat_only_enters_the_floor_never_the_build(monkeypatch):
+    # Steps must NOT feed w(t): sharpness/durable during the training block are
+    # identical whether steps are high or low — only the FLOOR differs.
+    active = _run_synthetic(monkeypatch, steps_per_day=12000)
+    sedentary = _run_synthetic(monkeypatch, steps_per_day=1000)
+    # Mid-block sharpness (fast layer, pure load) is unaffected by steps.
+    assert active[250]["sharpness"] == pytest.approx(sedentary[250]["sharpness"], abs=1e-9)
+    # But the detrained-end floor is higher for the active lifestyle.
+    assert active[-1]["floor_score"] > sedentary[-1]["floor_score"]
+
+
 def test_uncapped_horizon_nulls_the_search_cap():
     # A horizon at the bisection search cap is "no meaningful drop within the
     # window" — a state, not a calendar date. Stored NULL (renderer omits the
@@ -182,7 +213,9 @@ def test_no_ef_no_vo2_level_is_the_b_prior(monkeypatch):
     # (b) With no trusted aerobic signal the fusion IS the B-prior: the level
     # calibrates to C_D·B — the sparse Zone-2 trainer reads LOW (v3 pt1), from
     # their own load history, not from confounded RHR (which is present here!).
-    rows = _run_synthetic(monkeypatch, with_ef=False, with_vo2=False)
+    # Sedentary steps here so the NEAT floor (tested separately) doesn't hold the
+    # detrained-end base up and confound this level/decay check.
+    rows = _run_synthetic(monkeypatch, with_ef=False, with_vo2=False, steps_per_day=1500)
     c_d = 70.0
     b_today = rows[-1]["base_accum_b"]
     calib = c_d * b_today

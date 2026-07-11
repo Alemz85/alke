@@ -459,6 +459,45 @@ def durable_floor_score(
     return f_max * 100.0 * (bc ** p)
 
 
+# ── v4.2 NEAT / ambient-activity floor (docs v4.2). Casual daily movement
+# (walking around, being on your feet) is a WEAK Zone-2 BUILD stimulus — a stroll
+# stays in Zone 1, so it must NOT add to w(t) — but a REAL maintenance one: high
+# non-exercise activity slows detraining (plasma volume, capillary density and
+# resting HR hold up better than in true sedentary rest) [Levine NEAT reviews;
+# sedentary-vs-active detraining literature]. So daily STEPS raise the durable
+# FLOOR — an active-lifestyle stretch decays toward a higher floor than sitting
+# still — without ever counting as building. Modest and saturating by design.
+Z2_NEAT_STEPS_SEDENTARY = 2500.0  # [PRIOR] ≤ this ≈ truly inactive → no floor bonus
+Z2_NEAT_STEPS_SCALE = 5000.0      # [PRIOR] saturation scale (steps above sedentary)
+Z2_NEAT_FLOOR_MAX_PCT = 8.0       # [PRIOR] max floor bonus, % of C_D (≈5.6 pts) at high NEAT
+Z2_NEAT_STEPS_TAU_DAYS = 21.0     # [PRIOR] EWMA window — SUSTAINED activity, not one big day
+
+
+def neat_floor_score(
+    steps_ewma: float,
+    sedentary: float = Z2_NEAT_STEPS_SEDENTARY,
+    scale: float = Z2_NEAT_STEPS_SCALE,
+    max_pct: float = Z2_NEAT_FLOOR_MAX_PCT,
+) -> float:
+    """Ambient-activity floor bonus in [0, max_pct] SCORE units (% of C_D), a
+    saturating function of the user's SMOOTHED daily steps above a sedentary
+    baseline (docs v4.2):
+
+        neat = max_pct · (1 − exp(−(steps_ewma − sedentary) / scale))   [steps > sedentary]
+             = 0                                                         [otherwise]
+
+    It feeds the FLOOR (added to durable_floor_score(B)), NOT w(t) — NEAT maintains,
+    it does not build. Continuous and data-derived from the user's own step count;
+    the anchors (sedentary threshold, scale, cap) are marked literature priors,
+    conservatively set since NEAT's effect on detraining is real but modest.
+    `steps_ewma` is a ~21-day CAUSAL EWMA (sustained activity, not a single big
+    day). Monotone-increasing, saturating at max_pct."""
+    s = float(steps_ewma)
+    if s <= sedentary or scale <= 0:
+        return 0.0
+    return max_pct * (1.0 - math.exp(-(s - sedentary) / scale))
+
+
 # ---------------------------------------------------------------------------
 # v3 — x-intercept elevation with PERSONAL baselines (docs v3 pt2 + pt5).
 # Each fitness signal is scored as its ELEVATION above the USER'S OWN detrained

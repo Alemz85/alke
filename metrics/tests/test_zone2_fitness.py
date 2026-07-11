@@ -8,6 +8,8 @@ import math
 import pytest
 
 from metrics.models import (
+    Z2_NEAT_FLOOR_MAX_PCT,
+    Z2_NEAT_STEPS_SEDENTARY,
     Z2_BUILD_FREQ_BEGINNER,
     Z2_BUILD_FREQ_SLOPE,
     Z2_BUILD_INTERVAL_FLOOR_DAYS,
@@ -37,6 +39,7 @@ from metrics.models import (
     fast_score_from_load,
     fuse_inverse_variance,
     is_aerobic_modality,
+    neat_floor_score,
     personal_baseline_weight,
     project_index,
     signal_elevation_score,
@@ -106,6 +109,28 @@ def test_durable_floor_score():
 def test_durable_floor_score_p_shape_no_early_floor():
     # p=1.5 keeps the floor small until real base accrues.
     assert durable_floor_score(0.1) < 2.0
+
+
+# ---------------------------------------------------------------------------
+# v4.2 — NEAT / ambient-activity floor: daily steps raise the durable FLOOR
+# (maintenance), never w(t) (build). Saturating in smoothed steps.
+# ---------------------------------------------------------------------------
+def test_neat_floor_zero_at_or_below_sedentary():
+    assert neat_floor_score(0.0) == 0.0
+    assert neat_floor_score(Z2_NEAT_STEPS_SEDENTARY) == 0.0
+    assert neat_floor_score(Z2_NEAT_STEPS_SEDENTARY - 500) == 0.0
+
+
+def test_neat_floor_saturates_and_is_monotone():
+    # Hand-check the exact value at a ~4500-step average:
+    # 8·(1−e^(−(4500−2500)/5000)) ≈ 2.64 pts of C_D.
+    expected = Z2_NEAT_FLOOR_MAX_PCT * (1 - math.exp(-(4500 - Z2_NEAT_STEPS_SEDENTARY) / 5000.0))
+    assert neat_floor_score(4500) == pytest.approx(expected, abs=1e-6)
+    # Monotone increasing, and it never exceeds the cap even at extreme step counts.
+    xs = [neat_floor_score(s) for s in (3000, 5000, 8000, 12000, 20000, 50000)]
+    assert all(b > a for a, b in zip(xs, xs[1:-1]))  # strictly rising until it saturates
+    assert all(x <= Z2_NEAT_FLOOR_MAX_PCT for x in xs)
+    assert neat_floor_score(50000) == pytest.approx(Z2_NEAT_FLOOR_MAX_PCT, abs=0.01)
 
 
 # ---------------------------------------------------------------------------

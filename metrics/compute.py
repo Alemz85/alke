@@ -486,8 +486,32 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         iso = d.isocalendar()
         b_t.append(b_by_week[week_index[(iso.year, iso.week)]])
     tau_slow_t = [models.tau_slow(b, tau_min=tau_slow_min, tau_max=tau_slow_max) for b in b_t]
-    # floor as a [0,100] share; the D-space floor is the same share of C_D.
-    floor_pct_t = [models.durable_floor_score(b, f_max=f_max, p=floor_p) for b in b_t]
+
+    # ---- v4.2 NEAT floor: a per-day CAUSAL EWMA of daily steps raises the durable
+    # FLOOR (ambient activity MAINTAINS the base, it doesn't build it — so it feeds
+    # the floor, never w(t)). Missing-steps days carry the EWMA forward rather than
+    # faking a sedentary day; the EWMA seeds at the first real reading (no 0-ramp). ----
+    steps_by_date = {
+        date.fromisoformat(r["date"]): float(r["steps"])
+        for r in daily_metrics if r.get("steps") is not None
+    }
+    alpha_neat = 1.0 - math.exp(-1.0 / models.Z2_NEAT_STEPS_TAU_DAYS)
+    steps_ewma = 0.0
+    seeded = False
+    neat_pct_t: list[float] = []
+    for d in days:
+        s = steps_by_date.get(d)
+        if s is not None:
+            steps_ewma = s if not seeded else steps_ewma + alpha_neat * (s - steps_ewma)
+            seeded = True
+        neat_pct_t.append(models.neat_floor_score(steps_ewma) if seeded else 0.0)
+
+    # floor as a [0,100] share = training-age floor (from B) + NEAT activity floor,
+    # capped at 100; the D-space floor is the same share of C_D.
+    floor_pct_t = [
+        min(100.0, models.durable_floor_score(b, f_max=f_max, p=floor_p) + neat)
+        for b, neat in zip(b_t, neat_pct_t)
+    ]
     floor_d_t = [
         models.durable_score_from_percentile(fp, durable_ceiling=c_durable) for fp in floor_pct_t
     ]
@@ -831,6 +855,9 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                     "swim_ef": 0.0,  # WITHHELD (technique confound, docs §6)
                     "hrv": 0.0,      # weak corroborator; not in the durable calibration
                     "load": 1.0 if load_moved else 0.0,
+                    # NEAT floor bonus this day (% of C_D added to the durable floor
+                    # from smoothed daily steps) — maintenance, not build (v4.2).
+                    "neat": round(neat_pct_t[i], 2),
                 },
                 "stage": stage,
                 "maintenance_met": met,
@@ -857,7 +884,8 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
 
     print(
         f"computed_zone2_fitness: {len(rows)} rows "
-        f"(B={b_t[-1]:.2f}, τ_slow={tau_slow_t[-1]:.0f}d, calib_load={calib_load:.1f}, "
+        f"(B={b_t[-1]:.2f}, τ_slow={tau_slow_t[-1]:.0f}d, floor={floor_d_t[-1]:.1f} "
+        f"(neat +{neat_pct_t[-1]:.1f}%), calib_load={calib_load:.1f}, "
         f"calib_score={f'{calib_score:.1f}' if calib_score is not None else 'none'}, "
         f"conf={last['confidence']:.2f}, eases={_fmt_days(last['warn_after_days'])}, "
         f"maintain={_fmt_days(last['maintain_horizon_days'])}, build={last['build_interval_days']:.1f}d, "
