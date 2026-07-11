@@ -3,11 +3,13 @@ import type { SwimSet, WorkoutHrSample } from '@shared/types'
 import {
   bestEfforts,
   clusterStructure,
+  dpsMPerCycle,
   groupByWorkout,
   paceSecPer100m,
   restRecoveryBpm,
   sessionFadePct,
   setAvgHr,
+  strokeRatePerMin,
   summarizeSession,
   swolf25
 } from '../swimSets'
@@ -87,6 +89,26 @@ describe('restRecoveryBpm', () => {
     expect(
       restRecoveryBpm(set({ set_index: 1, rest_after_s: null }), hrTrace([{ fromS: 0, toS: 90, bpm: 130 }]))
     ).toBeNull()
+  })
+})
+
+describe('stroke mechanics', () => {
+  it('derives distance per cycle and stroke rate per set', () => {
+    const s = set({ set_index: 1, distance_m: 50, strokes: 23, duration_s: 69 })
+    expect(dpsMPerCycle(s)).toBeCloseTo(50 / 23)
+    expect(strokeRatePerMin(s)).toBeCloseTo(20) // 23 / (69/60)
+  })
+  it('returns null on zero strokes / zero duration', () => {
+    expect(dpsMPerCycle(set({ set_index: 1, strokes: 0 }))).toBeNull()
+    expect(strokeRatePerMin(set({ set_index: 1, duration_s: 0 }))).toBeNull()
+  })
+  it('aggregates into the session summary from totals', () => {
+    const summary = summarizeSession([
+      set({ set_index: 1, distance_m: 50, strokes: 20, duration_s: 60 }),
+      set({ set_index: 2, distance_m: 50, strokes: 30, duration_s: 60 })
+    ])
+    expect(summary.dpsMPerCycle).toBeCloseTo(2) // 100m / 50 cycles
+    expect(summary.strokeRatePerMin).toBeCloseTo(25) // 50 cycles / 2 min
   })
 })
 

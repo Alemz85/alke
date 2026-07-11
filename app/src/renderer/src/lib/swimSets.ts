@@ -23,6 +23,21 @@ export function swolf25(set: SwimSet): number | null {
   return (set.duration_s + 2 * set.strokes) / (set.distance_m / 25)
 }
 
+/**
+ * Distance per stroke cycle in meters (strokes are stored as watch-arm
+ * cycles, which IS the DPS convention). Longer = better technique/glide.
+ */
+export function dpsMPerCycle(set: SwimSet): number | null {
+  if (set.strokes <= 0) return null
+  return set.distance_m / set.strokes
+}
+
+/** Stroke rate in cycles per minute of swim time (rests excluded). */
+export function strokeRatePerMin(set: SwimSet): number | null {
+  if (set.duration_s <= 0) return null
+  return set.strokes / (set.duration_s / 60)
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null
   const sorted = [...values].sort((a, b) => a - b)
@@ -71,11 +86,14 @@ export interface SwimSessionSummary {
   medianRestS: number | null
   fadePct: number | null
   structure: string
+  dpsMPerCycle: number | null // total distance / total cycles
+  strokeRatePerMin: number | null // total cycles / total swim minutes
 }
 
 export function summarizeSession(sets: SwimSet[]): SwimSessionSummary {
   const distance = sets.reduce((sum, s) => sum + s.distance_m, 0)
   const duration = sets.reduce((sum, s) => sum + s.duration_s, 0)
+  const strokes = sets.reduce((sum, s) => sum + s.strokes, 0)
   return {
     nSets: sets.length,
     setDistanceM: distance,
@@ -85,7 +103,9 @@ export function summarizeSession(sets: SwimSet[]): SwimSessionSummary {
       sets.map((s) => s.rest_after_s).filter((v): v is number => v !== null)
     ),
     fadePct: sessionFadePct(sets),
-    structure: clusterStructure(sets)
+    structure: clusterStructure(sets),
+    dpsMPerCycle: strokes > 0 ? distance / strokes : null,
+    strokeRatePerMin: duration > 0 ? strokes / (duration / 60) : null
   }
 }
 

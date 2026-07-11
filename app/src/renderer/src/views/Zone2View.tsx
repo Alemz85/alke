@@ -161,6 +161,59 @@ function EfScatter({ data }: { data: EfPoint[] }): ReactElement {
   )
 }
 
+/** Dual-axis session trend: DPS (m/cycle, left) and stroke rate (cycles/min, right). */
+function StrokeMechanicsChart({
+  data
+}: {
+  data: { date: string; dpsMPerCycle: number | null; strokeRatePerMin: number | null }[]
+}): ReactElement {
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ComposedChart data={data} margin={{ top: 8, right: -8, left: -16, bottom: 0 }}>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis
+          yAxisId="dps"
+          domain={['auto', 'auto']}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={(v: number) => v.toFixed(1)}
+        />
+        <YAxis
+          yAxisId="rate"
+          orientation="right"
+          domain={['auto', 'auto']}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={(v: number) => v.toFixed(1)}
+        />
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(v, name) =>
+            typeof v === 'number'
+              ? name === 'dpsMPerCycle'
+                ? [`${v.toFixed(2)} m/cycle`, 'DPS']
+                : [`${v.toFixed(1)} cycles/min`, 'stroke rate']
+              : v
+          }
+        />
+        <Line yAxisId="dps" dataKey="dpsMPerCycle" stroke={AEROBIC} strokeWidth={1.5} dot type="monotone" />
+        <Line
+          yAxisId="rate"
+          dataKey="strokeRatePerMin"
+          stroke={TERTIARY}
+          strokeWidth={1.5}
+          strokeDasharray="4 4"
+          dot={false}
+          type="monotone"
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
 interface SwimTrendChartProps {
   data: { date: string; [k: string]: unknown }[]
   dataKey: string
@@ -639,6 +692,20 @@ function ModalityView({
                   <SwimTrendChart data={swimSessionRows} dataKey="medianSwolf25" format={(v) => v.toFixed(1)} />
                   <p className="zone2-caption">
                     Median (time + both-hands strokes) per 25m — freestyle assumption, lower is better.
+                  </p>
+                </>
+              )}
+            </ChartCard>
+
+            <ChartCard title="Stroke mechanics — swims" span={12}>
+              {swimSessionRows.length === 0 ? (
+                <EmptyState message="No swim set data yet." />
+              ) : (
+                <>
+                  <StrokeMechanicsChart data={swimSessionRows} />
+                  <p className="zone2-caption">
+                    Distance per stroke cycle (teal, left) vs stroke rate (gray, right). Longer glide at a
+                    steady rate = technique improving; rate creeping up to hold pace = fighting the water.
                   </p>
                 </>
               )}

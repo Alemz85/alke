@@ -303,7 +303,7 @@ function SwimSetsSection({
                 marginRight: s.rest_after_s ? `${(s.rest_after_s / maxRest) * 14 + 2}px` : 0,
                 background: `color-mix(in srgb, var(--color-aerobic) ${Math.round(35 + speed * 65)}%, transparent)`
               }}
-              title={`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)}`}
+              title={`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)} (${fmtPace(pace)} /100m)`}
             />
           )
         })}
