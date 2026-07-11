@@ -820,3 +820,119 @@ Deno.test("mergeDailyMetric: equal-duration incoming sleep refreshes the group",
   const merged = mergeDailyMetric(existing, incoming);
   assertEquals(merged.sleep_stages, refreshed.sleep_stages);
 });
+
+// ---------------------------------------------------------------------------
+// Swim series -> samples + set detection
+// ---------------------------------------------------------------------------
+
+/** Builds per-second swim series entries starting at the given offset. */
+function swimSeries(
+  startIso: string, // e.g. "2026-07-11 17:00:09 +0200"
+  segments: { fromS: number; seconds: number; mPerS?: number; strokesPerS?: number }[],
+): { distance: unknown[]; stroke: unknown[] } {
+  const base = new Date(startIso.replace(" ", "T").replace(" +", "+")).getTime();
+  const stamp = (offset: number): string => {
+    const d = new Date(base + offset * 1000);
+    const p = (n: number): string => String(n).padStart(2, "0");
+    // Series timestamps arrive in local time +0200 in fixtures; emit UTC with +0000.
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+      `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} +0000`;
+  };
+  const distance: unknown[] = [];
+  const stroke: unknown[] = [];
+  for (const seg of segments) {
+    for (let i = 0; i < seg.seconds; i++) {
+      distance.push({ date: stamp(seg.fromS + i), qty: seg.mPerS ?? 0.9, units: "m" });
+      stroke.push({ date: stamp(seg.fromS + i), qty: seg.strokesPerS ?? 0.4, units: "count" });
+    }
+  }
+  return { distance, stroke };
+}
+
+function swimWorkoutFixture(series: { distance: unknown[]; stroke: unknown[] }) {
+  return {
+    data: {
+      workouts: [
+        {
+          id: "SWIM-0000-0000-0000-000000000001",
+          name: "Pool Swim",
+          start: "2026-07-11 17:00:00 +0200",
+          end: "2026-07-11 17:45:00 +0200",
+          distance: { qty: 1.0, units: "km" },
+          swimDistance: series.distance,
+          swimStroke: series.stroke,
+        },
+      ],
+      metrics: [],
+    },
+  };
+}
+
+Deno.test("parses swim series into per-second samples with offsets from workout start", () => {
+  const series = swimSeries("2026-07-11 17:23:53 +0200", [{ fromS: 9, seconds: 3 }]);
+  const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
+  assertEquals(workouts[0].swimSamples, [
+    { offset_s: 9, distance_m: 0.9, strokes: 0.4 },
+    { offset_s: 10, distance_m: 0.9, strokes: 0.4 },
+    { offset_s: 11, distance_m: 0.9, strokes: 0.4 },
+  ]);
+});
+
+Deno.test("splits sets on gaps > 10s and reports rest_after_s; last set has null rest", () => {
+  // Two 60s blocks 40s apart: set 1 [9..68], rest 40s, set 2 [109..168].
+  const series = swimSeries("2026-07-11 17:00:00 +0200", [
+    { fromS: 9, seconds: 60 },
+    { fromS: 109, seconds: 60 },
+  ]);
+  const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
+  assertEquals(workouts[0].swimSets.length, 2);
+  const [s1, s2] = workouts[0].swimSets;
+  assertEquals(s1.set_index, 1);
+  assertEquals(s1.start_offset_s, 9);
+  assertEquals(s1.duration_s, 60);
+  assertAlmostEquals(s1.distance_m, 54); // 60 × 0.9 (binary FP sum, not exact)
+  assertAlmostEquals(s1.strokes, 24); // 60 × 0.4
+  assertEquals(s1.rest_after_s, 40); // 109 - (68 + 1)
+  assertEquals(s2.set_index, 2);
+  assertEquals(s2.rest_after_s, null);
+});
+
+Deno.test("keeps turn jitter (gaps <= 10s) inside one set", () => {
+  // 30s + 4s hole + 30s -> ONE set spanning [0..63].
+  const series = swimSeries("2026-07-11 17:00:00 +0200", [
+    { fromS: 0, seconds: 30 },
+    { fromS: 34, seconds: 30 },
+  ]);
+  const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
+  assertEquals(workouts[0].swimSets.length, 1);
+  assertEquals(workouts[0].swimSets[0].duration_s, 64);
+  assertAlmostEquals(workouts[0].swimSets[0].distance_m, 54); // 60 × 0.9 (binary FP sum, not exact)
+});
+
+Deno.test("drops sub-10m artifact blocks; rest spans across the dropped block", () => {
+  // 60s set, then a 5s blip (4.5m < 10m) mid-rest, then a 60s set.
+  const series = swimSeries("2026-07-11 17:00:00 +0200", [
+    { fromS: 0, seconds: 60 },
+    { fromS: 90, seconds: 5 },
+    { fromS: 130, seconds: 60 },
+  ]);
+  const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
+  const sets = workouts[0].swimSets;
+  assertEquals(sets.length, 2);
+  assertEquals(sets[0].rest_after_s, 70); // 130 - (59 + 1): blip is not a set
+  assertEquals(sets[1].set_index, 2);
+});
+
+Deno.test("swim series are stripped from raw and workouts without series get empty swim fields", () => {
+  const series = swimSeries("2026-07-11 17:23:53 +0200", [{ fromS: 0, seconds: 60 }]);
+  const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
+  assertEquals("swimDistance" in workouts[0].raw, false);
+  assertEquals("swimStroke" in workouts[0].raw, false);
+  const stripped = workouts[0].raw._stripped as Record<string, number>;
+  assertEquals(stripped.swimDistance, 60);
+  assertEquals(stripped.swimStroke, 60);
+
+  const { workouts: plain } = parseIngestPayload(workoutsExportFixture);
+  assertEquals(plain[0].swimSamples, []);
+  assertEquals(plain[0].swimSets, []);
+});

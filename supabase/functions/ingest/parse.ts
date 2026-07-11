@@ -10,6 +10,21 @@ export interface NormalizedHrSample {
   bpm: number;
 }
 
+export interface NormalizedSwimSample {
+  offset_s: number;
+  distance_m: number;
+  strokes: number;
+}
+
+export interface NormalizedSwimSet {
+  set_index: number; // 1-based, chronological
+  start_offset_s: number;
+  duration_s: number;
+  distance_m: number;
+  strokes: number;
+  rest_after_s: number | null; // null for the last set
+}
+
 export interface NormalizedWorkout {
   external_id: string;
   type: string | null;
@@ -23,6 +38,8 @@ export interface NormalizedWorkout {
   source: string;
   raw: Record<string, unknown>;
   hrSamples: NormalizedHrSample[];
+  swimSamples: NormalizedSwimSample[];
+  swimSets: NormalizedSwimSet[];
 }
 
 export interface NormalizedDailyMetric {
@@ -81,13 +98,15 @@ const FIELD_MAP = {
     maxHr: "maxHeartRate", // summary field; preferred over sample-derived max
     hrSeries: "heartRateData",
     hrRecoverySeries: "heartRateRecovery",
+    swimDistanceSeries: "swimDistance", // per-second meters (HAE smears per-length samples)
+    swimStrokeSeries: "swimStroke", // per-second watch-arm strokes
     route: "route", // GPS trace: [{latitude, longitude, altitude, timestamp, ...}]
   },
   // Bulky per-sample series always stripped from workouts.raw (already
   // preserved verbatim in raw_payloads, and the HR series is normalized
   // into workout_hr_samples). Route is stripped separately (see
   // routeStartFields) so its first point can be summarized first.
-  workoutRawStripKeys: ["heartRateData", "heartRateRecovery"],
+  workoutRawStripKeys: ["heartRateData", "heartRateRecovery", "swimDistance", "swimStroke"],
   // Fields copied from the first route point into raw._route_start.
   routeStartFields: ["latitude", "longitude", "timestamp"],
   // Per-sample HR value candidates, in preference order.
@@ -123,6 +142,13 @@ const FIELD_MAP = {
 // top-level array longer than this is stripped from workouts.raw and noted
 // in raw._stripped; the full data stays recoverable from raw_payloads.
 const MAX_RAW_ARRAY_ENTRIES = 50;
+
+// Swim set detection: HAE swim series sample once per second while swimming
+// and not at all while resting. Gaps ≤ SWIM_REST_SPLIT_S are turn jitter
+// (observed 2–5s mid-set); real rests observed ≥16s. Blocks shorter than
+// SWIM_MIN_SET_DISTANCE_M are sensor artifacts, not sets.
+const SWIM_REST_SPLIT_S = 10;
+const SWIM_MIN_SET_DISTANCE_M = 10;
 
 // ===========================================================================
 // Date parsing
@@ -236,6 +262,13 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     ? Math.max(...hrSamples.map((s) => s.bpm))
     : null);
 
+  const swimSamples = parseSwimSamples(
+    w[FIELD_MAP.workout.swimDistanceSeries],
+    w[FIELD_MAP.workout.swimStrokeSeries],
+    startDate,
+  );
+  const swimSets = detectSwimSets(swimSamples);
+
   const raw = buildWorkoutRaw(w);
 
   return {
@@ -251,6 +284,8 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     source: "apple_watch",
     raw,
     hrSamples,
+    swimSamples,
+    swimSets,
   };
 }
 
@@ -350,6 +385,83 @@ function parseHrSamples(raw: unknown, start: Date | null): NormalizedHrSample[] 
   return [...byOffset.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([offset_s, bpm]) => ({ offset_s, bpm }));
+}
+
+/**
+ * Joins the swimDistance/swimStroke per-second series into per-second samples
+ * keyed on offset from workout start. Multiple entries landing on the same
+ * second are summed (boundary seconds can carry two partial samples).
+ */
+function parseSwimSamples(
+  distanceRaw: unknown,
+  strokeRaw: unknown,
+  start: Date | null,
+): NormalizedSwimSample[] {
+  if (!Array.isArray(distanceRaw) || distanceRaw.length === 0 || !start) return [];
+
+  const readSeries = (raw: unknown): Map<number, number> => {
+    const byOffset = new Map<number, number>();
+    if (!Array.isArray(raw)) return byOffset;
+    for (const entry of raw) {
+      if (!isPlainObject(entry)) continue;
+      const sampleDate = parseHaeDate(entry[FIELD_MAP.hrSampleDateKey]);
+      if (!sampleDate) continue;
+      const offset_s = Math.round((sampleDate.getTime() - start.getTime()) / 1000);
+      if (offset_s < 0) continue;
+      const qty = toNumber(entry.qty);
+      if (qty === null) continue;
+      byOffset.set(offset_s, (byOffset.get(offset_s) ?? 0) + qty);
+    }
+    return byOffset;
+  };
+
+  const distance = readSeries(distanceRaw);
+  const strokes = readSeries(strokeRaw);
+  return [...distance.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([offset_s, distance_m]) => ({
+      offset_s,
+      distance_m,
+      strokes: strokes.get(offset_s) ?? 0,
+    }));
+}
+
+/**
+ * Splits per-second swim samples into sets: a new set starts after a sampling
+ * gap > SWIM_REST_SPLIT_S (rest), blocks under SWIM_MIN_SET_DISTANCE_M are
+ * dropped as artifacts (their span melts into the surrounding rest), and
+ * rest_after_s measures to the next kept set (null for the last).
+ */
+export function detectSwimSets(samples: NormalizedSwimSample[]): NormalizedSwimSet[] {
+  const blocks: NormalizedSwimSample[][] = [];
+  let current: NormalizedSwimSample[] = [];
+  for (const sample of samples) {
+    const prev = current[current.length - 1];
+    if (prev && sample.offset_s - prev.offset_s > SWIM_REST_SPLIT_S) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(sample);
+  }
+  if (current.length > 0) blocks.push(current);
+
+  const sum = (block: NormalizedSwimSample[], key: "distance_m" | "strokes"): number =>
+    block.reduce((total, s) => total + s[key], 0);
+
+  const kept = blocks.filter((b) => sum(b, "distance_m") >= SWIM_MIN_SET_DISTANCE_M);
+  return kept.map((block, i) => {
+    const first = block[0];
+    const last = block[block.length - 1];
+    const next = kept[i + 1];
+    return {
+      set_index: i + 1,
+      start_offset_s: first.offset_s,
+      duration_s: last.offset_s - first.offset_s + 1,
+      distance_m: sum(block, "distance_m"),
+      strokes: sum(block, "strokes"),
+      rest_after_s: next ? next[0].offset_s - (last.offset_s + 1) : null,
+    };
+  });
 }
 
 // ===========================================================================
