@@ -147,7 +147,7 @@ Deno.serve(async (req: Request) => {
     );
 
     const rows = parsed.workouts.map((w: NormalizedWorkout) => {
-      const { hrSamples: _hrSamples, ...workoutRow } = w;
+      const { hrSamples: _hrSamples, swimSamples: _swimSamples, swimSets: _swimSets, ...workoutRow } = w;
       return workoutRow;
     });
 
@@ -183,6 +183,60 @@ Deno.serve(async (req: Request) => {
         .upsert(hrRows, { onConflict: "workout_id,offset_s", ignoreDuplicates: true });
       if (hrErr) {
         return jsonResponse({ error: `failed to insert HR samples: ${hrErr.message}` }, 500);
+      }
+    }
+
+    // --- Swim samples + sets: wholesale replace per workout --------------
+    // Re-delivery may re-derive different set boundaries, so row-level
+    // dedupe is wrong here: delete everything for the workout, re-insert.
+    const swimWorkoutIds: string[] = [];
+    const swimSampleRows: {
+      workout_id: string;
+      offset_s: number;
+      distance_m: number;
+      strokes: number;
+    }[] = [];
+    const swimSetRows: {
+      workout_id: string;
+      set_index: number;
+      start_offset_s: number;
+      duration_s: number;
+      distance_m: number;
+      strokes: number;
+      rest_after_s: number | null;
+    }[] = [];
+    for (const w of parsed.workouts) {
+      const workoutId = idByExternalId.get(w.external_id);
+      if (!workoutId || w.swimSamples.length === 0) continue;
+      swimWorkoutIds.push(workoutId);
+      for (const s of w.swimSamples) {
+        swimSampleRows.push({ workout_id: workoutId, ...s });
+      }
+      for (const s of w.swimSets) {
+        swimSetRows.push({ workout_id: workoutId, ...s });
+      }
+    }
+    if (swimWorkoutIds.length > 0) {
+      for (const table of ["swim_sets", "workout_swim_samples"] as const) {
+        const { error } = await supabase.from(table).delete().in("workout_id", swimWorkoutIds);
+        if (error) {
+          return jsonResponse({ error: `failed to clear ${table}: ${error.message}` }, 500);
+        }
+      }
+      // ~1700 sample rows per swim; insert in chunks to keep request bodies sane.
+      for (let i = 0; i < swimSampleRows.length; i += 1000) {
+        const { error } = await supabase
+          .from("workout_swim_samples")
+          .insert(swimSampleRows.slice(i, i + 1000));
+        if (error) {
+          return jsonResponse({ error: `failed to insert swim samples: ${error.message}` }, 500);
+        }
+      }
+      if (swimSetRows.length > 0) {
+        const { error } = await supabase.from("swim_sets").insert(swimSetRows);
+        if (error) {
+          return jsonResponse({ error: `failed to insert swim sets: ${error.message}` }, 500);
+        }
       }
     }
   }
