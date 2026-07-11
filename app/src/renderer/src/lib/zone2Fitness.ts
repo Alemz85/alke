@@ -208,35 +208,28 @@ function addDaysKey(dateKey: string, n: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Calendar coaching guidance — the "calendar is the coach" model.
+// Calendar coaching guidance — the "calendar is the coach" model (docs v4).
 //
-// docs/zone2-fitness-model.md v3 amendment §6, as extended by the v3 renderer
-// amendment: the nightly job now derives ALL guidance horizons — decay-onset
-// (warn_after_days), the last day one session still holds the level
-// (maintain_horizon_days), and the session cadence that nets a build
-// (build_interval_days) — as continuous projections FROM THE LATEST ROW'S OWN
-// DATE. The renderer's only job is to place them as calendar dates:
+// Two kinds of horizon, anchored differently because they answer different
+// questions (this is the fix for the build marker landing 2 days late and the
+// "eases" marker being loud-when-fresh / silent-when-detrained):
 //
-//   anchor     — the latest row's `date`. The row's state (and therefore every
-//                horizon derived from it) already embeds any elapsed gap since
-//                the last session, so the row date — NOT the last-session date
-//                — is the correct zero-point for the projection.
-//   decayFrom  — anchor + row.warn_after_days.
-//   maintainBy — anchor + row.maintain_horizon_days.
-//   buildBy    — anchor + row.build_interval_days.
+//   BUILD WINDOW — a session-to-session CADENCE, so it is anchored at the LAST
+//     SESSION + row.build_interval_days (the B-scaled cadence the job stored).
+//     Anchoring at the row date would forgive the days already elapsed since the
+//     last session and permit a gap of twice the cadence. Rendered as a 2-day
+//     band (the 24–48h build window), clamped forward so it is never in the past;
+//     if the deadline has passed, the window is today→tomorrow and copy says due.
 //
-// `lastSession` / `sessions7d` are kept for copy (recency context) but are
-// NEVER used as an anchor for any marker date.
+//   EASES / HOLD — FROM-TODAY durable-erosion projections, so they anchor at the
+//     ROW date (its state already embeds the gap). They appear ONLY in the
+//     maintenance phase: `warn_after_days` is null whenever the base is too thin
+//     to erode by a confidence band, and in that (building) phase the calendar
+//     shows the build window alone — "nothing banked to protect yet, just build".
 //
-// A horizon column that is null (old rows, pre-migration) OMITS that marker
-// entirely — the renderer never invents a fallback offset. A horizon of 0 (or
-// a computed date at/before today) is valid data meaning "already easing /
-// past the hold window"; it is shown honestly (marker clamped to display on
-// today, copy says "now"/"already"), never silently pushed to tomorrow.
-//
-// All dates are plain "YYYY-MM-DD" keys; arithmetic is UTC-anchored (DST-safe).
-// Interval math is kept fractional internally and only rounded once, at the
-// point a date key is built (see addDaysKey).
+// A null horizon column omits its marker; the renderer never invents a fallback
+// offset. All dates are "YYYY-MM-DD"; arithmetic is UTC-anchored (DST-safe);
+// interval math stays fractional and is rounded once, at addDaysKey.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Zone2MarkerKind = 'build' | 'maintain' | 'decay'
@@ -247,31 +240,40 @@ export interface Zone2CalendarMarker {
   label: string
 }
 
-export interface Zone2GuidanceDoses {
-  /** Null when build_interval_days is unavailable (no marker, no dose to show). */
-  build: string | null
-  maintain: string
-}
+/**
+ * Which coaching story the calendar tells (docs v4 amendment):
+ *  - 'building'     — the durable base is too thin to erode by a confidence band
+ *                     (`warn_after_days` is null). There is nothing banked to
+ *                     protect yet, so ONLY the build window is shown.
+ *  - 'maintenance'  — a base worth protecting exists; the erosion ("eases") and
+ *                     hold markers become meaningful and are shown alongside build.
+ *  - 'unknown'      — no row yet.
+ */
+export type Zone2Phase = 'building' | 'maintenance' | 'unknown'
 
 export interface Zone2CalendarGuidance {
-  /** Next-session-to-keep-building date ("YYYY-MM-DD"), or null when build_interval_days is missing. */
-  buildBy: string | null
-  /** Latest-day-to-hold date ("YYYY-MM-DD"), or null when maintain_horizon_days is missing. */
-  maintainBy: string | null
-  /** First-day-of-erosion date ("YYYY-MM-DD"), or null when warn_after_days is missing. */
-  decayFrom: string | null
-  /** True when decayFrom lands at or before today — the index is already past its hold window. */
-  alreadyEasing: boolean
-  /** The most-recent Zone-2 session date used for copy ("YYYY-MM-DD"), or null when none. Never an anchor. */
+  phase: Zone2Phase
+  /** The 2-day build WINDOW (the 24–48h cadence band), anchored at the last
+   *  session + the stored cadence and clamped forward so it is never in the past.
+   *  Null when there is no cadence to place. */
+  buildWindow: { start: string; end: string } | null
+  /** True when the build-cadence deadline is already due/overdue (train now). */
+  buildOverdue: boolean
+  /** Maintenance phase only: first day the durable base erodes past the band
+   *  ("YYYY-MM-DD"), else null. Anchored at the ROW date (a from-today projection). */
+  easesFrom: string | null
+  /** Maintenance phase only: last day one session still holds today's level. */
+  holdBy: string | null
+  /** The most-recent Zone-2 session date used for copy/anchor ("YYYY-MM-DD"), or null. */
   lastSession: string | null
   /** Trailing-7-day session count ending at `today`. */
   sessions7d: number
   /** One-line actionable summary with real weekday/date formatting. */
   summary: string
-  /** Suggested-dose copy for the build and maintain markers. */
-  doses: Zone2GuidanceDoses
-  /** Marker record keyed by "YYYY-MM-DD" — pass straight to CalendarHeatmap `markers`. On a
-   *  same-day collision only the highest-priority marker (build > maintain > decay) is kept. */
+  /** Build-cadence dose copy (derived from build_interval_days), or null when absent. */
+  buildDose: string | null
+  /** Marker record keyed by "YYYY-MM-DD" — pass straight to CalendarHeatmap `markers`.
+   *  On a same-day collision the build markers win (most actionable). */
   markers: Record<string, Zone2CalendarMarker>
 }
 
@@ -339,88 +341,112 @@ export function zone2CalendarGuidance(
   }
 
   const sessions7d = trailing7Count(sessionDates, today)
-
-  if (!row) {
-    return {
-      buildBy: null,
-      maintainBy: null,
-      decayFrom: null,
-      alreadyEasing: false,
-      lastSession,
-      sessions7d,
-      summary: 'Not enough data yet to place build/maintain/decay dates.',
-      doses: { build: null, maintain: ZONE2_MAINTAIN_DOSE },
-      markers: {}
-    }
-  }
-
-  // The row's OWN date is the anchor — its state already embeds any elapsed
-  // gap since the last session, so re-anchoring at lastSession would double
-  // count that gap. See block comment above.
-  const anchor = row.date
-
-  // Each horizon is placed independently, from the SAME anchor; a missing
-  // column omits its marker rather than inventing a fallback offset.
-  const decayFromRaw =
-    row.warn_after_days != null && Number.isFinite(row.warn_after_days)
-      ? addDaysKey(anchor, row.warn_after_days)
-      : null
-  const maintainByRaw =
-    row.maintain_horizon_days != null && Number.isFinite(row.maintain_horizon_days)
-      ? addDaysKey(anchor, row.maintain_horizon_days)
-      : null
-  const buildByRaw =
-    row.build_interval_days != null && Number.isFinite(row.build_interval_days)
-      ? addDaysKey(anchor, row.build_interval_days)
-      : null
-
-  // Never render a marker in the past: clamp the DISPLAY date to today, but
-  // track whether the raw (unclamped) horizon was already at/before today so
-  // the copy can say so honestly instead of silently presenting a future date.
-  const decayFrom = decayFromRaw != null ? maxKey(decayFromRaw, today) : null
-  const maintainBy = maintainByRaw != null ? maxKey(maintainByRaw, today) : null
-  const buildBy = buildByRaw != null ? maxKey(buildByRaw, today) : null
-  const alreadyEasing = decayFromRaw != null && decayFromRaw <= today
-
-  const buildDose = row.build_interval_days != null ? buildDoseCopy(row.build_interval_days) : null
-  const doses: Zone2GuidanceDoses = { build: buildDose, maintain: ZONE2_MAINTAIN_DOSE }
-
-  // Marker record: on a same-day collision, the most-actionable kind wins
-  // (build > maintain > decay). Insert lowest priority first so higher
-  // priority overwrites it.
   const markers: Record<string, Zone2CalendarMarker> = {}
-  if (decayFrom != null) {
-    markers[decayFrom] = {
-      kind: 'decay',
-      label: alreadyEasing
-        ? `Easing now — the index is already past its hold window (from ${formatGuidanceDate(decayFromRaw as string)}).`
-        : `Eases from ${formatGuidanceDate(decayFrom)} — index starts to erode without a Zone 2 session.`
-    }
+
+  const empty = (summary: string): Zone2CalendarGuidance => ({
+    phase: 'unknown',
+    buildWindow: null,
+    buildOverdue: false,
+    easesFrom: null,
+    holdBy: null,
+    lastSession,
+    sessions7d,
+    summary,
+    buildDose: null,
+    markers
+  })
+
+  if (!row) return empty('Not enough data yet to place a build window.')
+
+  // ── BUILD WINDOW (a 2-day 24–48h band). The stored cadence is a
+  // session-to-session interval, so it is anchored at the LAST SESSION (falling
+  // back to today when none is on record). Clamped forward: the window always
+  // ends at least tomorrow and never starts in the past. ──
+  const cadence =
+    row.build_interval_days != null && Number.isFinite(row.build_interval_days)
+      ? Math.max(0, row.build_interval_days)
+      : null
+  const buildDose = cadence != null ? buildDoseCopy(cadence as number) : null
+  let buildWindow: { start: string; end: string } | null = null
+  let buildOverdue = false
+  if (cadence != null) {
+    const anchor = lastSession ?? today
+    const dueRaw = addDaysKey(anchor, cadence) // fractional deadline, rounded to a day
+    buildOverdue = dueRaw <= today
+    const end = maxKey(addDaysKey(today, 1), dueRaw) // deadline, at least tomorrow
+    const start = maxKey(today, addDaysKey(end, -1)) // 2-day window, never before today
+    buildWindow = { start, end }
+    const range = `${formatGuidanceDate(start)}–${formatGuidanceDate(end)}`
+    const label = buildOverdue
+      ? `Due now — train today to keep building. ${buildDose ?? ''}`.trim()
+      : `Build window · train ${range} to keep building. ${buildDose ?? ''}`.trim()
+    // Both cells carry the build marker (the whole band is "on-cadence").
+    markers[start] = { kind: 'build', label }
+    markers[end] = { kind: 'build', label }
   }
-  if (maintainBy != null) {
-    markers[maintainBy] = {
-      kind: 'maintain',
-      label: `Hold by ${formatGuidanceDate(maintainBy)} — ${ZONE2_MAINTAIN_DOSE}`
+
+  // ── PHASE. warn_after_days (the durable-erosion-vs-band "eases" horizon) is
+  // null whenever the base is too thin to erode by a confidence band — the
+  // BUILDING phase, where only the build window is shown. A present horizon means
+  // a base worth protecting: the MAINTENANCE phase adds eases + hold markers,
+  // anchored at the ROW date (from-today projections). ──
+  const maintenance =
+    row.warn_after_days != null && Number.isFinite(row.warn_after_days)
+  const phase: Zone2Phase = maintenance ? 'maintenance' : 'building'
+
+  let easesFrom: string | null = null
+  let holdBy: string | null = null
+  if (maintenance) {
+    easesFrom = maxKey(addDaysKey(row.date, row.warn_after_days as number), today)
+    if (!(easesFrom in markers)) {
+      markers[easesFrom] = {
+        kind: 'decay',
+        label: `Base eases from ${formatGuidanceDate(easesFrom)} — it starts to erode without a Zone 2 session.`
+      }
     }
-  }
-  if (buildBy != null && buildDose != null) {
-    markers[buildBy] = {
-      kind: 'build',
-      label: `Build by ${formatGuidanceDate(buildBy)} — ${buildDose}`
+    if (row.maintain_horizon_days != null && Number.isFinite(row.maintain_horizon_days)) {
+      holdBy = maxKey(addDaysKey(row.date, row.maintain_horizon_days), today)
+      if (!(holdBy in markers)) {
+        markers[holdBy] = {
+          kind: 'maintain',
+          label: `Hold by ${formatGuidanceDate(holdBy)} — ${ZONE2_MAINTAIN_DOSE}`
+        }
+      }
     }
   }
 
-  const parts: string[] = []
-  if (buildBy != null) parts.push(`Train by ${formatGuidanceDate(buildBy)} to keep building`)
-  if (maintainBy != null) parts.push(`holds through ${formatGuidanceDate(maintainBy)}`)
-  if (alreadyEasing) {
-    parts.push('easing now — the index is already past its hold window')
-  } else if (decayFrom != null) {
-    parts.push(`eases from ${formatGuidanceDate(decayFrom)}`)
+  // ── Summary. Building phase leads with "just build"; maintenance phase chains
+  // the build/hold/eases dates. ──
+  const windowPhrase = buildWindow
+    ? buildOverdue
+      ? 'train now'
+      : `train ${formatGuidanceDate(buildWindow.start)}–${formatGuidanceDate(buildWindow.end)}`
+    : null
+  let summary: string
+  if (phase === 'building') {
+    summary = windowPhrase
+      ? `Base still thin — just build. ${windowPhrase[0].toUpperCase()}${windowPhrase.slice(1)} to keep climbing.`
+      : 'Base still thin — keep building.'
+  } else {
+    const parts: string[] = []
+    if (windowPhrase) parts.push(`build window: ${windowPhrase}`)
+    if (holdBy) parts.push(`holds through ${formatGuidanceDate(holdBy)}`)
+    if (easesFrom) parts.push(`base eases from ${formatGuidanceDate(easesFrom)}`)
+    summary = parts.length > 0 ? `${parts.join(' · ')}.` : 'Keep training to hold your base.'
   }
-  const summary = parts.length > 0 ? `${parts.join(' · ')}.` : 'Not enough data yet to place build/maintain/decay dates.'
 
-  return { buildBy, maintainBy, decayFrom, alreadyEasing, lastSession, sessions7d, summary, doses, markers }
+  return {
+    phase,
+    buildWindow,
+    buildOverdue,
+    easesFrom,
+    holdBy,
+    lastSession,
+    sessions7d,
+    summary,
+    buildDose,
+    markers
+  }
 }
 
 /** Compare two "YYYY-MM-DD" keys; returns the later one. */

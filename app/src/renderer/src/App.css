@@ -27,6 +27,20 @@
   justify-content: flex-end;
   align-items: center;
   gap: var(--space-sm);
+  /* Drag the window by this top strip (the window uses a hiddenInset titlebar,
+     so there is no OS title bar to grab). The buttons sit at the right; the
+     empty space across the rest of the strip is the grab area. min-height keeps
+     the strip grabbable even before content loads. */
+  min-height: 40px;
+  -webkit-app-region: drag;
+}
+
+/* Keep the toolbar's controls clickable inside the drag region. */
+.content-area-toolbar button,
+.content-area-toolbar a,
+.content-area-toolbar input,
+.content-area-toolbar select {
+  -webkit-app-region: no-drag;
 }
 
 /* Icon-only variant of button-soft: square, no label padding. Used by the

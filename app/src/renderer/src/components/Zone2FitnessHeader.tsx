@@ -10,6 +10,7 @@ import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
 import { addDays, localDateKey, todayYMD, ymdKey, ymdToIsoStart } from '../hooks/sessionsDate'
 import { cardioModalityOf } from '../lib/cardioModality'
 import {
+  ZONE2_MAINTAIN_DOSE,
   evidenceReason,
   hasMaintenanceFlag,
   indexBandHalfWidth,
@@ -202,7 +203,10 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     return y === viewYear && m === viewMonth
   }
   const anyMarkerOffMonth =
-    !markerInMonth(guidance.buildBy) || !markerInMonth(guidance.maintainBy) || !markerInMonth(guidance.decayFrom)
+    !markerInMonth(guidance.buildWindow?.start ?? null) ||
+    !markerInMonth(guidance.buildWindow?.end ?? null) ||
+    !markerInMonth(guidance.easesFrom) ||
+    !markerInMonth(guidance.holdBy)
 
   return (
     <section className="z2f" aria-label="Zone 2 fitness level">
@@ -300,32 +304,42 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           </p>
         )}
 
-        {/* Compact legend explaining the three markers. A marker whose horizon column
-            isn't populated yet (older rows) is simply omitted from the legend too. */}
+        {/* Compact legend. In the building phase only the build window shows — a
+            thin base has nothing banked to protect yet. The eases/hold markers
+            appear once the base is worth defending (maintenance phase). */}
         <div className="z2f-guidance-legend">
-          {guidance.doses.build != null && (
+          {guidance.buildWindow != null && guidance.buildDose != null && (
             <span className="z2f-guidance-legend-item">
               <span className="z2f-guidance-swatch z2f-guidance-swatch--build" />
               <span>
-                <strong>Build</strong> — next session to keep climbing. {guidance.doses.build}
+                <strong>{guidance.buildOverdue ? 'Build (due now)' : 'Build window'}</strong> — the
+                24–48h band to train in and keep climbing. {guidance.buildDose}
               </span>
             </span>
           )}
-          {guidance.maintainBy != null && (
+          {guidance.phase === 'building' && (
+            <span className="z2f-guidance-legend-item z2f-guidance-legend-note">
+              <span>
+                Your base is still thin, so there’s no erosion window to defend yet — sessions
+                build it. Hold/eases markers appear once you’ve banked a base.
+              </span>
+            </span>
+          )}
+          {guidance.holdBy != null && (
             <span className="z2f-guidance-legend-item">
               <span className="z2f-guidance-swatch z2f-guidance-swatch--maintain" />
               <span>
-                <strong>Maintain</strong> — latest day to hold. {guidance.doses.maintain}
+                <strong>Hold by</strong> — latest day one session still holds today’s level.{' '}
+                {ZONE2_MAINTAIN_DOSE}
               </span>
             </span>
           )}
-          {guidance.decayFrom != null && (
+          {guidance.easesFrom != null && (
             <span className="z2f-guidance-legend-item">
               <span className="z2f-guidance-swatch z2f-guidance-swatch--decay" />
               <span>
-                <strong>{guidance.alreadyEasing ? 'Easing' : 'Eases'}</strong> — the index
-                {guidance.alreadyEasing ? ' is already ' : ' starts to '}
-                erode without a Zone 2 session.
+                <strong>Eases</strong> — your durable base starts to erode (past the confidence
+                band) without a Zone 2 session.
               </span>
             </span>
           )}

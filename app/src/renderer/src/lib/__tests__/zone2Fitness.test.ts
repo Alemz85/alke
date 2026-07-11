@@ -157,183 +157,156 @@ describe('formatGuidanceDate', () => {
   })
 })
 
-describe('zone2CalendarGuidance', () => {
+describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
   const TODAY = '2026-07-10' // Friday
 
-  it('anchors every marker at the ROW DATE (not the last session), adding each stored horizon', () => {
-    // Row dated 07-08; last session on record is 07-01 (a week earlier — the row's
-    // own state already embeds that gap, so re-anchoring at 07-01 would double count it).
+  it('anchors the build window at the LAST SESSION + cadence (not the row date)', () => {
+    // Last aerobic session 07-08, cadence 2d → due 07-10 (today). The window is
+    // the 2-day band ending at/after the deadline, clamped forward.
     const g = zone2CalendarGuidance(
-      {
-        date: '2026-07-08',
-        warn_after_days: 14,
-        maintain_horizon_days: 6,
-        build_interval_days: 2
-      },
+      { date: '2026-07-09', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
+      ['2026-07-08'],
+      TODAY
+    )
+    // due = 07-08 + 2 = 07-10 = today → due now. Window = [today, today+1].
+    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
+    expect(g.buildOverdue).toBe(true)
+    // BOTH window cells carry the build marker; nothing else in the building phase.
+    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-10', '2026-07-11'])
+    expect(g.markers['2026-07-10'].kind).toBe('build')
+    expect(g.markers['2026-07-11'].kind).toBe('build')
+  })
+
+  it('places a future build window as the 2 days ending at the cadence deadline', () => {
+    // Last session 07-09, cadence 3 → due 07-12 (future). Window = [07-11, 07-12].
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 3 },
+      ['2026-07-09'],
+      TODAY
+    )
+    expect(g.buildWindow).toEqual({ start: '2026-07-11', end: '2026-07-12' })
+    expect(g.buildOverdue).toBe(false)
+  })
+
+  it('shows an overdue build window as today→tomorrow with "due now" copy', () => {
+    // Last session 07-01, cadence 2 → due 07-03, long past. Window clamps forward.
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
       ['2026-07-01'],
       TODAY
     )
-    expect(g.lastSession).toBe('2026-07-01') // kept for copy only
-    // decayFrom = rowDate(07-08) + 14 = 07-22.
-    expect(g.decayFrom).toBe('2026-07-22')
-    // maintainBy = rowDate(07-08) + 6 = 07-14.
-    expect(g.maintainBy).toBe('2026-07-14')
-    // buildBy = rowDate(07-08) + 2 = 07-10 (today — still valid, not in the past).
-    expect(g.buildBy).toBe('2026-07-10')
-    expect(g.markers[g.buildBy!].kind).toBe('build')
-    expect(g.markers[g.maintainBy!].kind).toBe('maintain')
-    expect(g.markers[g.decayFrom!].kind).toBe('decay')
-    expect(g.alreadyEasing).toBe(false)
+    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
+    expect(g.buildOverdue).toBe(true)
+    expect(g.markers['2026-07-10'].label).toMatch(/due now/i)
   })
 
-  it('keeps fractional horizons intact until the single date-key rounding point', () => {
-    // 4.6 days from 07-08 rounds to +5d = 07-13; 3.4 days rounds to +3d = 07-11
-    // (addDaysKey rounds once, at materialization — not before).
+  it('anchors the build window at today when no session is on record', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 4.6, build_interval_days: 3.4 },
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
       [],
       TODAY
     )
-    expect(g.maintainBy).toBe('2026-07-13') // 07-08 + round(4.6) = +5d
-    expect(g.buildBy).toBe('2026-07-11') // 07-08 + round(3.4) = +3d
+    // due = today + 2 = 07-12 → window [07-11, 07-12].
+    expect(g.buildWindow).toEqual({ start: '2026-07-11', end: '2026-07-12' })
+    expect(g.lastSession).toBeNull()
   })
 
-  it('clamps a marker whose raw horizon lands before today to display on today', () => {
-    // build_interval_days = 1.2 from row date 07-08 raw-computes to 07-09, which
-    // is before TODAY (07-10) — display clamps to today rather than the past date.
+  it('BUILDING phase (warn_after_days null): only the build window, no eases/hold', () => {
+    // A thin base whose durable range is smaller than the band → the job stored a
+    // null eases horizon. maintain_horizon may still be present, but it must NOT
+    // surface — there is nothing banked to protect yet.
     const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 4.6, build_interval_days: 1.2 },
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: 8, build_interval_days: 2 },
+      ['2026-07-08'],
+      TODAY
+    )
+    expect(g.phase).toBe('building')
+    expect(g.easesFrom).toBeNull()
+    expect(g.holdBy).toBeNull()
+    // No decay/maintain markers anywhere — only the two build-window cells.
+    expect(Object.values(g.markers).every((m) => m.kind === 'build')).toBe(true)
+    expect(g.summary).toMatch(/still thin|just build/i)
+  })
+
+  it('MAINTENANCE phase (warn_after_days present): eases + hold anchored at the ROW date', () => {
+    // A banked base: the job stored a real eases horizon. eases/hold are FROM-TODAY
+    // durable-erosion projections, so they anchor at the ROW date, while the build
+    // window still anchors at the last session.
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-08', warn_after_days: 14, maintain_horizon_days: 6, build_interval_days: 2 },
+      ['2026-07-08'],
+      TODAY
+    )
+    expect(g.phase).toBe('maintenance')
+    expect(g.easesFrom).toBe('2026-07-22') // rowDate 07-08 + 14
+    expect(g.holdBy).toBe('2026-07-14') // rowDate 07-08 + 6
+    // Build window anchored at last session 07-08 + 2 = 07-10 (due today).
+    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
+    const kinds = Object.values(g.markers).map((m) => m.kind).sort()
+    expect(kinds).toEqual(['build', 'build', 'decay', 'maintain'])
+  })
+
+  it('build markers win a same-day collision with an eases/hold marker', () => {
+    // rowDate 07-10, maintain_horizon 1 → holdBy 07-11, which collides with the
+    // build window's end cell (07-11). The build marker must survive.
+    const g = zone2CalendarGuidance(
+      { date: '2026-07-10', warn_after_days: 5, maintain_horizon_days: 1, build_interval_days: 2 },
+      ['2026-07-10'],
+      TODAY
+    )
+    // due = 07-10 + 2 = 07-12 → window [07-11, 07-12]; holdBy = 07-10 + 1 = 07-11.
+    expect(g.buildWindow).toEqual({ start: '2026-07-11', end: '2026-07-12' })
+    expect(g.holdBy).toBe('2026-07-11')
+    expect(g.markers['2026-07-11'].kind).toBe('build') // build wins the collision
+  })
+
+  it('derives the build dose frequency from build_interval_days, not a hardcoded dose', () => {
+    const everyTwo = zone2CalendarGuidance(
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
       [],
       TODAY
     )
-    expect(g.buildBy).toBe(TODAY)
+    expect(everyTwo.buildDose).toContain('every ~2 days')
+    expect(everyTwo.buildDose).toMatch(/≈3\.5\/wk/)
+    expect(everyTwo.buildDose).toContain('at Zone 2 intensity')
+    expect(everyTwo.buildDose).not.toContain('40–50 min')
   })
 
-  it('treats warn_after_days = 0 as valid "already easing" data, not missing data', () => {
-    // Row date is today; decay horizon is 0 → decays as of today itself.
-    const g = zone2CalendarGuidance(
-      { date: TODAY, warn_after_days: 0, maintain_horizon_days: null, build_interval_days: null },
-      [],
-      TODAY
-    )
-    expect(g.decayFrom).toBe(TODAY)
-    expect(g.alreadyEasing).toBe(true)
-    expect(g.markers[TODAY].kind).toBe('decay')
-    expect(g.markers[TODAY].label).toMatch(/easing now/i)
-    expect(g.summary).toMatch(/easing now/i)
-  })
-
-  it('treats a decayFrom that lands before today as overdue — clamped display, honest copy', () => {
-    // Row is 20 days stale; warn_after_days=5 means the model's own horizon is
-    // long past — the raw date is well before today.
-    const g = zone2CalendarGuidance(
-      { date: '2026-06-20', warn_after_days: 5, maintain_horizon_days: null, build_interval_days: null },
-      [],
-      TODAY
-    )
-    // Raw decayFrom (06-25) is before today; display clamps to today, never a fake future date.
-    expect(g.decayFrom).toBe(TODAY)
-    expect(g.alreadyEasing).toBe(true)
-    expect(g.markers[TODAY].label).toMatch(/already past its hold window/i)
-  })
-
-  it('omits a marker entirely when its horizon column is null (old pre-migration rows)', () => {
+  it('omits the build window when build_interval_days is null (old pre-migration rows)', () => {
     const g = zone2CalendarGuidance(
       { date: '2026-07-08', warn_after_days: 12, maintain_horizon_days: null, build_interval_days: null },
       [],
       TODAY
     )
-    expect(g.decayFrom).toBe('2026-07-20')
-    expect(g.maintainBy).toBeNull()
-    expect(g.buildBy).toBeNull()
-    expect(g.doses.build).toBeNull()
-    // No maintain/build entries in the marker record — only decay.
-    expect(Object.values(g.markers).map((m) => m.kind).sort()).toEqual(['decay'])
-    expect(g.summary).not.toMatch(/keep building/i)
-    expect(g.summary).not.toMatch(/holds through/i)
+    expect(g.buildWindow).toBeNull()
+    expect(g.buildDose).toBeNull()
+    // warn present → maintenance phase → the eases marker still shows.
+    expect(g.phase).toBe('maintenance')
+    expect(g.easesFrom).toBe('2026-07-20')
+    expect(Object.values(g.markers).map((m) => m.kind)).toEqual(['decay'])
   })
 
-  it('returns an all-null, marker-free guidance when the row itself is missing', () => {
+  it('returns unknown/empty guidance when the row itself is missing', () => {
     const g = zone2CalendarGuidance(null, ['2026-07-08'], TODAY)
-    expect(g.buildBy).toBeNull()
-    expect(g.maintainBy).toBeNull()
-    expect(g.decayFrom).toBeNull()
+    expect(g.phase).toBe('unknown')
+    expect(g.buildWindow).toBeNull()
+    expect(g.easesFrom).toBeNull()
+    expect(g.holdBy).toBeNull()
     expect(g.markers).toEqual({})
-    expect(g.doses.build).toBeNull()
+    expect(g.buildDose).toBeNull()
     // lastSession/sessions7d still computed from session history (copy only).
     expect(g.lastSession).toBe('2026-07-08')
   })
 
-  it('resolves a same-day collision with priority build > maintain > decay', () => {
-    // All three horizons land on the same day (07-15) from the same row date.
-    const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 7, maintain_horizon_days: 7, build_interval_days: 7 },
-      [],
-      TODAY
-    )
-    expect(g.buildBy).toBe('2026-07-15')
-    expect(g.maintainBy).toBe('2026-07-15')
-    expect(g.decayFrom).toBe('2026-07-15')
-    // Only one marker survives the collision, and it's the most actionable kind.
-    expect(Object.keys(g.markers)).toEqual(['2026-07-15'])
-    expect(g.markers['2026-07-15'].kind).toBe('build')
-  })
-
-  it('resolves a maintain/decay collision (no build) with maintain winning over decay', () => {
-    const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 6, maintain_horizon_days: 6, build_interval_days: null },
-      [],
-      TODAY
-    )
-    expect(g.maintainBy).toBe('2026-07-14')
-    expect(g.decayFrom).toBe('2026-07-14')
-    expect(Object.keys(g.markers)).toEqual(['2026-07-14'])
-    expect(g.markers['2026-07-14'].kind).toBe('maintain')
-  })
-
-  it('counts sessions in the trailing 7 days and ignores future-dated rows (copy only)', () => {
+  it('counts sessions in the trailing 7 days and clamps future-dated sessions', () => {
     // 07-04..07-10 inclusive is the window; 07-03 is out, 07-11 is future.
     const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 14, maintain_horizon_days: 6, build_interval_days: 3 },
+      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 3 },
       ['2026-07-03', '2026-07-04', '2026-07-08', '2026-07-10', '2026-07-11'],
       TODAY
     )
     expect(g.sessions7d).toBe(3) // 07-04, 07-08, 07-10
-    // A future-dated session is clamped to today, so lastSession never exceeds today.
-    expect(g.lastSession).toBe('2026-07-10')
-    // None of this affects the anchor — still the row date.
-    expect(g.decayFrom).toBe('2026-07-22')
-  })
-
-  it('derives the build dose frequency from build_interval_days, not a hardcoded dose', () => {
-    const everyTwo = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 10, build_interval_days: 2 },
-      [],
-      TODAY
-    )
-    expect(everyTwo.doses.build).toContain('every ~2 days')
-    expect(everyTwo.doses.build).toMatch(/≈3\.5\/wk/)
-    expect(everyTwo.doses.build).toContain('at Zone 2 intensity')
-    expect(everyTwo.doses.build).not.toContain('40–50 min')
-
-    const everyFive = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 20, maintain_horizon_days: 10, build_interval_days: 5 },
-      [],
-      TODAY
-    )
-    expect(everyFive.doses.build).toContain('every ~5 days')
-    expect(everyFive.doses.build).toMatch(/≈1\.4\/wk/)
-  })
-
-  it('keeps the maintain dose as the licensed Hickson literature constant', () => {
-    const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 14, maintain_horizon_days: 6, build_interval_days: 3 },
-      [],
-      TODAY
-    )
-    expect(g.doses.maintain).toContain('2 Zone 2 sessions/wk')
-    expect(g.doses.maintain).toContain('≥20 min')
-    expect(g.doses.maintain).toMatch(/already.built|base you.ve already built/i)
+    expect(g.lastSession).toBe('2026-07-10') // future 07-11 clamped to today
   })
 })
 

@@ -127,9 +127,22 @@ def test_run_zone2_fitness_wiring(monkeypatch, capsys):
     width_last = rows[-1]["durable_band_hi"] - rows[-1]["durable_band_lo"]
     assert width_last >= width_290
 
-    # detrained end state: build interval capped at the beginner dose.
-    assert 0.0 < rows[-1]["build_interval_days"] <= 2.0
+    # v4 build cadence is the B-scaled interval (7/(3+2.5·B), floored 24h): for a
+    # near-detrained end (low B) it sits near the ~2.3d novice dose, and it tracks
+    # the row's own B exactly.
+    from metrics import models as _m
+    assert rows[-1]["build_interval_days"] == pytest.approx(
+        _m.build_cadence_days(rows[-1]["base_accum_b"]), abs=0.01
+    )
+    assert _m.Z2_BUILD_INTERVAL_FLOOR_DAYS <= rows[-1]["build_interval_days"] <= 7.0 / 3.0
     assert rows[-1]["expected_session_build"] > 0
+
+    # v4 eases (durable erosion vs the confidence band) is PHASE-GATED: mid-block
+    # (banked base) it fires a real horizon; at the thin/detrained end the base
+    # cannot lose a whole band → NULL ("building phase", no erosion marker).
+    assert isinstance(rows[250]["warn_after_days"], float)  # maintenance phase
+    assert rows[-1]["warn_after_days"] is None               # building phase
+    assert rows[-1]["flags"] == []                           # no maintenance flag when building
 
 
 def test_uncapped_horizon_nulls_the_search_cap():

@@ -235,13 +235,7 @@ Z2_VO2MAX_POP_BASELINE = 32.0  # sedentary VO2max floor, FRIEND ~10th pct (docs 
 # here; grounded in the ~50-60 valid-day floor the confidence gates use (docs §6d
 # "<20 valid days -> insufficient"; a personal extreme needs ~a season to be real).
 Z2_PERSONAL_BASELINE_HALFLIFE_DAYS = 60.0
-# ── v3 projection / decay-onset (docs v3 pt6) ──
-# [LITERATURE PRIOR] SWC floor: the smallest index move we will ever call
-# meaningful, in index points. SWC itself is data-derived (0.5×CV of the user's
-# own recent index); this floors it so a pathologically-flat index (CV≈0) still
-# yields a finite horizon instead of an infinite one. 0.5 pt ≈ sub-integer noise.
-Z2_SWC_MIN_POINTS = 0.5
-Z2_SWC_CV_FRACTION = 0.5       # SWC = 0.5 × CV (Plews/Buchheit, docs §6d)
+# ── projection / decay-onset horizons ──
 Z2_DECAY_ONSET_MAX_DAYS = 120.0  # projection horizon we bother to search (4 mo)
 # [LITERATURE PRIOR] Signal-staleness time constant (spec §4c / v2 amendment: a
 # stale reading must yield to load dynamics). 45 d = the durable compartment's own
@@ -278,11 +272,26 @@ Z2_B_PRIOR_SD_FRACTION = 0.25  # sd = C_D/4 → var = (C_D/4)²
 # 20 min × Edwards zone-2 weight 2 = 40 load units (Hickson 1981/1985 minimum
 # effective maintenance session, docs §5a).
 Z2_MAINTENANCE_SESSION_LOAD = 40.0
-# [LITERATURE PRIOR] Build-cadence cap: the licensed beginner BUILD dose is 3–4
-# sessions/wk (docs §5a scope note) → an interval of 7/3.5 = 2.0 days. Binds when
-# the fast pool has nothing banked to lose (detrained: F≈0, so between-session
-# fast-decay can never exceed a session's build and the interval is unbounded).
-Z2_BUILD_INTERVAL_CAP_DAYS = 2.0
+# ── v4 build cadence: a CONTINUOUS function of base-consolidation B, not a fixed
+# cap (docs v4 amendment). The v3 formula was min(fast-decay horizon, 2.0); for a
+# detrained user the fast-decay horizon is unbounded so the 2.0 cap ALWAYS won —
+# a hardcoded constant in disguise that never moved with fitness. The frequency
+# literature says build FREQUENCY scales UP with training status: sedentary/novice
+# gain on ~3 sessions/wk [ACSM 2011; VO2max-trainability meta-analyses], while
+# well-trained endurance athletes need ~5–6+/wk to keep improving (diminishing
+# marginal stimulus near the ceiling; elite train 10–13/wk). So the cadence is:
+#   sessions_per_week(B) = FREQ_BEGINNER + FREQ_SLOPE · B
+#   build_cadence_days    = max(FLOOR, 7 / sessions_per_week(B))
+# B is the model's own data-derived training-status variable (the same one driving
+# τ_slow and the floor), so the cadence is continuous in the user's data THROUGH B.
+Z2_BUILD_FREQ_BEGINNER = 3.0  # [LITERATURE PRIOR] sessions/wk, novice VO2max-gain dose (ACSM)
+Z2_BUILD_FREQ_SLOPE = 2.5     # [LITERATURE PRIOR] added sessions/wk per unit B → ~5.5/wk at B=1 (well-trained)
+# [LITERATURE PRIOR] Molecular re-stimulation floor: PGC-1α (the master
+# mitochondrial-biogenesis signal) mRNA peaks ~2 h post-exercise and returns
+# toward baseline by ~24 h [Pilegaard 2003, PubMed 12563009]. Re-stimulating the
+# build signal more than once a day buys little for a Z2 base, so 24 h floors the
+# cadence regardless of B. Training-age INDEPENDENT (molecular kinetics).
+Z2_BUILD_INTERVAL_FLOOR_DAYS = 1.0
 
 # ---- v2 fixed-ceiling amendment (docs/zone2-fitness-model.md "v2 — locked
 # amendments"). The headline index I = D + F, each component bounded by its OWN
@@ -714,50 +723,16 @@ def fuse_inverse_variance(estimates: list[tuple[float, float]]) -> tuple[float, 
 
 
 # ---------------------------------------------------------------------------
-# v3 — PROJECTION-DERIVED decay_onset (docs v3 pt6). REPLACES the warn_after_days
-# B-band lookup (7/12/21) ENTIRELY. The horizon is computed from the model's OWN
-# forward projection and a data-derived SWC — the bands EMERGE from the math:
+# PROJECTION-DERIVED horizons. decay_onset_days finds the smallest t where the
+# projected index falls by a given drop threshold (bisection on the monotone
+# projection), so a horizon is a CONTINUOUS function of the current state — never
+# a band lookup. It is the shared engine for the maintain horizon (threshold =
+# one session's build increment ΔI) and, with fast=0, the v4 durable-erosion
+# "eases" horizon (threshold = the confidence band); see durable_erosion_onset_days.
 #   F_proj(t) = F·exp(−t/τ_fast)
 #   D_proj(t) = floor + (D−floor)·exp(−t/τ_slow(B))
 #   I(t)      = D_proj(t) + F_proj(t)
-#   decay_onset = smallest t where I(0) − I(t) ≥ SWC
-# A thin base (F dominates, small D/floor → I falls at ~τ_fast) yields a SHORT
-# horizon; a banked base (large D + high floor → I falls at ~τ_slow) yields a
-# LONG one. Continuous in D, F, floor, τ_slow — NOT a step function.
 # ---------------------------------------------------------------------------
-
-def swc_from_index(
-    recent_index: list[float],
-    cv_fraction: float = Z2_SWC_CV_FRACTION,
-    swc_min: float = Z2_SWC_MIN_POINTS,
-) -> float:
-    """Smallest worthwhile change (index points), DATA-DERIVED from the user's own
-    day-to-day index NOISE (docs §6d, Plews/Buchheit: "SWC on any 7-day rolling
-    mean"): SWC = cv_fraction × SD of the RESIDUALS of the index versus its own
-    trailing 7-day rolling mean, floored at swc_min.
-
-        residual_i = x_i − mean(x[i−6..i])
-        SWC = max( cv_fraction × SD(residuals) , swc_min )
-
-    Residuals against the rolling mean strip the TREND, so a build block's ramp
-    (which dominates the raw SD — a 0→25 ramp reads SWC≈3.5 raw) no longer
-    stretches decay_onset exactly when a thin, freshly-built base needs a short
-    warning window. A steady ramp has near-constant residuals → SWC at the floor;
-    genuine day-to-day noise survives. swc_min (0.5 pt, [LITERATURE PRIOR] —
-    sub-integer display noise) keeps a pathologically-flat index from yielding an
-    infinite horizon."""
-    vals = [float(v) for v in recent_index if v is not None]
-    if len(vals) < 2:
-        return swc_min
-    residuals = []
-    for i, v in enumerate(vals):
-        window = vals[max(0, i - 6): i + 1]
-        residuals.append(v - sum(window) / len(window))
-    mean_r = sum(residuals) / len(residuals)
-    var = sum((r - mean_r) ** 2 for r in residuals) / (len(residuals) - 1)
-    sd = math.sqrt(max(0.0, var))
-    return max(swc_min, cv_fraction * sd)
-
 
 def project_index(
     durable: float,
@@ -814,6 +789,49 @@ def decay_onset_days(
         else:
             lo = mid
     return hi
+
+
+def durable_erosion_onset_days(
+    durable: float,
+    floor: float,
+    tau_slow_days: float,
+    band_half_width: float,
+    max_days: float = Z2_DECAY_ONSET_MAX_DAYS,
+) -> float:
+    """v4 "eases" horizon (docs v4 amendment): the smallest t where the projected
+    DURABLE BASE has eroded by more than the model's own confidence band —
+    D(0) − D_proj(t) ≥ band_half_width, with D_proj the durable-only decay toward
+    its floor.
+
+    Two deliberate departures from the v3 decay_onset (which projected the INDEX
+    against a tiny SWC):
+      1. DURABLE-ONLY. "Zone 2 fitness level" erosion means the banked BASE
+         eroding, not the fast/sharpness layer's normal post-session dip. The v3
+         index projection fired on the fast layer — so the warning was SHORTEST
+         right after training (high F to shed) and blanked out when detrained
+         (F≈0). Projecting the durable base removes that inversion.
+      2. Threshold = the CONFIDENCE BAND, not SWC. Erosion is only flagged once it
+         exceeds what the model can actually resolve, so a thin base (whose entire
+         durable range is smaller than its band) yields NO erosion horizon — the
+         honest "nothing meaningful to protect yet, just build" state. As the base
+         banks and the band tightens, a real horizon emerges.
+
+    Returns max_days when the durable base cannot erode by a full band within the
+    horizon (durable − floor < band_half_width, or already at floor); the caller
+    maps that to NULL so no calendar marker is drawn."""
+    reach = float(durable) - float(floor)
+    if reach <= 0 or band_half_width <= 0 or reach < float(band_half_width):
+        return max_days  # can never lose a band's-worth → no meaningful erosion
+    # durable-only projection: fast=0 makes decay_onset project D alone.
+    return decay_onset_days(
+        durable=float(durable),
+        fast=0.0,
+        floor=float(floor),
+        tau_slow_days=float(tau_slow_days),
+        swc=float(band_half_width),
+        tau_fast=Z2_TAU_FAST_DAYS,
+        max_days=max_days,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -874,30 +892,29 @@ def expected_session_build(
     return i_session - i_rest, f_session - f_rest
 
 
-def build_interval_days(
-    fast_score: float,
-    delta_fast: float,
-    tau_fast: float = Z2_TAU_FAST_DAYS,
-    cap_days: float = Z2_BUILD_INTERVAL_CAP_DAYS,
-    max_days: float = Z2_DECAY_ONSET_MAX_DAYS,
+def build_cadence_days(
+    b: float,
+    freq_beginner: float = Z2_BUILD_FREQ_BEGINNER,
+    freq_slope: float = Z2_BUILD_FREQ_SLOPE,
+    floor_days: float = Z2_BUILD_INTERVAL_FLOOR_DAYS,
 ) -> float:
-    """Fast-decay-limited build cadence (docs v3 pt6): the smallest t where the
-    projected fast layer has lost one expected session's fast gain,
-    F(0) − F(0)·exp(−t/τ_fast) ≥ ΔF — train again before that and consecutive
-    sessions net-accumulate. Capped at Z2_BUILD_INTERVAL_CAP_DAYS (the licensed
-    beginner build dose 3–4/wk → 2.0 d, [LITERATURE PRIOR]), which binds exactly
-    when there is nothing banked to lose (F≈0 → the fast-decay bound is
-    unbounded, i.e. the detrained case). Continuous in F and ΔF."""
-    t = decay_onset_days(
-        durable=0.0,
-        fast=float(fast_score),
-        floor=0.0,
-        tau_slow_days=1.0,  # irrelevant: the durable term is identically 0
-        swc=max(0.0, float(delta_fast)),
-        tau_fast=tau_fast,
-        max_days=max_days,
-    )
-    return min(t, cap_days)
+    """v4 build cadence (days between building sessions) as a CONTINUOUS function
+    of base-consolidation B (docs v4 amendment; replaces the v3 min(fast-decay,
+    2.0) whose 2.0 cap always bound for a detrained user):
+
+        sessions_per_week(B) = freq_beginner + freq_slope · clamp(B,0,1)
+        cadence_days         = max(floor_days, 7 / sessions_per_week)
+
+    B=0 (novice) → 7/3 ≈ 2.33 d (the ACSM ~3×/wk VO2max-gain dose); B=1
+    (consolidated) → 7/5.5 ≈ 1.27 d (well-trained need MORE frequency to keep
+    improving). Floored at the ~24 h molecular re-stimulation window. Monotone
+    DECREASING in B, continuous, no hardcoded interval — the only constants are
+    the marked literature priors (frequencies + the 24 h floor)."""
+    bc = max(0.0, min(1.0, float(b)))
+    per_week = freq_beginner + freq_slope * bc
+    if per_week <= 0:
+        return floor_days
+    return max(floor_days, 7.0 / per_week)
 
 
 ZONE2_MAINTENANCE_MESSAGE = (

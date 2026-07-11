@@ -312,6 +312,12 @@
   color: var(--color-text-secondary);
   font-weight: 600;
 }
+/* Building-phase note: a swatch-less secondary line explaining why no
+   erosion/hold markers are shown yet. Indented to align under the legend text. */
+.z2f-guidance-legend-note {
+  color: var(--color-text-tertiary);
+  padding-left: calc(10px + var(--space-xs));
+}
 
 .z2f-guidance-swatch {
   flex-shrink: 0;

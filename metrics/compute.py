@@ -656,17 +656,6 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     def maintenance_met_for(day: date) -> bool:
         return sum(z2_session_dates.get(day - timedelta(days=j), 0) for j in range(7)) >= 2
 
-    # ---- pre-compute the FULL index track so SWC is DATA-DERIVED from the user's
-    # OWN recent index NOISE (v3 pt6; residuals vs a 7-day rolling mean so a build
-    # block's ramp cannot masquerade as noise), not a constant. ----
-    index_track: list[float] = []
-    for i in range(len(days)):
-        d_i = durable_base_track[i]
-        f_i = models.fast_score_from_load(series[i][1], fast_ceiling=c_fast, fast_sat=fast_sat)
-        index_track.append(d_i + f_i)
-    recent_index = index_track[-60:]  # trailing ~2 months of the user's own index
-    swc = models.swc_from_index(recent_index)
-
     # SD of a flat prior over [0, C_D] — the "knowing nothing" spread the fused
     # posterior is measured against (uniform-distribution SD = range/√12).
     prior_sd = c_durable / math.sqrt(12.0)
@@ -685,21 +674,47 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         sharpness = models.fast_score_from_load(sharp_load, fast_ceiling=c_fast, fast_sat=fast_sat)
         index = durable_base + sharpness  # I = D + F ∈ [0, 100]
 
-        # ---- v3 pt6: PROJECTION-DERIVED decay_onset horizon (continuous), from
-        # the model's OWN projection of THIS day's (D, F, floor_t, τ_slow_t) + the
-        # data-derived SWC. Stored CONTINUOUS on the numeric warn_after_days col. ----
-        decay_onset = models.decay_onset_days(
+        # ---- confidence + band from THIS day's staleness-inflated fusion (§6c):
+        # posterior SD vs the flat prior — continuous, data-derived. Computed
+        # FIRST because the v4 "eases" horizon is GATED by this band (erosion is
+        # only flagged once it exceeds what the model can resolve). With only the
+        # soft B-prior in the fusion, posterior_sd ≈ C_D/4 → LOW confidence + WIDE
+        # band — the honesty: no aerobic-specific anchor exists yet. ----
+        ests = level_estimates(i)
+        rhr_elev = rhr_elevation(i)  # corroborator, never fused (v3 pt3)
+        fused = models.fuse_inverse_variance(list(ests.values()))
+        # a fusion that includes the flat prior can never exceed the prior's SD
+        posterior_sd = min(fused[1], prior_sd) if fused is not None else prior_sd
+        confidence = models.confidence_from_posterior(posterior_sd, prior_sd)
+        half_width = min(1.96 * posterior_sd, models.ZONE2_INDEX_CEILING)  # 95% band
+        band_lo = max(0.0, index - half_width)
+        band_hi = min(models.ZONE2_INDEX_CEILING, index + half_width)
+
+        # ---- v4 "eases" horizon: erosion of the DURABLE BASE (not the fast
+        # layer), flagged only once projected loss exceeds the confidence band
+        # (docs v4). This removes the v3 inversion where the horizon was SHORTEST
+        # right after training (a big fast layer to shed) and blanked out when
+        # detrained. durable_erosion_onset returns the search cap when the base
+        # cannot lose a full band → _uncapped() → NULL, no marker (the thin-base
+        # "nothing banked to protect yet, just build" state). ----
+        eases_onset = models.durable_erosion_onset_days(
             durable=durable_base,
-            fast=sharpness,
             floor=floor_d_t[i],
             tau_slow_days=tau_slow_t[i],
-            swc=swc,
-            tau_fast=tau_fast,
+            band_half_width=half_width,
         )
+        in_building_phase = eases_onset >= models.Z2_DECAY_ONSET_MAX_DAYS - 1e-9
 
-        # ---- v3 pt6 horizons. w̄ = median stimulus of qualifying-session days in
-        # the trailing τ_slow(B_t) window (data-linked); Hickson fallback inside.
-        # ΔI/ΔF = one session-day at w̄ vs a rest day, from THIS day's state. ----
+        # ---- v4 build cadence: CONTINUOUS in B (docs v4), replacing the v3
+        # min(fast-decay, 2.0) whose 2.0 cap always bound for a detrained user.
+        # B=novice → ~2.3 d (3×/wk); shortens as B banks; floored at the 24 h
+        # molecular re-stimulation window. ----
+        build_interval = models.build_cadence_days(b_t[i])
+
+        # ---- maintain horizon: the last day one expected session still holds
+        # today's level (index drop ≥ one session's build increment ΔI). w̄ =
+        # median stimulus of qualifying-session days in the trailing τ_slow(B_t)
+        # window (data-linked); Hickson fallback inside. ----
         horizon_window = max(1, int(round(tau_slow_t[i])))
         qualifying_loads = [
             daily_z2_load[j]
@@ -707,7 +722,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             if z2_session_dates.get(days[j], 0) > 0
         ]
         w_bar = models.expected_session_stimulus(qualifying_loads)
-        delta_i, delta_f = models.expected_session_build(
+        delta_i, _delta_f = models.expected_session_build(
             durable_load,
             sharp_load,
             w_bar,
@@ -720,7 +735,6 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             fast_ceiling=c_fast,
             fast_sat=fast_sat,
         )
-        # the last day one expected session still holds the level: I(0)−I(t) ≥ ΔI
         maintain_horizon = models.decay_onset_days(
             durable=durable_base,
             fast=sharpness,
@@ -729,8 +743,6 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             swc=max(0.0, delta_i),
             tau_fast=tau_fast,
         )
-        # fast-decay-limited build cadence, capped at the beginner build dose (2 d)
-        build_interval = models.build_interval_days(sharpness, delta_f, tau_fast=tau_fast)
 
         # per-day CAUSAL vo2 provenance: most recent reading on-or-before this day
         # (None before the first — never negative days-since).
@@ -739,22 +751,6 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         vo2max_anchor_score = (
             models.vo2max_to_score(vo2_obs[1]) if vo2_obs is not None else None
         )
-
-        # ---- confidence + band from THIS day's staleness-inflated fusion (§6c):
-        # posterior SD vs the flat prior — continuous, data-derived; the old
-        # valid_signals/4 step lookup and the 6+18 band constants are gone. With
-        # only the (soft) B-prior in the fusion, posterior_sd ≈ C_D/4 → a LOW
-        # confidence and a WIDE band — the desired honesty: no aerobic-specific
-        # anchor exists yet, so the level is trustworthy on trend only. ----
-        ests = level_estimates(i)
-        rhr_elev = rhr_elevation(i)  # corroborator, never fused (v3 pt3)
-        fused = models.fuse_inverse_variance(list(ests.values()))
-        # a fusion that includes the flat prior can never exceed the prior's SD
-        posterior_sd = min(fused[1], prior_sd) if fused is not None else prior_sd
-        confidence = models.confidence_from_posterior(posterior_sd, prior_sd)
-        half_width = min(1.96 * posterior_sd, models.ZONE2_INDEX_CEILING)  # 95% band
-        band_lo = max(0.0, index - half_width)
-        band_hi = min(models.ZONE2_INDEX_CEILING, index + half_width)
 
         # ---- evidence_state (spec §6d) — a categorical LABEL (the numbers stay
         # continuous); counts corroborating signals present around this day.
@@ -787,19 +783,24 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         else:
             evidence_state = "ok"
 
-        # ---- zone2_maintenance flag firing rule (spec §5c): read the two pools'
-        # NORMALIZED relationship (F/C_F fading below D/C_D), never their sum.
-        # Persistence threshold derives from the continuous decay_onset. ----
-        flags = models.zone2_maintenance_flag(
-            maintenance_met=met,
-            consecutive_unmet_days=unmet_run,
-            warn_after_days=decay_onset,
-            sharpness=sharpness,
-            durable_base=durable_base,
-            hold_active=hold_active,
-            fast_ceiling=c_fast,
-            durable_ceiling=c_durable,
-        )
+        # ---- zone2_maintenance flag (spec §5c): only meaningful in the
+        # MAINTENANCE PHASE — a base worth protecting exists (eases_onset is a real
+        # horizon, not the search cap). In the building phase there is nothing
+        # banked to erode, so no flag. Persistence threshold is the erosion horizon
+        # itself; the fire rule still reads F/C_F vs D/C_D, never the sum. ----
+        if in_building_phase:
+            flags = []
+        else:
+            flags = models.zone2_maintenance_flag(
+                maintenance_met=met,
+                consecutive_unmet_days=unmet_run,
+                warn_after_days=eases_onset,
+                sharpness=sharpness,
+                durable_base=durable_base,
+                hold_active=hold_active,
+                fast_ceiling=c_fast,
+                durable_ceiling=c_durable,
+            )
 
         rows.append(
             {
@@ -833,12 +834,13 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                 },
                 "stage": stage,
                 "maintenance_met": met,
-                # v3 pt6 horizons — all CONTINUOUS, projection-derived, per-day.
-                # A horizon at the projection-search cap means "no meaningful
-                # drop within the window" (already at/near floor), NOT a real
-                # date — stored NULL so the renderer omits that marker instead
-                # of rendering a fake-precise day-120 calendar day.
-                "warn_after_days": _uncapped(decay_onset),
+                # Coaching horizons — all CONTINUOUS, per-day. A horizon at the
+                # projection-search cap means "no meaningful move within the
+                # window", stored NULL so the renderer omits that marker.
+                #  warn_after_days = v4 durable-erosion-vs-band "eases" horizon;
+                #    NULL in the building phase (base too thin to erode by a band).
+                #  build_interval_days = v4 B-scaled cadence (days between sessions).
+                "warn_after_days": _uncapped(eases_onset),
                 "maintain_horizon_days": _uncapped(maintain_horizon),
                 "build_interval_days": round(build_interval, 2),
                 "expected_session_build": round(delta_i, 3),
@@ -857,7 +859,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         f"computed_zone2_fitness: {len(rows)} rows "
         f"(B={b_t[-1]:.2f}, τ_slow={tau_slow_t[-1]:.0f}d, calib_load={calib_load:.1f}, "
         f"calib_score={f'{calib_score:.1f}' if calib_score is not None else 'none'}, "
-        f"SWC={swc:.2f}, conf={last['confidence']:.2f}, warn={_fmt_days(last['warn_after_days'])}, "
+        f"conf={last['confidence']:.2f}, eases={_fmt_days(last['warn_after_days'])}, "
         f"maintain={_fmt_days(last['maintain_horizon_days'])}, build={last['build_interval_days']:.1f}d, "
         f"hold={hold_active})"
     )

@@ -8,11 +8,12 @@ import math
 import pytest
 
 from metrics.models import (
-    Z2_BUILD_INTERVAL_CAP_DAYS,
+    Z2_BUILD_FREQ_BEGINNER,
+    Z2_BUILD_FREQ_SLOPE,
+    Z2_BUILD_INTERVAL_FLOOR_DAYS,
     Z2_MAINTENANCE_SESSION_LOAD,
     Z2_RHR_POP_BASELINE,
     Z2_SIGNAL_STALENESS_TAU_DAYS,
-    Z2_SWC_MIN_POINTS,
     Z2_VO2MAX_POP_BASELINE,
     ZONE2_DURABLE_CEILING,
     ZONE2_FAST_CEILING,
@@ -22,11 +23,12 @@ from metrics.models import (
     base_consolidation,
     base_consolidation_series,
     blended_baseline,
-    build_interval_days,
+    build_cadence_days,
     confidence_from_posterior,
     decay_onset_days,
     durable_base_series,
     durable_calibration_slope,
+    durable_erosion_onset_days,
     durable_floor_score,
     durable_score_from_percentile,
     ewma_alpha,
@@ -39,7 +41,6 @@ from metrics.models import (
     project_index,
     signal_elevation_score,
     staleness_inflated_variance,
-    swc_from_index,
     tau_slow,
     vo2max_to_score,
     z2_durable_sharpness_series,
@@ -261,42 +262,39 @@ def test_fuse_inverse_variance_none_when_no_usable():
 # continuously (thin < banked), NOT as a step function.
 # ===========================================================================
 
-# ---- SWC is DATA-DERIVED from the user's own day-to-day index NOISE: SD of the
-# residuals vs a trailing 7-day rolling mean (§6d "SWC on any 7-day rolling
-# mean") — a build block's RAMP must not masquerade as noise. ----
-def test_swc_ignores_the_trend_of_a_build_ramp():
-    # A clean 0→25 ramp over 60 days. The RAW SD is ~7.3 (0.5×SD ≈ 3.6 — the old
-    # defect stretched decay_onset exactly when a thin, freshly-built base needed
-    # a short window). Residuals vs the trailing 7-day mean are near-constant
-    # (~3×step), so the noise-SD is tiny and SWC sits at the floor.
-    ramp = [i * 25.0 / 59.0 for i in range(60)]
-    raw_sd = math.sqrt(
-        sum((v - sum(ramp) / 60) ** 2 for v in ramp) / 59
+# ---- v4 "eases" horizon = erosion of the DURABLE base past the confidence band
+# (durable_erosion_onset_days). Durable-only (no fast layer) + band-gated, so it
+# never fires on the fast layer's post-session dip and never on sub-band noise. ----
+def test_durable_erosion_returns_cap_when_base_thinner_than_band():
+    # Thin base: the whole durable range (D−floor = 7.2) is smaller than the band
+    # (19) → the base can NEVER erode by a band → search cap (→ NULL, no marker).
+    from metrics.models import Z2_DECAY_ONSET_MAX_DAYS
+
+    assert durable_erosion_onset_days(
+        durable=7.5, floor=0.3, tau_slow_days=47.0, band_half_width=19.0
+    ) == pytest.approx(Z2_DECAY_ONSET_MAX_DAYS)
+
+
+def test_durable_erosion_fires_when_base_can_lose_a_band():
+    # Banked base (D=45, floor=10 → reach 35) with a tighter band (10): the base
+    # CAN lose 10 pts, so a real, finite horizon exists — hand-check it solves
+    # floor + (D−floor)·e^(−t/τ) = D − band, i.e. e^(−t/τ) = (reach−band)/reach.
+    reach, band, tau = 35.0, 10.0, 60.0
+    t = durable_erosion_onset_days(durable=45.0, floor=10.0, tau_slow_days=tau, band_half_width=band)
+    expected = -tau * math.log((reach - band) / reach)
+    assert t == pytest.approx(expected, abs=0.05)
+
+
+def test_durable_erosion_ignores_the_fast_layer():
+    # The horizon depends only on the DURABLE base — a huge fast layer (which the
+    # v3 index projection would have shed fast, giving a short warning) does not
+    # shorten it, because the fast layer is not projected here at all.
+    from metrics.models import Z2_DECAY_ONSET_MAX_DAYS
+
+    thin = durable_erosion_onset_days(
+        durable=7.5, floor=0.3, tau_slow_days=47.0, band_half_width=19.0
     )
-    assert 0.5 * raw_sd > 3.0  # the old formula would have returned this
-    assert swc_from_index(ramp) == pytest.approx(Z2_SWC_MIN_POINTS)
-
-
-def test_swc_from_index_is_half_residual_sd():
-    # A noisy series: hand-derive the expected value from the documented
-    # definition (residual_i = x_i − mean(x[max(0,i−6)..i]); SWC = 0.5·SD(resid)).
-    vals = [50.0, 52.0, 48.0, 53.0, 47.0, 51.0, 49.0, 54.0, 46.0, 50.0, 52.0, 48.0]
-    residuals = []
-    for i, v in enumerate(vals):
-        window = vals[max(0, i - 6): i + 1]
-        residuals.append(v - sum(window) / len(window))
-    mean_r = sum(residuals) / len(residuals)
-    sd = math.sqrt(sum((r - mean_r) ** 2 for r in residuals) / (len(residuals) - 1))
-    expected = max(Z2_SWC_MIN_POINTS, 0.5 * sd)
-    assert swc_from_index(vals) == pytest.approx(expected)
-    assert expected > Z2_SWC_MIN_POINTS  # genuine day-to-day noise DOES register
-
-
-def test_swc_floored_when_index_flat():
-    # A pathologically-flat index (no noise) still yields a finite floor, not 0.
-    assert swc_from_index([50.0] * 40) == pytest.approx(Z2_SWC_MIN_POINTS)
-    assert swc_from_index([]) == pytest.approx(Z2_SWC_MIN_POINTS)
-    assert swc_from_index([50.0]) == pytest.approx(Z2_SWC_MIN_POINTS)
+    assert thin == pytest.approx(Z2_DECAY_ONSET_MAX_DAYS)  # fast layer irrelevant
 
 
 # ---- project_index: fast decays at τ_fast, durable toward floor at τ_slow ----
@@ -950,19 +948,23 @@ def test_maintain_horizon_is_decay_onset_at_one_session_build():
     assert t == pytest.approx(-14.0 * math.log(1 - 2.0 / 10.0), abs=1e-6)
 
 
-def test_build_interval_fast_decay_limited_and_capped():
-    # Banked fast pool F=25, session gain ΔF=1: t = −14·ln(1 − 1/25) ≈ 0.5715 d.
-    t = build_interval_days(25.0, 1.0, tau_fast=14.0)
-    assert t == pytest.approx(-14.0 * math.log(1 - 1.0 / 25.0), abs=1e-6)
-    assert t < Z2_BUILD_INTERVAL_CAP_DAYS
-    # Detrained (F≈0): nothing banked to lose → the fast bound never trips and the
-    # licensed beginner build dose caps the interval at 2.0 d (3–4 sessions/wk).
-    assert build_interval_days(0.0, 3.0, tau_fast=14.0) == pytest.approx(2.0)
-    assert build_interval_days(1.0, 5.0, tau_fast=14.0) == pytest.approx(2.0)
-    assert Z2_BUILD_INTERVAL_CAP_DAYS == 2.0
-    # continuous in ΔF: a bigger session gain licenses a longer interval.
-    ts = [build_interval_days(25.0, df, tau_fast=14.0) for df in (0.5, 1.0, 2.0, 4.0)]
-    assert all(b > a for a, b in zip(ts, ts[1:]))
+def test_build_cadence_scales_with_base_consolidation():
+    # v4: cadence = max(24h floor, 7 / (freq_beginner + freq_slope·B)). Hand-check
+    # the two anchors and the floor from the marked literature priors.
+    # B=0 (novice): 7 / 3 = 2.333 d (ACSM ~3×/wk).
+    assert build_cadence_days(0.0) == pytest.approx(7.0 / Z2_BUILD_FREQ_BEGINNER)
+    # B=1 (consolidated): 7 / 5.5 = 1.273 d (well-trained train MORE often).
+    assert build_cadence_days(1.0) == pytest.approx(
+        7.0 / (Z2_BUILD_FREQ_BEGINNER + Z2_BUILD_FREQ_SLOPE)
+    )
+    # Monotone DECREASING in B (fitter → shorter cadence) — no step, no plateau.
+    xs = [build_cadence_days(b) for b in (0.0, 0.1, 0.25, 0.5, 0.75, 1.0)]
+    assert all(b < a for a, b in zip(xs, xs[1:]))
+    # Floored at the 24 h molecular re-stimulation window even for an (out-of-range)
+    # hyper-consolidated B — the cadence never drops below one session/day.
+    assert build_cadence_days(5.0) >= Z2_BUILD_INTERVAL_FLOOR_DAYS
+    # Clamps out-of-range B.
+    assert build_cadence_days(-3.0) == pytest.approx(build_cadence_days(0.0))
 
 
 # ===========================================================================
