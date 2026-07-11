@@ -16,6 +16,8 @@ export interface SessionListProps {
   timezone: string | null | undefined
   /** Opens the existing day-detail drawer for the local date key of the clicked row's workout. */
   onSelectDay: (dateKey: string) => void
+  /** Hides the Prev/Next pagination row when there's only a single page (default: always shown when >1 page, as before). */
+  hidePaginationIfSinglePage?: boolean
 }
 
 function fmtDateTime(iso: string, timezone: string | null | undefined): string {
@@ -35,7 +37,12 @@ function fmtDateTime(iso: string, timezone: string | null | undefined): string {
  * client-side at PAGE_SIZE. Clicking a row reuses the Sessions view's
  * existing day-detail drawer (via onSelectDay) rather than opening its own.
  */
-export function SessionList({ workouts, timezone, onSelectDay }: SessionListProps): ReactElement {
+export function SessionList({
+  workouts,
+  timezone,
+  onSelectDay,
+  hidePaginationIfSinglePage = true
+}: SessionListProps): ReactElement {
   const [page, setPage] = useState(0)
 
   const sorted = useMemo(
@@ -88,7 +95,7 @@ export function SessionList({ workouts, timezone, onSelectDay }: SessionListProp
         })}
       </div>
 
-      {pageCount > 1 && (
+      {(pageCount > 1 || !hidePaginationIfSinglePage) && (
         <div className="session-list-pagination">
           <button
             type="button"
