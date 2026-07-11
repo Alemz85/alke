@@ -199,15 +199,19 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     <section className="z2f" aria-label="Zone 2 fitness level">
       <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
         <div className="z2f-top">
-          {/* ── Overall index — the one hero number for the tab ──────────── */}
+          {/* ── Overall index — the one hero number, framed; ±band / ceiling /
+              stage demoted to a small secondary line below. ──────────────── */}
           <div className="z2f-hero">
             <div className="z2f-eyebrow">ZONE 2 FITNESS · INDEX</div>
-            <div className="z2f-index-row">
+            <div className="z2f-index-box">
               <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
                 {indexRounded ?? '—'}
               </span>
+            </div>
+            <div className="z2f-index-meta">
               {halfWidth != null && <span className="z2f-index-band tabular-nums">±{halfWidth}</span>}
-              <span className="z2f-index-ceiling tabular-nums">/ 100</span>
+              <span className="z2f-index-ceiling tabular-nums">out of 100</span>
+              <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
             </div>
           </div>
 
@@ -250,10 +254,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="z2f-pills">
-          <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
         </div>
 
         {!evidenceOk && reason && (

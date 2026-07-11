@@ -50,10 +50,11 @@
 .z2f-hero {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  align-items: flex-start;
+  gap: var(--space-sm);
 }
 
-/* ── Hero index number (the one big figure; the band is the ±N beside it) ─ */
+/* ── Hero index number (the one big figure; everything else is secondary) ─ */
 .z2f-eyebrow {
   font-family: var(--font-body);
   font-size: var(--type-label-size);
@@ -64,10 +65,17 @@
   color: var(--color-aerobic-text);
 }
 
-.z2f-index-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-sm);
+/* Faded frame around the number so it reads as the single focal element —
+   a recessed inset (surface is a step darker than the card) + hairline, no
+   shadow (elevation is luminance, per DESIGN.md). */
+.z2f-index-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-lg);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
 }
 
 .z2f-index {
@@ -82,20 +90,25 @@
   color: var(--color-text-secondary);
 }
 
-/* ± band on the number — mandatory, prominent, never an afterthought. */
-.z2f-index-band {
-  font-family: var(--font-body);
-  font-size: var(--type-body-md-size);
-  font-weight: 600;
-  color: var(--color-aerobic-text);
+/* Secondary line under the number: ±band · out of 100 · stage. Small and muted
+   — the detail you read second, decluttered off the headline figure. */
+.z2f-index-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
   font-variant-numeric: tabular-nums;
 }
-
+.z2f-index-band {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-aerobic-text);
+}
 .z2f-index-ceiling {
   font-family: var(--font-body);
-  font-size: var(--type-body-md-size);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Two component meters — durable base + fast/form ──────────────────── */
@@ -179,24 +192,18 @@
   padding: 1px 8px;
 }
 
-.z2f-pills {
-  display: flex;
-  gap: var(--space-xs);
-  margin-top: var(--space-xxs);
-}
-
-/* Neutral stage pill (chip-filter style). */
+/* Small neutral stage pill, demoted into the secondary meta line. */
 .z2f-stage-pill {
   display: inline-flex;
   align-items: center;
   background: var(--color-surface);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   border-radius: var(--radius-full);
-  padding: 6px 14px;
+  padding: 2px 10px;
   font-family: var(--font-body);
-  font-size: var(--type-button-sm-size);
-  font-weight: var(--type-button-sm-weight);
-  letter-spacing: var(--type-button-sm-letter-spacing);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  letter-spacing: var(--type-caption-letter-spacing);
 }
 
 .z2f-evidence-note {
