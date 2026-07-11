@@ -64,6 +64,15 @@
   --color-zone-neutral-3: rgba(255, 255, 255, 0.34);
   --color-zone-neutral-4: rgba(255, 255, 255, 0.46);
 
+  /* HR-zone qualitative palette (Z1→Z5): light blue, green, yellow, red,
+     purple — distinct hues per zone (owner request; replaces same-hue shades
+     in per-workout zone bars/stacks). */
+  --color-zone1: #7dd3fc; /* sky-300 */
+  --color-zone2: #4ade80; /* green-400 */
+  --color-zone3: #facc15; /* yellow-400 */
+  --color-zone4: #f87171; /* red-400 */
+  --color-zone5: #c084fc; /* purple-400 */
+
   /* Insight correlation heatmap poles (sign = direction, not judgement). */
   --color-corr-positive: 45, 212, 191; /* aerobic teal RGB triplet */
   --color-corr-negative: 167, 139, 250; /* recovery violet RGB triplet */
@@ -218,6 +227,13 @@
   --color-zone-neutral-2: rgba(0, 0, 0, 0.18);
   --color-zone-neutral-3: rgba(0, 0, 0, 0.3);
   --color-zone-neutral-4: rgba(0, 0, 0, 0.44);
+
+  /* HR-zone qualitative palette — deeper steps for light surfaces. */
+  --color-zone1: #0284c7; /* sky-600 */
+  --color-zone2: #16a34a; /* green-600 */
+  --color-zone3: #ca8a04; /* yellow-600 */
+  --color-zone4: #dc2626; /* red-600 */
+  --color-zone5: #9333ea; /* purple-600 */
 
   /* Chart cursor wash and scrim invert */
   --color-chart-cursor: rgba(0, 0, 0, 0.04);
