@@ -82,10 +82,23 @@
   justify-content: space-between;
 }
 
+.day-drawer-session-header-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-text-tertiary);
+}
+
 .day-drawer-session-time {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
+}
+
+.day-drawer-session-stats-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
 }
 
 .day-drawer-session-stats {

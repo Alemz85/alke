@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
+import { ModalityIcon } from './ModalityIcon'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
@@ -81,6 +82,7 @@ function SessionCard({
   const domain = modalityToDomain(workout.type)
   const badgeDomain = domain === 'neutral' ? 'sessions' : domain
   const distanceKm = workout.distance_m !== null ? (workout.distance_m / 1000).toFixed(2) : null
+  const isStrength = /strength|core/i.test(workout.type ?? '')
 
   const hrSamples = detailQuery.data?.hrSamples ?? []
   const hrChartData = hrSamples.map((s) => ({
@@ -94,47 +96,84 @@ function SessionCard({
   const decoupling = computed?.decoupling_pct
 
   const swimSets = detailQuery.data?.swimSets ?? []
+  const swimSummary = swimSets.length > 0 ? summarizeSession(swimSets) : null
 
   return (
     <div className="day-drawer-session">
       <div className="day-drawer-session-header">
-        <BadgeDomain domain={badgeDomain} label={modalityLabel(workout.type)} />
+        <div className="day-drawer-session-header-badge">
+          <ModalityIcon type={workout.type} size={16} />
+          <BadgeDomain domain={badgeDomain} label={modalityLabel(workout.type)} />
+        </div>
         <span className="day-drawer-session-time tabular-nums">
           {formatLocalTime(workout.start_at, timezone)}
         </span>
       </div>
 
-      <div className="day-drawer-session-stats">
-        <div className="day-drawer-session-stat">
-          <span className="day-drawer-session-stat-value tabular-nums">
-            {formatDuration(workout.duration_s ?? 0)}
-          </span>
-          <span className="day-drawer-session-stat-label">Duration</span>
-        </div>
-        {distanceKm && (
+      <div className="day-drawer-session-stats-block">
+        <div className="day-drawer-session-stats">
           <div className="day-drawer-session-stat">
-            <span className="day-drawer-session-stat-value tabular-nums">{distanceKm} km</span>
-            <span className="day-drawer-session-stat-label">Distance</span>
+            <span className="day-drawer-session-stat-value tabular-nums">
+              {formatDuration(workout.duration_s ?? 0)}
+            </span>
+            <span className="day-drawer-session-stat-label">Duration</span>
+          </div>
+          {distanceKm && (
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">{distanceKm} km</span>
+              <span className="day-drawer-session-stat-label">Distance</span>
+            </div>
+          )}
+          <div className="day-drawer-session-stat">
+            <span className="day-drawer-session-stat-value tabular-nums">
+              {trimp != null ? Math.round(trimp) : EM_DASH}
+            </span>
+            <span className="day-drawer-session-stat-label">TRIMP</span>
+          </div>
+          {!isStrength && (
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {ef != null ? ef.toFixed(2) : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">EF</span>
+            </div>
+          )}
+          {!isStrength && (
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Decoupling</span>
+            </div>
+          )}
+        </div>
+
+        {swimSummary && (
+          <div className="day-drawer-session-stats">
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {swimSummary.avgPaceSecPer100m !== null
+                  ? `${fmtSetTime(swimSummary.avgPaceSecPer100m)} /100m`
+                  : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Avg set pace</span>
+            </div>
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {swimSummary.medianRestS !== null
+                  ? `~${Math.round(swimSummary.medianRestS)}s`
+                  : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Rest</span>
+            </div>
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {swimSummary.structure || EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Sets</span>
+            </div>
           </div>
         )}
-        <div className="day-drawer-session-stat">
-          <span className="day-drawer-session-stat-value tabular-nums">
-            {trimp != null ? Math.round(trimp) : EM_DASH}
-          </span>
-          <span className="day-drawer-session-stat-label">TRIMP</span>
-        </div>
-        <div className="day-drawer-session-stat">
-          <span className="day-drawer-session-stat-value tabular-nums">
-            {ef != null ? ef.toFixed(2) : EM_DASH}
-          </span>
-          <span className="day-drawer-session-stat-label">EF</span>
-        </div>
-        <div className="day-drawer-session-stat">
-          <span className="day-drawer-session-stat-value tabular-nums">
-            {decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH}
-          </span>
-          <span className="day-drawer-session-stat-label">Decoupling</span>
-        </div>
       </div>
 
       <div className="day-drawer-hr-chart">
@@ -178,18 +217,20 @@ function SessionCard({
         )}
       </div>
 
-      <div className="day-drawer-zones">
-        <div className="day-drawer-section-label">Time in zones</div>
-        {computed?.time_in_zones ? (
-          <TimeInZonesBar zones={computed.time_in_zones} />
-        ) : (
-          <div className="day-drawer-zones-empty">
-            <span className="day-drawer-empty-text">
-              Zone breakdown appears once this session is processed.
-            </span>
-          </div>
-        )}
-      </div>
+      {!isStrength && (
+        <div className="day-drawer-zones">
+          <div className="day-drawer-section-label">Time in zones</div>
+          {computed?.time_in_zones ? (
+            <TimeInZonesBar zones={computed.time_in_zones} />
+          ) : (
+            <div className="day-drawer-zones-empty">
+              <span className="day-drawer-empty-text">
+                Zone breakdown appears once this session is processed.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {swimSets.length > 0 && <SwimSetsSection sets={swimSets} hrSamples={hrSamples} />}
 
@@ -357,7 +398,6 @@ function SwimSetsSection({
   sets: SwimSet[]
   hrSamples: WorkoutHrSample[]
 }): ReactElement {
-  const summary = summarizeSession(sets)
   const paces = sets.map(paceSecPer100m)
   const setHrs = sets.map((s) => setAvgHr(s, hrSamples))
   const hasHr = setHrs.some((v) => v !== null)
@@ -371,13 +411,7 @@ function SwimSetsSection({
 
   return (
     <div className="day-drawer-swim">
-      <div className="day-drawer-section-label">
-        Sets{summary.structure ? ` — ${summary.structure}` : ''}
-        {summary.avgPaceSecPer100m !== null
-          ? ` · avg ${fmtSetTime(summary.avgPaceSecPer100m)} /100m`
-          : ''}
-        {summary.medianRestS !== null ? ` · rest ~${Math.round(summary.medianRestS)}s` : ''}
-      </div>
+      <div className="day-drawer-section-label">Sets</div>
 
       <SwimTimeline sets={sets} paces={paces} hrSamples={hrSamples} />
 
