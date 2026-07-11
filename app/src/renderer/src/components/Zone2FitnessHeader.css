@@ -7,7 +7,7 @@
 .z2f {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
+  gap: var(--space-md); /* card-to-card contract: 16px between cards, everywhere */
 }
 
 /* ── Two rows: [fitness panel | trajectory] on top, [calendar | Month/Year
@@ -19,7 +19,7 @@
    a narrow window. ── */
 .z2f-row {
   display: grid;
-  gap: var(--space-lg);
+  gap: var(--space-md); /* card-to-card contract */
   align-items: stretch;
 }
 .z2f-row--top {
@@ -391,16 +391,19 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── Calendar block, left of the Month/Year cardio stat tables. The calendar
-   keeps its natural width-driven height; the table column stretches to match
-   (same calendar-driven equal-height rule as the Sessions view). ─────────── */
+/* ── Calendar block, left of the Month/Year cardio stat tables. PURE layout
+   wrapper: CalendarHeatmap brings its own card chrome, so adding a second
+   padded card here nests cards and breaks the 16px card-gap contract
+   (Sessions uses the heatmap bare the same way). The card fills the row when
+   the table column is taller (slack inside, cells never morph). ─────────── */
 .z2f-calendar-block {
-  background: var(--color-surface-elevated);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.z2f-calendar-block > .calendar-heatmap {
+  flex: 1;
 }
 
 /* ── Month / Year cardio stat tables, right of the calendar (Sessions-style

@@ -74,7 +74,7 @@
      the pace table's height — otherwise the two shorter MetricCard columns
      inflate to the taller table's height and read as a block of dead space. */
   align-items: start;
-  gap: var(--space-xs) var(--space-md);
+  gap: var(--space-md); /* card-to-card contract */
 }
 
 .zone2-swim-pace-table {
