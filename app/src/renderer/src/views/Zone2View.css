@@ -61,3 +61,33 @@
   letter-spacing: 0.24px;
   color: var(--color-text-tertiary);
 }
+
+.zone2-swim-sessions {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+}
+
+.zone2-swim-sessions th {
+  text-align: right;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  padding: var(--space-xxs) var(--space-xs);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.zone2-swim-sessions th:first-child,
+.zone2-swim-sessions td:first-child {
+  text-align: left;
+}
+
+.zone2-swim-sessions td {
+  text-align: right;
+  padding: var(--space-xxs) var(--space-xs);
+  color: var(--color-text-secondary);
+}
+
+.zone2-swim-sessions tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-surface-hover) 40%, transparent);
+}

@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
-import type { Workout } from '@shared/types'
+import type { SwimSet, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ChartCard, EmptyState, HeroMetric, MetricCard, Zone2FitnessHeader } from '../components'
 import { isoWeekKey, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
@@ -25,6 +25,7 @@ import {
   cardioModalityOf,
   type CardioModalityKey
 } from '../lib/cardioModality'
+import { groupByWorkout, summarizeSession } from '../lib/swimSets'
 import './Zone2View.css'
 
 const AEROBIC = 'var(--color-aerobic)'
@@ -153,6 +154,35 @@ function EfScatter({ data }: { data: EfPoint[] }): ReactElement {
   )
 }
 
+interface SwimTrendChartProps {
+  data: { date: string; [k: string]: unknown }[]
+  dataKey: string
+  format: (v: number) => string
+}
+
+function SwimTrendChart({ data, dataKey, format }: SwimTrendChartProps): ReactElement {
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis
+          domain={['auto', 'auto']}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(v) => (typeof v === 'number' ? format(v) : v)}
+        />
+        <Scatter dataKey={dataKey} fill={AEROBIC} />
+        <Line dataKey={dataKey} stroke={AEROBIC} strokeWidth={1.5} dot={false} type="monotone" />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
 interface DecouplingPoint {
   t: number
   date: string
@@ -229,6 +259,11 @@ export function Zone2View(): ReactElement {
   const workoutsQuery = useQuery({
     queryKey: ['zone2', 'workouts'],
     queryFn: () => window.api.getWorkouts(yearAgo, new Date().toISOString()),
+    staleTime: 60_000
+  })
+  const swimSetsQuery = useQuery({
+    queryKey: ['zone2', 'swimSets'],
+    queryFn: () => window.api.getSwimSets(yearAgo, new Date().toISOString()),
     staleTime: 60_000
   })
   const configQuery = useQuery({
@@ -394,6 +429,7 @@ export function Zone2View(): ReactElement {
           key={activeView}
           modalityKey={activeView}
           workouts={workouts}
+          swimSets={swimSetsQuery.data ?? []}
           timezone={timezone}
           efPoints={efPoints}
           decouplingPoints={decouplingPoints}
@@ -406,6 +442,7 @@ export function Zone2View(): ReactElement {
 interface ModalityViewProps {
   modalityKey: CardioModalityKey
   workouts: Workout[]
+  swimSets: SwimSet[]
   timezone: string | null
   efPoints: EfPoint[]
   decouplingPoints: DecouplingPoint[]
@@ -414,17 +451,36 @@ interface ModalityViewProps {
 function ModalityView({
   modalityKey,
   workouts,
+  swimSets,
   timezone,
   efPoints,
   decouplingPoints
 }: ModalityViewProps): ReactElement {
   const modality = cardioModalityByKey(modalityKey)
 
+  const isSwim = modalityKey === 'swim'
+
   // Workouts of this modality with computed zones.
   const modalityWorkouts = useMemo(
     () => workouts.filter((w) => hasZones(w) && cardioModalityOf(w.type) === modalityKey),
     [workouts, modalityKey]
   )
+
+  // Per-session swim set summaries, oldest→newest, joined to workout dates.
+  // Uses the UNFILTERED `workouts` prop (not modalityWorkouts, which requires
+  // hasZones — set data is available immediately, zones are not).
+  const swimSessionRows = useMemo(() => {
+    if (!isSwim || swimSets.length === 0) return []
+    const byWorkout = groupByWorkout(swimSets)
+    return workouts
+      .filter((w) => byWorkout.has(w.id))
+      .sort((a, b) => a.start_at.localeCompare(b.start_at))
+      .map((w) => ({
+        date: localDateKey(w.start_at, timezone).slice(5),
+        fullDate: localDateKey(w.start_at, timezone),
+        ...summarizeSession(byWorkout.get(w.id)!)
+      }))
+  }, [isSwim, swimSets, workouts, timezone])
 
   // --- stat row: this-week Z2 min (modality), sessions 90d, avg Z2 share 90d ---
   const weekly = useMemo(() => weeklyZ2(modalityWorkouts, timezone, 12), [modalityWorkouts, timezone])
@@ -448,8 +504,6 @@ function ModalityView({
   }, [modalityWorkouts])
 
   const tizBars = useMemo(() => tizRows(modalityWorkouts, timezone, 15), [modalityWorkouts, timezone])
-
-  const isSwim = modalityKey === 'swim'
 
   return (
     <>
@@ -506,6 +560,72 @@ function ModalityView({
                   <DecouplingScatter data={decouplingPoints} />
                   <p className="zone2-caption">Within ±5% (shaded) = aerobically steady for the session.</p>
                 </>
+              )}
+            </ChartCard>
+
+            <ChartCard title="Set pace — swims" span={6}>
+              {swimSessionRows.length === 0 ? (
+                <EmptyState message="No swim set data yet — sets appear as soon as a pool swim syncs." />
+              ) : (
+                <>
+                  <SwimTrendChart
+                    data={swimSessionRows}
+                    dataKey="avgPaceSecPer100m"
+                    format={(v) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')} /100m`}
+                  />
+                  <p className="zone2-caption">
+                    Set-weighted pace per session — down is faster.
+                  </p>
+                </>
+              )}
+            </ChartCard>
+
+            <ChartCard title="SWOLF — swims" span={6}>
+              {swimSessionRows.length === 0 ? (
+                <EmptyState message="No swim set data yet — sets appear as soon as a pool swim syncs." />
+              ) : (
+                <>
+                  <SwimTrendChart data={swimSessionRows} dataKey="medianSwolf25" format={(v) => v.toFixed(1)} />
+                  <p className="zone2-caption">
+                    Median (time + watch-arm strokes) per 25m — self-relative efficiency, lower is better.
+                  </p>
+                </>
+              )}
+            </ChartCard>
+
+            <ChartCard title="Recent swim sessions" span={12}>
+              {swimSessionRows.length === 0 ? (
+                <EmptyState message="No swim set data yet." />
+              ) : (
+                <table className="zone2-swim-sessions">
+                  <thead>
+                    <tr>
+                      <th>date</th>
+                      <th>structure</th>
+                      <th>set distance</th>
+                      <th>rest</th>
+                      <th>fade</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {swimSessionRows
+                      .slice(-8)
+                      .reverse()
+                      .map((row) => (
+                        <tr key={row.fullDate}>
+                          <td className="tabular-nums">{row.fullDate}</td>
+                          <td>{row.structure}</td>
+                          <td className="tabular-nums">{Math.round(row.setDistanceM)}m</td>
+                          <td className="tabular-nums">
+                            {row.medianRestS === null ? '—' : `~${Math.round(row.medianRestS)}s`}
+                          </td>
+                          <td className="tabular-nums">
+                            {row.fadePct === null ? '—' : `${row.fadePct >= 0 ? '+' : ''}${row.fadePct.toFixed(1)}%`}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               )}
             </ChartCard>
           </>
