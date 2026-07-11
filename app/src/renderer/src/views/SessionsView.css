@@ -20,19 +20,37 @@
   min-height: 0;
 }
 
-/* Let the calendar card grow to match the stretched grid row (see
-   .sessions-grid's align-items: stretch); the empty-note below it (when
-   present) keeps its intrinsic height. CalendarHeatmap fills whatever height
-   this wrapper gives it (see .calendar-heatmap's height: 100%). */
+/* Equal heights, calendar-driven: the calendar keeps its natural width-driven
+   height (square-ish cells at every window size), and the summary column
+   stretches to match — the two cards share the height and their table rows
+   space out into it. When the tables' own minimum exceeds the calendar, the
+   calendar CARD fills the row instead (slack inside the card, cells never
+   morph) so the card bottoms always align. */
 .sessions-grid-calendar > .calendar-heatmap {
   flex: 1;
-  min-height: 0;
 }
 
 .sessions-grid-summary {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.sessions-grid-summary .sessions-summary-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.sessions-grid-summary .stat-table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessions-grid-summary .stat-table-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
 }
 
 .sessions-empty-note {

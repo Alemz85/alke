@@ -357,8 +357,9 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── Calendar block, left of the Month/Year cardio stat tables. Fills the
-   stretch row's height (set by the taller summary column). ─────────────── */
+/* ── Calendar block, left of the Month/Year cardio stat tables. The calendar
+   keeps its natural width-driven height; the table column stretches to match
+   (same calendar-driven equal-height rule as the Sessions view). ─────────── */
 .z2f-calendar-block {
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
@@ -366,7 +367,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  height: 100%;
 }
 
 /* ── Month / Year cardio stat tables, right of the calendar (Sessions-style
@@ -375,6 +375,23 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.z2f-summary .z2f-summary-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.z2f-summary .stat-table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.z2f-summary .stat-table-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
 }
 .z2f-summary--skeleton {
   min-height: 360px;

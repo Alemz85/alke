@@ -5,12 +5,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  /* Fill whatever height a stretching parent gives it (e.g. Sessions view's
-     equal-height calendar/table columns). When the parent doesn't constrain
-     height (no flex/grid stretch context), height: 100% resolves against
-     "auto" and this is a no-op — intrinsic sizing from the grid/cells below
-     still applies. */
-  height: 100%;
+  /* The calendar sizes itself from its WIDTH (cells hold their shape); the
+     equal-height views stretch their table column to match this height, never
+     the other way around — height-driven cells morph into odd slivers. */
   box-sizing: border-box;
 }
 
@@ -73,20 +70,15 @@
 .calendar-heatmap-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  grid-auto-rows: 1fr;
   gap: 4px;
-  /* Absorb the extra height the stretched .calendar-heatmap root gives us, so
-     week rows (and their day cells) grow to fill the card rather than the
-     card growing empty space below a fixed-height grid. */
-  flex: 1;
-  min-height: 0;
 }
 
 .calendar-heatmap-cell {
   position: relative;
-  /* No aspect-ratio: under a stretched parent it feeds the cell's min-content
-     WIDTH (height × ratio), overflowing the card horizontally at certain
-     window sizes. Height comes from grid-auto-rows: 1fr with this floor. */
+  /* Width-driven square-ish shape: the minmax(0, 1fr) tracks bound the width,
+     the ratio derives height from it. (Never drive this from height — that
+     direction feeds min-content width and overflows the card.) */
+  aspect-ratio: 1 / 1;
   min-height: 44px;
   min-width: 0;
   overflow: hidden;
