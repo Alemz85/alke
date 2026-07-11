@@ -1,8 +1,9 @@
-// Formatting and date helpers scoped to the Dashboard view.
+// Formatting and date helpers scoped to the Dashboard view. Pure format-only
+// helpers (fmtNum/fmtDelta/EM_DASH) now live in lib/format.ts and are
+// re-exported here so existing call sites (Dashboard) keep compiling unchanged.
 import type { UserConfig, Workout } from '@shared/types'
+import { EM_DASH, fmtDelta, fmtNum } from '../lib/format'
 import { workoutMatchesGoal } from '../lib/modality'
-
-const EM_DASH = '—'
 
 /** Monday 00:00:00 local (of `date`'s calendar day) — ISO week start. */
 export function startOfIsoWeek(date: Date): Date {
@@ -19,19 +20,6 @@ export function endOfIsoWeek(date: Date): Date {
   const end = new Date(start)
   end.setDate(end.getDate() + 7)
   return end
-}
-
-/** Formats a number with fixed decimals, or an em-dash if null/undefined/NaN. */
-export function fmtNum(value: number | null | undefined, decimals = 1): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH
-  return value.toFixed(decimals)
-}
-
-/** Formats a signed delta, e.g. "+2.3" / "-1.1", or an em-dash. */
-export function fmtDelta(value: number | null | undefined, decimals = 1): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH
-  const sign = value > 0 ? '+' : value < 0 ? '' : '±'
-  return `${sign}${value.toFixed(decimals)}`
 }
 
 /** Humanizes a workout `type` string, e.g. "open_water_swim" -> "Open Water Swim". */
@@ -118,4 +106,4 @@ export function countSessionsForGoal(workouts: Workout[], goalKey: string): numb
   return workouts.filter((w) => workoutMatchesGoal(w.type, goalKey)).length
 }
 
-export { EM_DASH }
+export { EM_DASH, fmtDelta, fmtNum }

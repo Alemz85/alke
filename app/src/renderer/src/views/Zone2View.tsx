@@ -36,16 +36,17 @@ import {
   cardioModalityOf,
   type CardioModalityKey
 } from '../lib/cardioModality'
+import { CHART, chartTooltipStyle } from '../lib/chartTheme'
+import { EM_DASH, formatPace100 } from '../lib/format'
 import { groupByWorkout, summarizeSession } from '../lib/swimSets'
 import { fastest100, fastest25, monthlyAvgPace } from '../lib/swimTrends'
 import { weekLabel } from '../lib/weekLabel'
-import { EM_DASH } from './dashboardUtils'
 import './Zone2View.css'
 
-const AEROBIC = 'var(--color-aerobic)'
-const AEROBIC_DIM = 'var(--color-aerobic-dim)'
-const TERTIARY = 'var(--color-text-tertiary)'
-const GRID = 'var(--color-divider-soft)'
+const AEROBIC = CHART.aerobic
+const AEROBIC_DIM = CHART.aerobicDim
+const TERTIARY = CHART.tertiary
+const GRID = CHART.grid
 // Z2 carries the domain accent; other zones use the qualitative zone tokens.
 const ZONE_FILLS = [
   'var(--color-zone1)',
@@ -54,7 +55,7 @@ const ZONE_FILLS = [
   'var(--color-zone4)',
   'var(--color-zone5)'
 ]
-const CHART_CURSOR = 'var(--color-chart-cursor)'
+const CHART_CURSOR = CHART.cursor
 
 type ViewKey = 'summary' | CardioModalityKey
 
@@ -69,13 +70,6 @@ function isCardio(type: string | null): boolean {
 
 function hasZones(w: Workout): boolean {
   return w.computed?.time_in_zones != null
-}
-
-/** Formats a sec/100m pace as m:ss. */
-function fmtPace100(pace: number): string {
-  const m = Math.floor(pace / 60)
-  const s = Math.round(pace % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 const MONTH_SHORT_NAMES = [
@@ -99,14 +93,6 @@ function monthLabel(ym: string): string {
   return `${MONTH_SHORT_NAMES[m - 1]} ${y}`
 }
 
-const tooltipStyle = {
-  backgroundColor: 'var(--color-surface-hover)',
-  border: 'none',
-  borderRadius: 12,
-  fontSize: 13,
-  fontVariantNumeric: 'tabular-nums' as const
-}
-
 // --- shared chart bodies (reused by Summary and modality views) ---
 
 interface WeeklyBarsProps {
@@ -122,7 +108,7 @@ function WeeklyZ2Bars({ data, targetMin }: WeeklyBarsProps): ReactElement {
         <CartesianGrid stroke={GRID} vertical={false} />
         <XAxis dataKey="week" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: CHART_CURSOR }} />
+        <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: CHART_CURSOR }} />
         {targetMin != null && (
           <ReferenceLine
             y={targetMin}
@@ -159,7 +145,7 @@ function TimeInZonesStacks({ data }: { data: TizBar[] }): ReactElement {
         <CartesianGrid stroke={GRID} vertical={false} />
         <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: CHART_CURSOR }} />
+        <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: CHART_CURSOR }} />
         {(['z1', 'z2', 'z3', 'z4', 'z5'] as const).map((z, i) => (
           <Bar key={z} dataKey={z} stackId="tiz" fill={ZONE_FILLS[i]} maxBarSize={32} />
         ))}
@@ -188,7 +174,7 @@ function EfScatter({ data }: { data: EfPoint[] }): ReactElement {
           tickLine={false}
           tickFormatter={(v: number) => v.toFixed(2)}
         />
-        <Tooltip contentStyle={tooltipStyle} formatter={(v) => (typeof v === 'number' ? v.toFixed(3) : v)} />
+        <Tooltip contentStyle={chartTooltipStyle} formatter={(v) => (typeof v === 'number' ? v.toFixed(3) : v)} />
         <Scatter dataKey="ef" fill={AEROBIC} />
         <Line dataKey="median" stroke={AEROBIC} strokeWidth={1.5} dot={false} type="monotone" />
       </ComposedChart>
@@ -225,7 +211,7 @@ function StrokeMechanicsChart({
           tickFormatter={(v: number) => v.toFixed(1)}
         />
         <Tooltip
-          contentStyle={tooltipStyle}
+          contentStyle={chartTooltipStyle}
           formatter={(v, name) =>
             typeof v === 'number'
               ? name === 'dpsMPerCycle'
@@ -270,7 +256,7 @@ function SwimTrendChart({ data, dataKey, format, label }: SwimTrendChartProps): 
           tickLine={false}
         />
         <Tooltip
-          contentStyle={tooltipStyle}
+          contentStyle={chartTooltipStyle}
           formatter={(v) => (typeof v === 'number' ? [format(v), label] : v)}
         />
         <Line dataKey={dataKey} name={label} stroke={AEROBIC} strokeWidth={1.5} dot={{ r: 3 }} type="monotone" />
@@ -297,7 +283,7 @@ function DecouplingScatter({ data }: { data: DecouplingPoint[] }): ReactElement 
           tickLine={false}
           tickFormatter={(v: number) => `${v}%`}
         />
-        <Tooltip contentStyle={tooltipStyle} formatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)} />
+        <Tooltip contentStyle={chartTooltipStyle} formatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)} />
         <ReferenceArea y1={-5} y2={5} fill={AEROBIC_DIM} strokeOpacity={0} />
         <Scatter dataKey="pct" fill={AEROBIC} />
       </ComposedChart>
@@ -669,7 +655,7 @@ function ModalityView({
     swimStats && swimStats.paceByMonth.length > 0
       ? swimStats.paceByMonth.map((row) => ({
           label: monthLabel(row.month),
-          value: fmtPace100(row.paceSecPer100m)
+          value: formatPace100(row.paceSecPer100m)
         }))
       : []
 
@@ -699,7 +685,7 @@ function ModalityView({
           </div>
           <MetricCard
             eyebrow="Swim · fastest /100m"
-            value={swimFastest100 ? fmtPace100(swimFastest100.paceSecPer100m) : EM_DASH}
+            value={swimFastest100 ? formatPace100(swimFastest100.paceSecPer100m) : EM_DASH}
             domain="aerobic"
             caption={swimFastest100 ? `100m set · ${swimFastest100.date}` : 'needs a 100m set'}
           />

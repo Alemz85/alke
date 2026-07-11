@@ -1,18 +1,26 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ReactElement } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import type { UserConfig, Workout, Zone2Fitness } from '@shared/types'
+import type { Workout } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { CalendarHeatmap } from './CalendarHeatmap'
 import { DayDetailDrawer } from './DayDetailDrawer'
 import { EmptyState } from './EmptyState'
-import { StatTable } from './StatTable'
+import { SummaryCard } from './SummaryCard'
 import type { StatTableRow } from './StatTable'
+import { useMonthCalendar } from '../hooks/useMonthCalendar'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
-import { addDays, localDateKey, todayYMD, ymdKey, ymdToIsoStart } from '../hooks/sessionsDate'
+import { addDays, localDateKey, ymdKey } from '../hooks/sessionsDate'
+import {
+  useDailyMetricsRange,
+  useMonthWorkouts,
+  useUserConfig,
+  useYearWorkouts,
+  useZone2FitnessRange
+} from '../hooks/useSessionsData'
 import { cardioModalityOf } from '../lib/cardioModality'
 import { formatWorkoutDuration } from '../lib/calendarDayLabel'
+import { formatPerMonth, formatTrendPct } from '../lib/format'
 import { rhrRecent, zoneRanges } from '../lib/hrZones'
 import { isCardioType, monthSummary, yearSummary } from '../lib/periodSummary'
 import type { SummaryItem } from '../lib/periodSummary'
@@ -30,8 +38,6 @@ import {
 } from '../lib/zone2Fitness'
 import './Zone2FitnessHeader.css'
 
-const EM_DASH = '—'
-
 // What each zone is FOR — the label a glance needs, not physiology prose.
 const ZONE_INTENT: Record<number, string> = {
   1: 'recovery',
@@ -39,16 +45,6 @@ const ZONE_INTENT: Record<number, string> = {
   3: 'tempo',
   4: 'threshold',
   5: 'max'
-}
-
-function fmtTrendPct(pct: number | null): string {
-  if (pct === null) return EM_DASH
-  const sign = pct > 0 ? '+' : ''
-  return `${sign}${Math.round(pct)}%`
-}
-
-function fmtPerMonth(n: number): string {
-  return Number.isInteger(n) ? n.toString() : n.toFixed(1)
 }
 
 /** Sum of computed time_in_zones.z2 seconds across the given workouts. */
@@ -111,10 +107,17 @@ function isZone2Session(w: Workout): boolean {
  * Fetches its own data with react-query so it drops in above the existing tab content.
  */
 export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
-  const today = useMemo(() => todayYMD(timezone), [timezone])
-  const [viewYear, setViewYear] = useState(today.year)
-  const [viewMonth, setViewMonth] = useState(today.month)
-  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null)
+  const {
+    today,
+    todayKey,
+    viewYear,
+    viewMonth,
+    handlePrevMonth,
+    handleNextMonth,
+    selectedDayKey,
+    openDay,
+    closeDay
+  } = useMonthCalendar(timezone)
 
   // Trailing ~150-day window (mid of the spec's 120–180 d range).
   const { fromDate, toDate } = useMemo(() => {
@@ -125,36 +128,15 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     }
   }, [today])
 
-  const fitnessQuery = useQuery<Zone2Fitness[]>({
-    queryKey: ['zone2-fitness', fromDate, toDate],
-    queryFn: () => window.api.getZone2Fitness(fromDate, toDate),
-    staleTime: 60_000
-  })
+  const fitnessQuery = useZone2FitnessRange(fromDate, toDate)
 
   // Sessions for the calendar grid (reuses the Sessions month-workout pattern).
-  const monthWorkoutsQuery = useQuery({
-    queryKey: ['zone2-fitness', 'monthWorkouts', viewYear, viewMonth],
-    queryFn: () => {
-      const monthStart = { year: viewYear, month: viewMonth, day: 1 }
-      const daysInMonth = new Date(Date.UTC(viewYear, viewMonth, 0)).getUTCDate()
-      const monthEnd = { year: viewYear, month: viewMonth, day: daysInMonth }
-      return window.api.getWorkouts(ymdToIsoStart(addDays(monthStart, -7)), ymdToIsoStart(addDays(monthEnd, 8)))
-    },
-    staleTime: 60_000
-  })
+  const monthWorkoutsQuery = useMonthWorkouts(viewYear, viewMonth)
 
   // Trailing 12 months of workouts (mirrors SessionsView's year-window source)
   // so the Month/Year cardio stat tables have data even when the user pages
   // the calendar to a month outside the visible grid window.
-  const yearWorkoutsQuery = useQuery<Workout[]>({
-    queryKey: ['zone2-fitness', 'yearWorkouts', ymdKey(today)],
-    queryFn: () => {
-      const fromIso = ymdToIsoStart(addDays(today, -365))
-      const toIso = ymdToIsoStart(addDays(today, 1))
-      return window.api.getWorkouts(fromIso, toIso)
-    },
-    staleTime: 60_000
-  })
+  const yearWorkoutsQuery = useYearWorkouts(timezone)
 
   const rows = useMemo(() => fitnessQuery.data ?? [], [fitnessQuery.data])
   const latest = useMemo(() => latestZone2Row(rows), [rows])
@@ -173,7 +155,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     [zone2Workouts, timezone]
   )
 
-  const todayKey = ymdKey(today)
   const guidance = useMemo(
     () => zone2CalendarGuidance(latest, zone2SessionDates, todayKey),
     [latest, zone2SessionDates, todayKey]
@@ -250,13 +231,13 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     { label: 'Cardio sessions', value: cardioMonthSum.cardioSessions.toString() },
     { label: 'Total time', value: formatWorkoutDuration(cardioMonthSum.totalDurationS) },
     { label: 'Z2 minutes', value: cardioZ2MinViewedMonth.toString() },
-    { label: 'Time trend', value: `${fmtTrendPct(cardioMonthSum.timeTrendPct)} vs last month` }
+    { label: 'Time trend', value: `${formatTrendPct(cardioMonthSum.timeTrendPct)} vs last month` }
   ]
 
   const cardioYearStatRows: StatTableRow[] = [
-    { label: 'Sessions/mo', value: fmtPerMonth(cardioYearSum.avgCardioPerMonth) },
+    { label: 'Sessions/mo', value: formatPerMonth(cardioYearSum.avgCardioPerMonth) },
     { label: 'Time/mo', value: formatWorkoutDuration(cardioYearSum.avgDurationSPerMonth) },
-    { label: 'Z2 min/mo', value: fmtPerMonth(cardioZ2MinPerMonth) }
+    { label: 'Z2 min/mo', value: formatPerMonth(cardioZ2MinPerMonth) }
   ]
 
   const selectedBucket = selectedDayKey
@@ -274,21 +255,13 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
 
   // HR-zone card data: the same Karvonen inputs the nightly job classifies
   // with — max HR + Z2 band from user_config, resting HR as the 7-day median.
-  const configQuery = useQuery<UserConfig>({
-    queryKey: ['zone2', 'config'],
-    queryFn: () => window.api.getUserConfig(),
-    staleTime: 60_000
-  })
+  const configQuery = useUserConfig()
   const rhrWindow = useMemo(() => {
     const from = addDays(today, -60)
     const pad = (n: number): string => String(n).padStart(2, '0')
     return `${from.year}-${pad(from.month)}-${pad(from.day)}`
   }, [today])
-  const restingQuery = useQuery({
-    queryKey: ['zone2-fitness', 'resting', rhrWindow, ymdKey(today)],
-    queryFn: () => window.api.getDailyMetrics(rhrWindow, ymdKey(today)),
-    staleTime: 60_000
-  })
+  const restingQuery = useDailyMetricsRange(rhrWindow, ymdKey(today))
 
   const hrZones = useMemo(() => {
     const hrMax = configQuery.data?.hr_max
@@ -309,24 +282,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
       )
     }
   }, [configQuery.data, restingQuery.data, today])
-
-
-  function handlePrevMonth(): void {
-    if (viewMonth === 1) {
-      setViewMonth(12)
-      setViewYear((y) => y - 1)
-    } else {
-      setViewMonth((m) => m - 1)
-    }
-  }
-  function handleNextMonth(): void {
-    if (viewMonth === 12) {
-      setViewMonth(1)
-      setViewYear((y) => y + 1)
-    } else {
-      setViewMonth((m) => m + 1)
-    }
-  }
 
   // Loading: reserve the panel's layout height so the rest of the tab doesn't jump
   // once the query resolves.
@@ -536,7 +491,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           month={viewMonth}
           today={today}
           daysByKey={daysByKey}
-          onSelectDay={setSelectedDayKey}
+          onSelectDay={openDay}
           onPrevMonth={handlePrevMonth}
           onNextMonth={handleNextMonth}
           markers={guidance.markers}
@@ -545,14 +500,8 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
       </div>
 
       <div className="z2f-summary">
-        <div className="z2f-summary-card">
-          <h3 className="z2f-summary-title">Month summary</h3>
-          <StatTable rows={cardioMonthStatRows} />
-        </div>
-        <div className="z2f-summary-card">
-          <h3 className="z2f-summary-title">{viewYear} · monthly average</h3>
-          <StatTable rows={cardioYearStatRows} />
-        </div>
+        <SummaryCard title="Month summary" rows={cardioMonthStatRows} />
+        <SummaryCard title={`${viewYear} · monthly average`} rows={cardioYearStatRows} />
       </div>
       </div>
 
@@ -623,7 +572,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           dateLabel={selectedDateLabel}
           workouts={selectedBucket.workouts}
           timezone={timezone}
-          onClose={() => setSelectedDayKey(null)}
+          onClose={closeDay}
         />
       )}
     </section>

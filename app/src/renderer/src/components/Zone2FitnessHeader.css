@@ -5,7 +5,6 @@
    accent, in two tones. Grayscale-clean by law (only the fills carry color). */
 
 .z2f {
-  margin-top: var(--space-xl);
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
@@ -405,49 +404,16 @@
 }
 
 /* ── Month / Year cardio stat tables, right of the calendar (Sessions-style
-   sessions-grid-summary / sessions-summary-card twin). ── */
+   sessions-grid-summary / sessions-summary-card twin). Equal-height stretch
+   rules now live on SummaryCard itself (components/SummaryCard.css). ── */
 .z2f-summary {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
 }
 
-.z2f-summary .z2f-summary-card {
-  flex: 1;
-  min-height: 0;
-}
-
-.z2f-summary .stat-table {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.z2f-summary .stat-table-row {
-  flex: 1;
-  display: flex;
-  align-items: center;
-}
 .z2f-summary--skeleton {
   min-height: 360px;
-}
-
-.z2f-summary-card {
-  background: var(--color-surface-elevated);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.z2f-summary-title {
-  font-family: var(--font-display);
-  font-size: var(--type-heading-md-size);
-  font-weight: var(--type-heading-md-weight);
-  line-height: var(--type-heading-md-line-height);
-  letter-spacing: var(--type-heading-md-letter-spacing);
-  color: var(--color-text);
 }
 
 /* The coach card's lead: one actionable sentence (real weekday/dates). */

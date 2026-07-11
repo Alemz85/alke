@@ -3,10 +3,10 @@
 // Zone2FitnessHeader, so the two share one cached response.
 import { useMemo } from 'react'
 import type { ReactElement } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import type { Zone2Fitness } from '@shared/types'
+import { useZone2FitnessRange } from '../hooks/useSessionsData'
 import { addDays, todayYMD } from '../hooks/sessionsDate'
+import { CHART, chartAxisTickSm, chartTooltipStyle } from '../lib/chartTheme'
 import { zone2IndexValue } from '../lib/zone2Fitness'
 import './Zone2Trajectory.css'
 
@@ -25,11 +25,7 @@ export function Zone2Trajectory({ timezone }: Props): ReactElement {
     }
   }, [today])
 
-  const fitnessQuery = useQuery<Zone2Fitness[]>({
-    queryKey: ['zone2-fitness', fromDate, toDate],
-    queryFn: () => window.api.getZone2Fitness(fromDate, toDate),
-    staleTime: 60_000
-  })
+  const fitnessQuery = useZone2FitnessRange(fromDate, toDate)
 
   const data = useMemo(
     () =>
@@ -60,25 +56,19 @@ export function Zone2Trajectory({ timezone }: Props): ReactElement {
         <ComposedChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: -24 }}>
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
+            tick={chartAxisTickSm}
             axisLine={false}
             tickLine={false}
             minTickGap={36}
           />
           <YAxis
             domain={[0, (dataMax: number) => Math.max(40, Math.ceil((dataMax * 1.25) / 10) * 10)]}
-            tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
+            tick={chartAxisTickSm}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
-            contentStyle={{
-              backgroundColor: 'var(--color-surface-hover)',
-              border: 'none',
-              borderRadius: 12,
-              fontSize: 13,
-              fontVariantNumeric: 'tabular-nums'
-            }}
+            contentStyle={chartTooltipStyle}
             formatter={(v, name) =>
               name === 'band'
                 ? [
@@ -90,10 +80,10 @@ export function Zone2Trajectory({ timezone }: Props): ReactElement {
                 : [typeof v === 'number' ? Math.round(v) : v, 'index']
             }
           />
-          <Area dataKey="band" stroke="none" fill="var(--color-aerobic-dim)" isAnimationActive={false} />
+          <Area dataKey="band" stroke="none" fill={CHART.aerobicDim} isAnimationActive={false} />
           <Line
             dataKey="index"
-            stroke="var(--color-aerobic)"
+            stroke={CHART.aerobic}
             strokeWidth={1.5}
             dot={false}
             type="monotone"

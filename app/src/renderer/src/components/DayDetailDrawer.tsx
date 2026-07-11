@@ -9,6 +9,8 @@ import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
+import { CHART, chartAxisTickSm } from '../lib/chartTheme'
+import { EM_DASH, formatClock, formatPace100 } from '../lib/format'
 import {
   detectSprintSets,
   groupByWorkout,
@@ -21,8 +23,6 @@ import {
   swolf25
 } from '../lib/swimSets'
 import './DayDetailDrawer.css'
-
-const EM_DASH = '—'
 
 export interface DayDetailDrawerProps {
   dateLabel: string
@@ -153,7 +153,7 @@ function SessionCard({
             <div className="day-drawer-session-stat">
               <span className="day-drawer-session-stat-value tabular-nums">
                 {swimSummary.avgPaceSecPer100m !== null
-                  ? `${fmtSetTime(swimSummary.avgPaceSecPer100m)} /100m`
+                  ? `${formatClock(swimSummary.avgPaceSecPer100m)} /100m`
                   : EM_DASH}
               </span>
               <span className="day-drawer-session-stat-label">Avg set pace</span>
@@ -188,14 +188,14 @@ function SessionCard({
               <LineChart data={hrChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <XAxis
                   dataKey="min"
-                  tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
-                  axisLine={{ stroke: 'var(--color-divider-soft)' }}
+                  tick={chartAxisTickSm}
+                  axisLine={{ stroke: CHART.grid }}
                   tickLine={false}
                   minTickGap={24}
                   unit="m"
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
+                  tick={chartAxisTickSm}
                   axisLine={false}
                   tickLine={false}
                   width={30}
@@ -306,16 +306,6 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
   )
 }
 
-function fmtSetTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-function fmtPace(pace: number | null): string {
-  return pace === null ? EM_DASH : fmtSetTime(pace)
-}
-
 // Time-proportional session timeline: set blocks sit on the real time axis
 // (opacity = pace within the session, strong = fast; gaps = rest) with the HR
 // trace overlaid, so recovery dips during rests are visible at a glance.
@@ -371,7 +361,7 @@ function SwimTimeline({
             rx={2}
             fill={`color-mix(in srgb, var(--color-aerobic) ${Math.round(35 + speed * 65)}%, transparent)`}
           >
-            <title>{`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)} (${fmtPace(pace)} /100m)`}</title>
+            <title>{`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${formatClock(s.duration_s)} (${formatPace100(pace)} /100m)`}</title>
           </rect>
         )
       })}
@@ -438,8 +428,8 @@ function SwimSetsSection({
               <tr key={s.set_index}>
                 <td className="tabular-nums">{s.set_index}</td>
                 <td className="tabular-nums">{Math.round(s.distance_m)}</td>
-                <td className="tabular-nums">{fmtSetTime(s.duration_s)}</td>
-                <td className="tabular-nums">{fmtPace(paceSecPer100m(s))}</td>
+                <td className="tabular-nums">{formatClock(s.duration_s)}</td>
+                <td className="tabular-nums">{formatPace100(paceSecPer100m(s))}</td>
                 <td className="tabular-nums">{Math.round(s.strokes)}</td>
                 {hasHr && <td className="tabular-nums">{hr === null ? EM_DASH : Math.round(hr)}</td>}
                 <td className="tabular-nums">{sw === null ? EM_DASH : sw.toFixed(1)}</td>
@@ -523,7 +513,7 @@ function SprintsSection({
             {fmtSpeed(stats.topSpeedMps)}
           </span>
           <span className="day-drawer-sprints-stat-label">
-            Top speed ({fmtSetTime(stats.topPaceSecPer100m)} /100m)
+            Top speed ({formatClock(stats.topPaceSecPer100m)} /100m)
           </span>
         </div>
         <div className="day-drawer-sprints-stat">
