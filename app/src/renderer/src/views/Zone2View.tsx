@@ -36,9 +36,7 @@ import {
 import { groupByWorkout, summarizeSession } from '../lib/swimSets'
 import { fastest100, fastest25, monthlyAvgPace } from '../lib/swimTrends'
 import { weekLabel } from '../lib/weekLabel'
-import { monthSummary } from '../lib/periodSummary'
-import type { SummaryItem } from '../lib/periodSummary'
-import { EM_DASH, fmtDelta, fmtDuration } from './dashboardUtils'
+import { EM_DASH } from './dashboardUtils'
 import './Zone2View.css'
 
 const AEROBIC = 'var(--color-aerobic)'
@@ -444,33 +442,7 @@ export function Zone2View(): ReactElement {
   const cardioWorkouts = useMemo(() => workouts.filter((w) => isCardio(w.type)), [workouts])
   const tizBars = useMemo(() => tizRows(cardioWorkouts, timezone, 15), [cardioWorkouts, timezone])
 
-  // --- Summary: current-month cardio summary blocks ---
-  const todayKey = localDateKey(new Date().toISOString(), timezone)
-  const viewedYm = todayKey.slice(0, 7)
-  const cardioMonth = useMemo(() => {
-    const items: SummaryItem[] = cardioWorkouts.map((w) => ({
-      dateKey: localDateKey(w.start_at, timezone),
-      durationS: w.duration_s ?? 0,
-      type: w.type
-    }))
-    return monthSummary(items, viewedYm, todayKey)
-  }, [cardioWorkouts, timezone, viewedYm, todayKey])
-  const cardioZ2MinThisMonth = useMemo(
-    () =>
-      Math.round(
-        cardioWorkouts
-          .filter((w) => localDateKey(w.start_at, timezone).slice(0, 7) === viewedYm)
-          .reduce((sum, w) => sum + z2Seconds(w), 0) / 60
-      ),
-    [cardioWorkouts, timezone, viewedYm]
-  )
-
   const hasComputed = workouts.some((w) => w.computed != null)
-
-  const cardioTimeTrend =
-    cardioMonth.timeTrendPct === null
-      ? EM_DASH
-      : `${fmtDelta(cardioMonth.timeTrendPct, 0)}% vs last month`
 
   return (
     <div className="view">
@@ -521,29 +493,6 @@ export function Zone2View(): ReactElement {
         <EmptyState message="No computed zone data yet — the nightly metrics job fills this tab after your first workouts sync." />
       ) : activeView === 'summary' ? (
         <div className="zone2-grid">
-          <MetricCard
-            eyebrow="Cardio sessions · this month"
-            value={String(cardioMonth.cardioSessions)}
-            domain="aerobic"
-            caption="cardio workouts logged"
-          />
-          <MetricCard
-            eyebrow="Cardio time · this month"
-            value={fmtDuration(cardioMonth.totalDurationS)}
-            caption="total cardio duration"
-          />
-          <MetricCard
-            eyebrow="Z2 minutes · this month"
-            value={String(cardioZ2MinThisMonth)}
-            domain="aerobic"
-            caption="time in Zone 2, all cardio"
-          />
-          <MetricCard
-            eyebrow="Time trend"
-            value={cardioTimeTrend}
-            caption="cardio time vs comparable window last month"
-          />
-
           <ChartCard title="Weekly Zone 2 minutes" span={12}>
             <WeeklyZ2Bars data={weekly} targetMin={weeklyTargetMin} />
           </ChartCard>

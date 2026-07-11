@@ -150,24 +150,8 @@
   grid-column: span 6;
 }
 
-/* Month-summary MetricCards sit directly in the grid (no ChartCard span
-   wrapper) — four per row on wide layouts. */
-.zone2-grid > .metric-card {
-  grid-column: span 3;
-}
-
 @media (max-width: 1100px) {
   .zone2-grid .chart-card--span-6 {
-    grid-column: span 12;
-  }
-
-  .zone2-grid > .metric-card {
-    grid-column: span 6;
-  }
-}
-
-@media (max-width: 640px) {
-  .zone2-grid > .metric-card {
     grid-column: span 12;
   }
 }
