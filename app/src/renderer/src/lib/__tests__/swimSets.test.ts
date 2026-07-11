@@ -3,6 +3,7 @@ import type { SwimSet, WorkoutHrSample } from '@shared/types'
 import {
   bestEfforts,
   clusterStructure,
+  detectSprintSets,
   dpsMPerCycle,
   groupByWorkout,
   normalizeHrTrack,
@@ -10,6 +11,7 @@ import {
   restRecoveryBpm,
   sessionFadePct,
   setAvgHr,
+  sprintStats,
   strokeRatePerMin,
   summarizeSession,
   swolf25
@@ -213,5 +215,85 @@ describe('summarizeSession', () => {
     expect(s.nSets).toBe(0)
     expect(s.avgPaceSecPer100m).toBeNull()
     expect(s.medianRestS).toBeNull()
+  })
+})
+
+describe('detectSprintSets', () => {
+  // 25×50m main set (~67s each, ~134 s/100m) followed by 5 trailing 25m
+  // sprints at ~20s (~80 s/100m) — comfortably under 0.85×134 ≈ 114.
+  function mainSet(i: number): SwimSet {
+    return set({ set_index: i, distance_m: 50, duration_s: 67, rest_after_s: 20 })
+  }
+  function fastSprint(i: number): SwimSet {
+    return set({ set_index: i, distance_m: 25, duration_s: 20, rest_after_s: 20 })
+  }
+  function slowSprint(i: number): SwimSet {
+    // 25m at the same 134 s/100m pace as the main set — not fast enough.
+    return set({ set_index: i, distance_m: 25, duration_s: 33.5, rest_after_s: 20 })
+  }
+
+  it('detects a trailing block of fast short sets', () => {
+    const mains = Array.from({ length: 25 }, (_, i) => mainSet(i + 1))
+    const sprints = Array.from({ length: 5 }, (_, i) => fastSprint(26 + i))
+    const sets = [...mains, ...sprints]
+    const detected = detectSprintSets(sets)
+    expect(detected).toHaveLength(5)
+    expect(detected.map((s) => s.set_index)).toEqual([26, 27, 28, 29, 30])
+  })
+
+  it('does not detect trailing short sets that are not fast', () => {
+    const mains = Array.from({ length: 25 }, (_, i) => mainSet(i + 1))
+    const slow = Array.from({ length: 5 }, (_, i) => slowSprint(26 + i))
+    const sets = [...mains, ...slow]
+    expect(detectSprintSets(sets)).toEqual([])
+  })
+
+  it('does not detect fast short sets at the start of a session', () => {
+    const sprints = Array.from({ length: 5 }, (_, i) => fastSprint(i + 1))
+    const mains = Array.from({ length: 25 }, (_, i) => mainSet(6 + i))
+    const sets = [...sprints, ...mains]
+    expect(detectSprintSets(sets)).toEqual([])
+  })
+
+  it('requires at least 3 qualifying candidates', () => {
+    const mains = Array.from({ length: 25 }, (_, i) => mainSet(i + 1))
+    const sprints = Array.from({ length: 2 }, (_, i) => fastSprint(26 + i))
+    const sets = [...mains, ...sprints]
+    expect(detectSprintSets(sets)).toEqual([])
+  })
+
+  it('returns [] for degenerately small sessions (fewer than 6 sets)', () => {
+    const sets = Array.from({ length: 5 }, (_, i) => fastSprint(i + 1))
+    expect(detectSprintSets(sets)).toEqual([])
+  })
+
+  it('skips sets with null pace (zero distance) when computing the comparison median', () => {
+    const mains = Array.from({ length: 24 }, (_, i) => mainSet(i + 1))
+    const zeroDistance = set({ set_index: 25, distance_m: 0, duration_s: 10, rest_after_s: 10 })
+    const sprints = Array.from({ length: 5 }, (_, i) => fastSprint(26 + i))
+    const sets = [...mains, zeroDistance, ...sprints]
+    const detected = detectSprintSets(sets)
+    expect(detected).toHaveLength(5)
+  })
+})
+
+describe('sprintStats', () => {
+  it('returns null for empty input', () => {
+    expect(sprintStats([])).toBeNull()
+  })
+
+  it('summarizes count, distance, and speeds', () => {
+    const sprints = [
+      set({ set_index: 1, distance_m: 25, duration_s: 20 }), // 1.25 m/s
+      set({ set_index: 2, distance_m: 25, duration_s: 18 }), // ~1.389 m/s (top)
+      set({ set_index: 3, distance_m: 25, duration_s: 22 }) // ~1.136 m/s
+    ]
+    const stats = sprintStats(sprints)
+    expect(stats).not.toBeNull()
+    expect(stats?.count).toBe(3)
+    expect(stats?.totalDistanceM).toBe(75)
+    expect(stats?.topSpeedMps).toBeCloseTo(25 / 18)
+    expect(stats?.topPaceSecPer100m).toBeCloseTo((100 * 18) / 25)
+    expect(stats?.avgSpeedMps).toBeCloseTo(75 / 60)
   })
 })

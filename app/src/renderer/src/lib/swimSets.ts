@@ -198,6 +198,72 @@ export function normalizeHrTrack(
   }))
 }
 
+// A candidate sprint set must be this short (or shorter) to qualify — the
+// sprint finishers are typically 25m dashes, not shortened main-set reps.
+const SPRINT_MAX_DISTANCE_M = 30
+// A candidate must beat the rest of the session's median pace by at least
+// this margin to count as a genuine sprint effort, not just normal variance.
+const SPRINT_PACE_RATIO = 0.85
+const SPRINT_MIN_CANDIDATES = 3
+const SPRINT_MIN_TOTAL_SETS = 6
+
+/**
+ * Detects a trailing block of short, fast sprint sets — a swim sometimes
+ * closes with ~5 minutes of 25m sprints. A set qualifies when it sits
+ * in the back half of the session (by index), is short (<=30m), and its pace
+ * beats 0.85x the median pace of every OTHER set in the session. Returns []
+ * unless at least 3 sets qualify (a couple of fast short reps mid-session
+ * isn't a sprint block) or the session has fewer than 6 sets total.
+ */
+export function detectSprintSets(sets: SwimSet[]): SwimSet[] {
+  if (sets.length < SPRINT_MIN_TOTAL_SETS) return []
+  const halfIndex = Math.floor(sets.length / 2)
+  const candidates = sets.slice(halfIndex).filter((s) => s.distance_m <= SPRINT_MAX_DISTANCE_M)
+  if (candidates.length === 0) return []
+
+  const candidateIndexSet = new Set(candidates.map((s) => s.set_index))
+  const otherPaces = sets
+    .filter((s) => !candidateIndexSet.has(s.set_index))
+    .map(paceSecPer100m)
+    .filter((p): p is number => p !== null)
+  const comparisonMedian = median(otherPaces)
+  if (comparisonMedian === null) return []
+  const threshold = SPRINT_PACE_RATIO * comparisonMedian
+
+  const qualifying = candidates.filter((s) => {
+    const pace = paceSecPer100m(s)
+    return pace !== null && pace <= threshold
+  })
+
+  return qualifying.length >= SPRINT_MIN_CANDIDATES ? qualifying : []
+}
+
+export interface SprintStats {
+  count: number
+  totalDistanceM: number
+  topSpeedMps: number
+  topPaceSecPer100m: number
+  avgSpeedMps: number
+}
+
+/** Speed/pace summary over a detected sprint block; null when given no sets. */
+export function sprintStats(sprintSets: SwimSet[]): SprintStats | null {
+  if (sprintSets.length === 0) return null
+  const totalDistanceM = sprintSets.reduce((sum, s) => sum + s.distance_m, 0)
+  const totalDurationS = sprintSets.reduce((sum, s) => sum + s.duration_s, 0)
+  const speeds = sprintSets
+    .filter((s) => s.duration_s > 0)
+    .map((s) => s.distance_m / s.duration_s)
+  const topSpeedMps = speeds.length > 0 ? Math.max(...speeds) : 0
+  return {
+    count: sprintSets.length,
+    totalDistanceM,
+    topSpeedMps,
+    topPaceSecPer100m: topSpeedMps > 0 ? 100 / topSpeedMps : 0,
+    avgSpeedMps: totalDurationS > 0 ? totalDistanceM / totalDurationS : 0
+  }
+}
+
 /** Groups a flat swim_sets read by workout, preserving set order. */
 export function groupByWorkout(sets: SwimSet[]): Map<string, SwimSet[]> {
   const byWorkout = new Map<string, SwimSet[]>()

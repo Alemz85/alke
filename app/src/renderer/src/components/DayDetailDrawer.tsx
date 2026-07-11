@@ -1,4 +1,5 @@
 import { useEffect, type ReactElement } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
@@ -8,10 +9,13 @@ import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
 import {
+  detectSprintSets,
+  groupByWorkout,
   normalizeHrTrack,
   paceSecPer100m,
   restRecoveryBpm,
   setAvgHr,
+  sprintStats,
   summarizeSession,
   swolf25
 } from '../lib/swimSets'
@@ -141,7 +145,7 @@ function SessionCard({
           </div>
         ) : hrChartData.length > 0 ? (
           <div className="day-drawer-hr-plot">
-            <ResponsiveContainer width="100%" height={140}>
+            <ResponsiveContainer width="100%" height={200}>
               <LineChart data={hrChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <XAxis
                   dataKey="min"
@@ -188,15 +192,25 @@ function SessionCard({
       </div>
 
       {swimSets.length > 0 && <SwimSetsSection sets={swimSets} hrSamples={hrSamples} />}
+
+      {swimSets.length > 0 && (
+        <SprintsSection sets={swimSets} currentWorkoutId={workout.id} />
+      )}
     </div>
   )
 }
 
-// Ordered zone keys z1..z5. Each zone gets a luminance step within the sessions
-// (orange) domain — lightest for easy Z1, full accent for hard Z5 — so the bar
-// reads as one domain, never borrowing another family's hue.
+// Ordered zone keys z1..z5, each mapped to its qualitative zone color token
+// (tokens.css) so the bar and legend read the same hues as the rest of the
+// app's zone displays — light blue through purple, not a single-hue ramp.
 const ZONE_ORDER = ['z1', 'z2', 'z3', 'z4', 'z5'] as const
-const ZONE_OPACITY: Record<string, number> = { z1: 0.28, z2: 0.45, z3: 0.62, z4: 0.8, z5: 1 }
+const ZONE_COLOR: Record<string, string> = {
+  z1: 'var(--color-zone1)',
+  z2: 'var(--color-zone2)',
+  z3: 'var(--color-zone3)',
+  z4: 'var(--color-zone4)',
+  z5: 'var(--color-zone5)'
+}
 const ZONE_LABEL: Record<string, string> = { z1: 'Z1', z2: 'Z2', z3: 'Z3', z4: 'Z4', z5: 'Z5' }
 
 function fmtZoneTime(seconds: number): string {
@@ -230,7 +244,7 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
             className="day-drawer-zones-segment"
             style={{
               width: `${(value / total) * 100}%`,
-              background: `color-mix(in srgb, var(--color-sessions) ${(ZONE_OPACITY[zone] ?? 1) * 100}%, transparent)`
+              background: ZONE_COLOR[zone] ?? 'var(--color-sessions)'
             }}
             title={`${ZONE_LABEL[zone] ?? zone}: ${fmtZoneTime(value)}`}
           />
@@ -241,7 +255,7 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
           <span key={zone} className="day-drawer-zones-legend-item">
             <span
               className="day-drawer-zones-swatch"
-              style={{ background: `color-mix(in srgb, var(--color-sessions) ${(ZONE_OPACITY[zone] ?? 1) * 100}%, transparent)` }}
+              style={{ background: ZONE_COLOR[zone] ?? 'var(--color-sessions)' }}
             />
             {ZONE_LABEL[zone] ?? zone} <span className="tabular-nums">{fmtZoneTime(value)}</span>
           </span>
@@ -359,6 +373,9 @@ function SwimSetsSection({
     <div className="day-drawer-swim">
       <div className="day-drawer-section-label">
         Sets{summary.structure ? ` — ${summary.structure}` : ''}
+        {summary.avgPaceSecPer100m !== null
+          ? ` · avg ${fmtSetTime(summary.avgPaceSecPer100m)} /100m`
+          : ''}
         {summary.medianRestS !== null ? ` · rest ~${Math.round(summary.medianRestS)}s` : ''}
       </div>
 
@@ -405,6 +422,90 @@ function SwimSetsSection({
           ? ` Rests recover ~${Math.round(medianRecovery)} bpm (median) — shrinking recovery late in a session signals fatigue.`
           : ''}
       </p>
+    </div>
+  )
+}
+
+function fmtSpeed(mps: number): string {
+  return `${mps.toFixed(2)} m/s`
+}
+
+// Trailing-block sprint detector's own summary card, plus a one-year
+// historical lookup (fetched independently so the drawer opens instantly and
+// this comparison fills in once it resolves) to say whether today's top
+// speed is a new best.
+function SprintsSection({
+  sets,
+  currentWorkoutId
+}: {
+  sets: SwimSet[]
+  currentWorkoutId: string
+}): ReactElement | null {
+  const sprintSets = detectSprintSets(sets)
+  const stats = sprintStats(sprintSets)
+
+  const now = new Date()
+  const oneYearAgo = new Date(now)
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+  const nowIso = now.toISOString()
+  const oneYearAgoIso = oneYearAgo.toISOString()
+
+  const historyQuery = useQuery<SwimSet[]>({
+    queryKey: ['drawer', 'swimSets'],
+    queryFn: () => window.api.getSwimSets(oneYearAgoIso, nowIso),
+    enabled: stats !== null
+  })
+
+  if (stats === null) return null
+
+  let comparisonText = ''
+  if (historyQuery.data) {
+    const byWorkout = groupByWorkout(historyQuery.data)
+    let bestEverMps = 0
+    let sessionCount = 0
+    for (const [workoutId, workoutSets] of byWorkout) {
+      if (workoutId === currentWorkoutId) continue
+      const historicalSprints = detectSprintSets(workoutSets)
+      const historicalStats = sprintStats(historicalSprints)
+      if (historicalStats === null) continue
+      sessionCount++
+      if (historicalStats.topSpeedMps > bestEverMps) bestEverMps = historicalStats.topSpeedMps
+    }
+    if (sessionCount === 0) {
+      comparisonText = 'First sprint session logged.'
+    } else {
+      comparisonText = `Best ever: ${bestEverMps.toFixed(2)} m/s across ${sessionCount} sprint session${sessionCount === 1 ? '' : 's'}`
+      if (stats.topSpeedMps > bestEverMps) comparisonText += ' — fastest yet'
+      comparisonText += '.'
+    }
+  }
+
+  return (
+    <div className="day-drawer-sprints">
+      <div className="day-drawer-section-label">Sprints</div>
+      <div className="day-drawer-sprints-stats">
+        <div className="day-drawer-sprints-stat">
+          <span className="day-drawer-sprints-stat-value tabular-nums">
+            {fmtSpeed(stats.topSpeedMps)}
+          </span>
+          <span className="day-drawer-sprints-stat-label">
+            Top speed ({fmtSetTime(stats.topPaceSecPer100m)} /100m)
+          </span>
+        </div>
+        <div className="day-drawer-sprints-stat">
+          <span className="day-drawer-sprints-stat-value tabular-nums">
+            {fmtSpeed(stats.avgSpeedMps)}
+          </span>
+          <span className="day-drawer-sprints-stat-label">Avg speed</span>
+        </div>
+        <div className="day-drawer-sprints-stat">
+          <span className="day-drawer-sprints-stat-value tabular-nums">
+            {stats.count} × ~25m
+          </span>
+          <span className="day-drawer-sprints-stat-label">Sprints</span>
+        </div>
+      </div>
+      {comparisonText && <p className="day-drawer-sprints-caption">{comparisonText}</p>}
     </div>
   )
 }
