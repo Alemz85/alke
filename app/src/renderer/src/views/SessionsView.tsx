@@ -3,11 +3,10 @@ import { TabHeader } from './TabHeader'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { SessionList } from '../components/SessionList'
-import { modalityLabel } from '../components/modalityAccent'
 import { EmptyState, HeroMetric, StatTable } from '../components'
 import type { StatTableRow } from '../components'
 import { useMonthWorkouts, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
-import { formatDuration, groupWorkoutsByDay, longestWeeklyStreak } from '../hooks/sessionsCompute'
+import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
 import { isoWeekKey, localDateKey, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
 import { formatWorkoutDuration } from '../lib/calendarDayLabel'
 import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
@@ -79,30 +78,28 @@ export function SessionsView(): ReactElement {
   })
   const sessionsCount = monthCellsInMonth.reduce((sum, b) => sum + b.workouts.length, 0)
 
-  const durationByModality = new Map<string, number>()
-  for (const bucket of monthCellsInMonth) {
-    for (const w of bucket.workouts) {
-      const type = w.type?.toLowerCase() ?? 'other'
-      durationByModality.set(type, (durationByModality.get(type) ?? 0) + (w.duration_s ?? 0))
-    }
-  }
-
-  const weeklyMin = userConfigQuery.data?.weekly_min_sessions ?? null
-  const streakWeeks = useMemo(
-    () => longestWeeklyStreak(yearWorkouts, weeklyMin, timezone),
-    [yearWorkouts, weeklyMin, timezone]
-  )
-
   const hasAnySessionThisMonth = sessionsCount > 0
 
   // --- Month / year pill summaries (lib/periodSummary.ts) ---
   const summaryItems: SummaryItem[] = useMemo(
     () =>
-      summaryWorkouts.map((w) => ({
-        dateKey: localDateKey(w.start_at, timezone),
-        durationS: w.duration_s ?? 0,
-        type: w.type
-      })),
+      summaryWorkouts.map((w) => {
+        const startMs = Date.parse(w.start_at)
+        // end_at is sometimes null (HAE didn't report it) — derive from duration_s
+        // so back-to-back visit merging still works for those workouts.
+        const endMs = w.end_at
+          ? Date.parse(w.end_at)
+          : w.duration_s !== null
+            ? startMs + w.duration_s * 1000
+            : undefined
+        return {
+          dateKey: localDateKey(w.start_at, timezone),
+          durationS: w.duration_s ?? 0,
+          type: w.type,
+          startMs: Number.isNaN(startMs) ? undefined : startMs,
+          endMs: endMs !== undefined && Number.isNaN(endMs) ? undefined : endMs
+        }
+      }),
     [summaryWorkouts, timezone]
   )
 
@@ -118,26 +115,17 @@ export function SessionsView(): ReactElement {
     [summaryItems, viewYear]
   )
 
-  // Merged "Month summary" table: monthSum's workouts/time/gym/cardio/trend
-  // (new values win over the pre-existing sessions/total-time rows), plus the
-  // pre-existing per-modality breakdown and longest-streak rows.
+  // "Month summary" table: exactly workouts/time/gym/cardio/trend — no
+  // per-modality breakdown, no streak (dropped per user feedback).
   const monthStatRows: StatTableRow[] = hasAnySessionThisMonth
     ? [
         { label: 'Workouts', value: monthSum.workouts.toString() },
         { label: 'Total time', value: formatWorkoutDuration(monthSum.totalDurationS) },
         { label: 'Gym sessions', value: monthSum.gymSessions.toString() },
         { label: 'Cardio sessions', value: monthSum.cardioSessions.toString() },
-        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` },
-        ...Array.from(durationByModality.entries()).map(([type, durS]) => ({
-          label: modalityLabel(type),
-          value: formatDuration(durS)
-        })),
-        { label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }
+        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` }
       ]
-    : [
-        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` },
-        { label: 'Longest streak', value: `${streakWeeks} week${streakWeeks === 1 ? '' : 's'}` }
-      ]
+    : [{ label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` }]
 
   const yearStatRows: StatTableRow[] = [
     { label: 'Workouts/mo', value: fmtPerMonth(yearSum.avgWorkoutsPerMonth) },

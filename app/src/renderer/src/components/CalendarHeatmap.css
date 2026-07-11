@@ -5,6 +5,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  /* Fill whatever height a stretching parent gives it (e.g. Sessions view's
+     equal-height calendar/table columns). When the parent doesn't constrain
+     height (no flex/grid stretch context), height: 100% resolves against
+     "auto" and this is a no-op — intrinsic sizing from the grid/cells below
+     still applies. */
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .calendar-heatmap-header {
@@ -64,11 +71,20 @@
 .calendar-heatmap-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
   gap: 4px;
+  /* Absorb the extra height the stretched .calendar-heatmap root gives us, so
+     week rows (and their day cells) grow to fill the card rather than the
+     card growing empty space below a fixed-height grid. */
+  flex: 1;
+  min-height: 0;
 }
 
 .calendar-heatmap-cell {
   position: relative;
+  /* aspect-ratio is a floor for intrinsic sizing (no stretching parent); once
+     grid-auto-rows: 1fr on a flex: 1 grid gives the row real height, the cell
+     grows to fill it and aspect-ratio no longer constrains it. */
   aspect-ratio: 1 / 1;
   min-height: 33px;
   border-radius: var(--radius-sm);

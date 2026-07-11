@@ -6,6 +6,9 @@ export interface SummaryItem {
   dateKey: string // 'YYYY-MM-DD' in the user's timezone
   durationS: number
   type: string | null
+  /** Workout start/end (epoch ms), when known — powers visit merging below. */
+  startMs?: number
+  endMs?: number
 }
 
 export function isGymType(type: string | null): boolean {
@@ -15,6 +18,43 @@ export function isGymType(type: string | null): boolean {
 /** Mirrors Zone2View's cardio test: anything that isn't gym/other. */
 export function isCardioType(type: string | null): boolean {
   return !!type && !/strength|core|other/.test(type)
+}
+
+/** 30 minutes, in milliseconds — the back-to-back merge gap threshold below. */
+const VISIT_GAP_MS = 30 * 60 * 1000
+
+/**
+ * Counts training VISITS rather than raw workout rows: consecutive items
+ * (sorted by start time) merge into a single visit when the gap between one
+ * item's end and the next item's start is <= 30 minutes AND they fall on the
+ * same calendar day (dateKey) — e.g. gym + a short cardio finisher logged
+ * back-to-back is one visit, not two. Items missing startMs/endMs can't be
+ * compared for adjacency, so each counts as its own visit.
+ */
+export function countVisits(items: SummaryItem[]): number {
+  const timed = items.filter(
+    (i): i is SummaryItem & { startMs: number; endMs: number } =>
+      i.startMs !== undefined && i.endMs !== undefined
+  )
+  const untimed = items.length - timed.length
+
+  const sorted = [...timed].sort((a, b) => a.startMs - b.startMs)
+
+  let visits = untimed
+  let lastEndMs: number | null = null
+  let lastDateKey: string | null = null
+
+  for (const item of sorted) {
+    const isMerge =
+      lastEndMs !== null &&
+      lastDateKey === item.dateKey &&
+      item.startMs - lastEndMs <= VISIT_GAP_MS
+    if (!isMerge) visits += 1
+    lastEndMs = item.endMs
+    lastDateKey = item.dateKey
+  }
+
+  return visits
 }
 
 export interface MonthSummary {
@@ -101,9 +141,16 @@ export function yearSummary(items: SummaryItem[], year: number): YearSummary {
     }
   }
   const t = totals(inYear)
+  // avgWorkoutsPerMonth counts VISITS (gym + a short cardio finisher logged
+  // back-to-back is one training visit), not raw workout rows — but only when
+  // start/end times are available to judge adjacency. Gym/cardio per-month
+  // averages and the monthly `workouts` stat elsewhere stay raw-session
+  // counts; only this yearly metric changes.
+  const hasTimes = inYear.some((i) => i.startMs !== undefined && i.endMs !== undefined)
+  const avgWorkoutsPerMonth = (hasTimes ? countVisits(inYear) : t.workouts) / n
   return {
     monthsCounted: n,
-    avgWorkoutsPerMonth: t.workouts / n,
+    avgWorkoutsPerMonth,
     avgDurationSPerMonth: t.totalDurationS / n,
     avgGymPerMonth: t.gymSessions / n,
     avgCardioPerMonth: t.cardioSessions / n
