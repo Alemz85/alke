@@ -1,12 +1,13 @@
 import { useEffect, type ReactElement } from 'react'
 import { X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
-import type { Workout } from '@shared/types'
+import type { SwimSet, Workout } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
+import { paceSecPer100m, summarizeSession, swolf25 } from '../lib/swimSets'
 import './DayDetailDrawer.css'
 
 const EM_DASH = '—'
@@ -80,6 +81,8 @@ function SessionCard({
   const trimp = computed?.trimp
   const ef = computed?.ef
   const decoupling = computed?.decoupling_pct
+
+  const swimSets = detailQuery.data?.swimSets ?? []
 
   return (
     <div className="day-drawer-session">
@@ -176,6 +179,8 @@ function SessionCard({
           </div>
         )}
       </div>
+
+      {swimSets.length > 0 && <SwimSetsSection sets={swimSets} />}
     </div>
   )
 }
@@ -236,5 +241,92 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
         ))}
       </div>
     </>
+  )
+}
+
+function fmtSetTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function fmtPace(pace: number | null): string {
+  return pace === null ? EM_DASH : fmtSetTime(pace)
+}
+
+// Swim set breakdown — ingest-detected sets from the watch's per-second swim
+// series. Bars: width ∝ set duration, gap ∝ rest, opacity scaled by pace
+// within the session (strong = fast) so the fade reads at a glance.
+function SwimSetsSection({ sets }: { sets: SwimSet[] }): ReactElement {
+  const summary = summarizeSession(sets)
+  const paces = sets.map(paceSecPer100m)
+  const known = paces.filter((p): p is number => p !== null)
+  const fastest = Math.min(...known)
+  const slowest = Math.max(...known)
+  const span = Math.max(slowest - fastest, 1e-9)
+  const maxRest = Math.max(...sets.map((s) => s.rest_after_s ?? 0), 1)
+
+  return (
+    <div className="day-drawer-swim">
+      <div className="day-drawer-section-label">
+        Sets{summary.structure ? ` — ${summary.structure}` : ''}
+        {summary.medianRestS !== null ? ` · rest ~${Math.round(summary.medianRestS)}s` : ''}
+      </div>
+
+      <div className="day-drawer-swim-bars" aria-hidden="true">
+        {sets.map((s, i) => {
+          const pace = paces[i]
+          // 0 = slowest, 1 = fastest within this session
+          const speed = pace === null ? 0.5 : (slowest - pace) / span
+          return (
+            <div
+              key={s.set_index}
+              className="day-drawer-swim-bar"
+              style={{
+                flexGrow: s.duration_s,
+                marginRight: s.rest_after_s ? `${(s.rest_after_s / maxRest) * 14 + 2}px` : 0,
+                background: `color-mix(in srgb, var(--color-aerobic) ${Math.round(35 + speed * 65)}%, transparent)`
+              }}
+              title={`Set ${s.set_index}: ${Math.round(s.distance_m)}m in ${fmtSetTime(s.duration_s)}`}
+            />
+          )
+        })}
+      </div>
+
+      <table className="day-drawer-swim-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>m</th>
+            <th>time</th>
+            <th>/100m</th>
+            <th>strokes</th>
+            <th title="Time + strokes per 25m. Self-relative: the watch counts one stroke per arm cycle, so this reads lower than a both-hands count.">
+              SWOLF
+            </th>
+            <th>rest</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sets.map((s) => {
+            const sw = swolf25(s)
+            return (
+              <tr key={s.set_index}>
+                <td className="tabular-nums">{s.set_index}</td>
+                <td className="tabular-nums">{Math.round(s.distance_m)}</td>
+                <td className="tabular-nums">{fmtSetTime(s.duration_s)}</td>
+                <td className="tabular-nums">{fmtPace(paceSecPer100m(s))}</td>
+                <td className="tabular-nums">{Math.round(s.strokes)}</td>
+                <td className="tabular-nums">{sw === null ? EM_DASH : sw.toFixed(1)}</td>
+                <td className="tabular-nums">{s.rest_after_s === null ? EM_DASH : `${s.rest_after_s}s`}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="day-drawer-swim-caption">
+        Sets detected from the watch&apos;s per-second swim samples; strokes are watch-arm counts.
+      </p>
+    </div>
   )
 }
