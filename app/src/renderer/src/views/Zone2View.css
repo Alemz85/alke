@@ -1,9 +1,54 @@
-.zone2-switcher {
+/* Section-tab bar: segmented control, first element under the header. Bigger
+   hit targets than the old filter chips, active state carries the aerobic
+   accent as an underline so it reads unmistakably even for colorblind users
+   (position + weight + color, not color alone). */
+.zone2-tabs {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-xxs);
+  gap: var(--space-xs);
   margin-top: var(--space-lg);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.zone2-tab {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  padding: var(--space-sm) var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  min-height: 44px;
+  cursor: pointer;
+  transition: color var(--motion-hover);
+}
+
+.zone2-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background var(--motion-hover);
+}
+
+.zone2-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.zone2-tab--active {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.zone2-tab--active::after {
+  background: var(--color-aerobic);
 }
 
 .zone2-stat-row {
@@ -16,6 +61,64 @@
 @media (max-width: 760px) {
   .zone2-stat-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Swim-only stat area: 2 MetricCard columns + a pace table spanning both
+   rows, then a second row of two more MetricCards under the first two.
+   Row gap is tightened relative to .zone2-stat-row's — these four cards
+   read as one dense block, not four independent stats. */
+.zone2-swim-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr;
+  grid-template-rows: auto auto;
+  gap: var(--space-xs) var(--space-md);
+  margin-top: var(--space-xl);
+}
+
+.zone2-swim-pace-table {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.zone2-swim-pace-table-title {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 900px) {
+  .zone2-swim-stats {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .zone2-swim-pace-table {
+    grid-column: 1 / span 2;
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 560px) {
+  .zone2-swim-stats {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .zone2-swim-pace-table {
+    grid-column: 1;
+    grid-row: auto;
   }
 }
 
@@ -47,8 +150,24 @@
   grid-column: span 6;
 }
 
+/* Month-summary MetricCards sit directly in the grid (no ChartCard span
+   wrapper) — four per row on wide layouts. */
+.zone2-grid > .metric-card {
+  grid-column: span 3;
+}
+
 @media (max-width: 1100px) {
   .zone2-grid .chart-card--span-6 {
+    grid-column: span 12;
+  }
+
+  .zone2-grid > .metric-card {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 640px) {
+  .zone2-grid > .metric-card {
     grid-column: span 12;
   }
 }

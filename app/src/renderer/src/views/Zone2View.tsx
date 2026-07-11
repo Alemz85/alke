@@ -17,8 +17,16 @@ import {
 } from 'recharts'
 import type { SwimSet, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
-import { ChartCard, EmptyState, HeroMetric, MetricCard, Zone2FitnessHeader } from '../components'
-import { isoWeekKey, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
+import {
+  ChartCard,
+  EmptyState,
+  HeroMetric,
+  MetricCard,
+  StatTable,
+  Zone2FitnessHeader
+} from '../components'
+import type { StatTableRow } from '../components'
+import { addDays, isoWeekKey, isoWeekStart, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import {
   CARDIO_MODALITIES,
   cardioModalityByKey,
@@ -26,19 +34,24 @@ import {
   type CardioModalityKey
 } from '../lib/cardioModality'
 import { bestEfforts, groupByWorkout, summarizeSession } from '../lib/swimSets'
+import { fastest25, monthlyAvgPace } from '../lib/swimTrends'
+import { weekLabel } from '../lib/weekLabel'
+import { monthSummary } from '../lib/periodSummary'
+import type { SummaryItem } from '../lib/periodSummary'
+import { EM_DASH, fmtDelta, fmtDuration } from './dashboardUtils'
 import './Zone2View.css'
 
 const AEROBIC = 'var(--color-aerobic)'
 const AEROBIC_DIM = 'var(--color-aerobic-dim)'
 const TERTIARY = 'var(--color-text-tertiary)'
 const GRID = 'var(--color-divider-soft)'
-// Z2 carries the domain accent; other zones are neutral grays so color = Z2.
+// Z2 carries the domain accent; other zones use the qualitative zone tokens.
 const ZONE_FILLS = [
-  'var(--color-zone-neutral-1)',
-  AEROBIC,
-  'var(--color-zone-neutral-2)',
-  'var(--color-zone-neutral-3)',
-  'var(--color-zone-neutral-4)'
+  'var(--color-zone1)',
+  'var(--color-zone2)',
+  'var(--color-zone3)',
+  'var(--color-zone4)',
+  'var(--color-zone5)'
 ]
 const CHART_CURSOR = 'var(--color-chart-cursor)'
 
@@ -62,6 +75,27 @@ function fmtPace100(pace: number): string {
   const m = Math.floor(pace / 60)
   const s = Math.round(pace % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+const MONTH_SHORT_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
+]
+
+/** Formats a 'YYYY-MM' month key as "Jun 2026". */
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return `${MONTH_SHORT_NAMES[m - 1]} ${y}`
 }
 
 const tooltipStyle = {
@@ -271,7 +305,11 @@ function DecouplingScatter({ data }: { data: DecouplingPoint[] }): ReactElement 
 
 // --- data helpers ---
 
-/** Weekly Z2 minutes over the last `count` ISO weeks for the given workouts. */
+/**
+ * Weekly Z2 minutes over the CONTINUOUS last `count` ISO weeks ending at the
+ * current week — zero-filled for weeks with no Z2, not just weeks that
+ * happen to have data. Monday-anchored, per isoWeekKey.
+ */
 function weeklyZ2(
   workouts: Workout[],
   timezone: string | null,
@@ -282,10 +320,15 @@ function weeklyZ2(
     const key = isoWeekKey(toZonedYMD(w.start_at, timezone))
     byWeek.set(key, (byWeek.get(key) ?? 0) + z2Seconds(w))
   }
-  const thisWeek = isoWeekKey(toZonedYMD(new Date().toISOString(), timezone))
-  const keys = [...new Set([...byWeek.keys(), thisWeek])].sort().slice(-count)
+  const thisWeekYmd = toZonedYMD(new Date().toISOString(), timezone)
+  const thisMonday = isoWeekStart(thisWeekYmd)
+  const keys: string[] = []
+  for (let i = count - 1; i >= 0; i--) {
+    const monday = addDays(thisMonday, -7 * i)
+    keys.push(isoWeekKey(monday))
+  }
   return keys.map((k) => ({
-    week: k.slice(5),
+    week: weekLabel(k),
     key: k,
     minutes: Math.round((byWeek.get(k) ?? 0) / 60)
   }))
@@ -398,36 +441,48 @@ export function Zone2View(): ReactElement {
   )
 
   // --- Summary: time-in-zones, last 15 cardio sessions ---
-  const tizBars = useMemo(
-    () => tizRows(workouts.filter((w) => isCardio(w.type)), timezone, 15),
-    [workouts, timezone]
+  const cardioWorkouts = useMemo(() => workouts.filter((w) => isCardio(w.type)), [workouts])
+  const tizBars = useMemo(() => tizRows(cardioWorkouts, timezone, 15), [cardioWorkouts, timezone])
+
+  // --- Summary: current-month cardio summary blocks ---
+  const todayKey = localDateKey(new Date().toISOString(), timezone)
+  const viewedYm = todayKey.slice(0, 7)
+  const cardioMonth = useMemo(() => {
+    const items: SummaryItem[] = cardioWorkouts.map((w) => ({
+      dateKey: localDateKey(w.start_at, timezone),
+      durationS: w.duration_s ?? 0,
+      type: w.type
+    }))
+    return monthSummary(items, viewedYm, todayKey)
+  }, [cardioWorkouts, timezone, viewedYm, todayKey])
+  const cardioZ2MinThisMonth = useMemo(
+    () =>
+      Math.round(
+        cardioWorkouts
+          .filter((w) => localDateKey(w.start_at, timezone).slice(0, 7) === viewedYm)
+          .reduce((sum, w) => sum + z2Seconds(w), 0) / 60
+      ),
+    [cardioWorkouts, timezone, viewedYm]
   )
 
   const hasComputed = workouts.some((w) => w.computed != null)
 
+  const cardioTimeTrend =
+    cardioMonth.timeTrendPct === null
+      ? EM_DASH
+      : `${fmtDelta(cardioMonth.timeTrendPct, 0)}% vs last month`
+
   return (
     <div className="view">
-      <TabHeader eyebrow="Aerobic base" title="Zone 2" />
+      <TabHeader eyebrow="Aerobic base · Zone 2" title="Cardio" />
 
-      {/* Zone-2 fitness model: durable base + sharpness, calendar with degradation
-          trail, honesty labels, maintenance nudge (docs/zone2-fitness-model.md §10). */}
-      <Zone2FitnessHeader timezone={timezone} />
-
-      <HeroMetric
-        eyebrow="Zone 2 · this week"
-        value={String(thisWeekMin)}
-        unit="min"
-        delta={delta}
-        domain="aerobic"
-        deltaPositive={lastWeekMin !== null && thisWeekMin >= lastWeekMin}
-      />
-
-      {/* Modality switcher — chip row directly under the hero. */}
-      <div className="zone2-switcher" role="tablist" aria-label="Modality">
+      {/* Modality switcher — a real section-tab bar, first element under the
+          header so it governs everything below it, summary included. */}
+      <div className="zone2-tabs" role="tablist" aria-label="Modality">
         <button
           role="tab"
           aria-selected={activeView === 'summary'}
-          className={activeView === 'summary' ? 'chip chip--active' : 'chip'}
+          className={activeView === 'summary' ? 'zone2-tab zone2-tab--active' : 'zone2-tab'}
           onClick={() => setView('summary')}
         >
           Summary
@@ -437,7 +492,7 @@ export function Zone2View(): ReactElement {
             key={key}
             role="tab"
             aria-selected={activeView === key}
-            className={activeView === key ? 'chip chip--active' : 'chip'}
+            className={activeView === key ? 'zone2-tab zone2-tab--active' : 'zone2-tab'}
             onClick={() => setView(key)}
           >
             {cardioModalityByKey(key).label}
@@ -445,10 +500,50 @@ export function Zone2View(): ReactElement {
         ))}
       </div>
 
+      {activeView === 'summary' && (
+        <>
+          {/* Zone-2 fitness model: durable base + sharpness, calendar with degradation
+              trail, honesty labels, maintenance nudge (docs/zone2-fitness-model.md §10). */}
+          <Zone2FitnessHeader timezone={timezone} />
+
+          <HeroMetric
+            eyebrow="Zone 2 · this week"
+            value={String(thisWeekMin)}
+            unit="min"
+            delta={delta}
+            domain="aerobic"
+            deltaPositive={lastWeekMin !== null && thisWeekMin >= lastWeekMin}
+          />
+        </>
+      )}
+
       {!hasComputed ? (
         <EmptyState message="No computed zone data yet — the nightly metrics job fills this tab after your first workouts sync." />
       ) : activeView === 'summary' ? (
         <div className="zone2-grid">
+          <MetricCard
+            eyebrow="Cardio sessions · this month"
+            value={String(cardioMonth.cardioSessions)}
+            domain="aerobic"
+            caption="cardio workouts logged"
+          />
+          <MetricCard
+            eyebrow="Cardio time · this month"
+            value={fmtDuration(cardioMonth.totalDurationS)}
+            caption="total cardio duration"
+          />
+          <MetricCard
+            eyebrow="Z2 minutes · this month"
+            value={String(cardioZ2MinThisMonth)}
+            domain="aerobic"
+            caption="time in Zone 2, all cardio"
+          />
+          <MetricCard
+            eyebrow="Time trend"
+            value={cardioTimeTrend}
+            caption="cardio time vs comparable window last month"
+          />
+
           <ChartCard title="Weekly Zone 2 minutes" span={12}>
             <WeeklyZ2Bars data={weekly} targetMin={weeklyTargetMin} />
           </ChartCard>
@@ -480,7 +575,8 @@ export function Zone2View(): ReactElement {
           <ChartCard title="Time in zones — last 15 cardio sessions" span={12}>
             <TimeInZonesStacks data={tizBars} />
             <p className="zone2-caption">
-              Zone 2 carries the teal; other zones are neutral. Minutes per session, Karvonen bounds, swim-adjusted.
+              Zone 2 carries the accent; other zones use the qualitative zone palette. Minutes per
+              session, Karvonen bounds, swim-adjusted.
             </p>
           </ChartCard>
         </div>
@@ -552,6 +648,37 @@ function ModalityView({
     return { ...bestEfforts(groupByWorkout(swimSets)), dateOf }
   }, [isSwim, swimSets, workouts, timezone])
 
+  // --- Swim stat area: sessions this week/month, monthly pace trend, fastest efforts ---
+  const swimStats = useMemo(() => {
+    if (!isSwim) return null
+    const todayKey = localDateKey(new Date().toISOString(), timezone)
+    const thisIsoWeek = isoWeekKey(toZonedYMD(new Date().toISOString(), timezone))
+    const thisYm = todayKey.slice(0, 7)
+    const swimWorkouts = workouts.filter((w) => cardioModalityOf(w.type) === 'swim')
+    const sessionsThisWeek = swimWorkouts.filter(
+      (w) => isoWeekKey(toZonedYMD(w.start_at, timezone)) === thisIsoWeek
+    ).length
+    const sessionsThisMonth = swimWorkouts.filter(
+      (w) => localDateKey(w.start_at, timezone).slice(0, 7) === thisYm
+    ).length
+
+    const monthOfWorkout = (workoutId: string): string | null => {
+      const w = workouts.find((x) => x.id === workoutId)
+      return w ? localDateKey(w.start_at, timezone).slice(0, 7) : null
+    }
+    const paceByMonth = monthlyAvgPace(groupByWorkout(swimSets), monthOfWorkout)
+
+    const fastest25Effort = fastest25(swimSets)
+    const fastest25Date = fastest25Effort
+      ? (() => {
+          const w = workouts.find((x) => x.id === fastest25Effort.workoutId)
+          return w ? localDateKey(w.start_at, timezone) : ''
+        })()
+      : ''
+
+    return { sessionsThisWeek, sessionsThisMonth, paceByMonth, fastest25Effort, fastest25Date }
+  }, [isSwim, workouts, swimSets, timezone])
+
   // --- stat row: this-week Z2 min (modality), sessions 90d, avg Z2 share 90d ---
   const weekly = useMemo(() => weeklyZ2(modalityWorkouts, timezone, 12), [modalityWorkouts, timezone])
   const thisWeekMin = weekly.length > 0 ? weekly[weekly.length - 1].minutes : 0
@@ -575,54 +702,77 @@ function ModalityView({
 
   const tizBars = useMemo(() => tizRows(modalityWorkouts, timezone, 15), [modalityWorkouts, timezone])
 
+  const paceTableRows: StatTableRow[] =
+    swimStats && swimStats.paceByMonth.length > 0
+      ? swimStats.paceByMonth.map((row) => ({
+          label: monthLabel(row.month),
+          value: fmtPace100(row.paceSecPer100m)
+        }))
+      : []
+
   return (
     <>
-      <div className="zone2-stat-row">
-        <MetricCard
-          eyebrow={`${modality.label} · Z2 this week`}
-          value={String(thisWeekMin)}
-          domain="aerobic"
-          caption="minutes in Zone 2"
-        />
-        <MetricCard eyebrow={`${modality.label} · sessions 90d`} value={String(sessions90d)} caption="with zone data" />
-        <MetricCard
-          eyebrow={`${modality.label} · avg Z2 share`}
-          value={`${avgZ2Share}%`}
-          domain="aerobic"
-          caption="Z2 / classified time, 90d"
-        />
-      </div>
-
-      {swimBest && (
-        <div className="zone2-stat-row">
+      {isSwim ? (
+        <div className="zone2-swim-stats">
           <MetricCard
-            eyebrow="Swim · fastest set"
-            value={swimBest.fastestSet ? fmtPace100(swimBest.fastestSet.paceSecPer100m) : '—'}
+            eyebrow="Swim · sessions this week"
+            value={String(swimStats?.sessionsThisWeek ?? 0)}
+            domain="aerobic"
+            caption="ISO week to date"
+          />
+          <MetricCard
+            eyebrow="Swim · sessions this month"
+            value={String(swimStats?.sessionsThisMonth ?? 0)}
+            domain="aerobic"
+            caption="calendar month to date"
+          />
+          <div className="zone2-swim-pace-table">
+            <h3 className="zone2-swim-pace-table-title">Avg pace /100m by month</h3>
+            {paceTableRows.length === 0 ? (
+              <EmptyState message="No swim set data yet." />
+            ) : (
+              <StatTable rows={paceTableRows} />
+            )}
+          </div>
+          <MetricCard
+            eyebrow="Swim · fastest /100m"
+            value={swimBest?.fastestSet ? fmtPace100(swimBest.fastestSet.paceSecPer100m) : '—'}
             domain="aerobic"
             caption={
-              swimBest.fastestSet
-                ? `/100m · ${Math.round(swimBest.fastestSet.distanceM)}m set · ${swimBest.dateOf(swimBest.fastestSet.workoutId)}`
+              swimBest?.fastestSet
+                ? `${Math.round(swimBest.fastestSet.distanceM)}m set · ${swimBest.dateOf(swimBest.fastestSet.workoutId)}`
                 : 'needs a set of 45m or more'
             }
           />
           <MetricCard
-            eyebrow="Swim · best session pace"
-            value={swimBest.bestSessionPace ? fmtPace100(swimBest.bestSessionPace.paceSecPer100m) : '—'}
+            eyebrow="Swim · fastest 25m"
+            value={swimStats?.fastest25Effort ? `${swimStats.fastest25Effort.seconds.toFixed(1)}s` : '—'}
             domain="aerobic"
             caption={
-              swimBest.bestSessionPace
-                ? `/100m set-weighted · ${swimBest.dateOf(swimBest.bestSessionPace.workoutId)}`
-                : 'no sessions with set data yet'
+              swimStats?.fastest25Effort
+                ? `25m-equivalent · ${swimStats.fastest25Date}`
+                : 'needs a set of 25m or more'
             }
           />
+        </div>
+      ) : (
+        <div className="zone2-stat-row">
           <MetricCard
-            eyebrow="Swim · best SWOLF"
-            value={swimBest.bestSessionSwolf25 ? swimBest.bestSessionSwolf25.swolf.toFixed(1) : '—'}
-            caption={
-              swimBest.bestSessionSwolf25
-                ? `session median per 25m · ${swimBest.dateOf(swimBest.bestSessionSwolf25.workoutId)}`
-                : 'no sessions with set data yet'
-            }
+            eyebrow={`${modality.label} · Z2 this week`}
+            value={String(thisWeekMin)}
+            domain="aerobic"
+            caption="minutes in Zone 2"
+          />
+          <MetricCard
+            eyebrow={`${modality.label} · sessions 90d`}
+            value={String(sessions90d)}
+            caption="with zone data"
+          />
+          <MetricCard
+            eyebrow={`${modality.label} · avg Z2 share`}
+            value={`${avgZ2Share}%`}
+            domain="aerobic"
+            caption="Z2 / classified time, 90d"
           />
         </div>
       )}

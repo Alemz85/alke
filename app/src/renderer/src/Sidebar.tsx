@@ -21,7 +21,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'zone2', label: 'Zone 2', icon: Waves },
+  { id: 'zone2', label: 'Cardio', icon: Waves },
   { id: 'sessions', label: 'Sessions', icon: ListChecks },
   { id: 'recovery', label: 'Recovery', icon: Moon },
   { id: 'insights', label: 'Insights', icon: Sparkles },
