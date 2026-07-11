@@ -11,7 +11,30 @@
   gap: var(--space-lg);
 }
 
-/* ── Panel: hero index + two meters, stacked ──────────────────────────── */
+/* ── Two rows: [fitness panel | trajectory] on top, [calendar | coach] below.
+   The calendar column matches the Sessions layout's calendar width (3:2), which
+   is what sizes its cells like the Sessions one. Both rows collapse to a single
+   column on a narrow window. ── */
+.z2f-row {
+  display: grid;
+  gap: var(--space-lg);
+  align-items: stretch;
+}
+.z2f-row--top {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.z2f-row--cal {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .z2f-row--top,
+  .z2f-row--cal {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Panel: hero index + two meters, stacked. ── */
 .z2f-panel {
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
@@ -32,11 +55,11 @@
   opacity: 0.62;
 }
 
-/* Top row: hero number on the left, the two meters filling the rest; collapses
-   to a stack on a narrow window. */
+/* Top row: the score, the fat index gauge, and the description — left to right,
+   vertically centered. Stacks on a narrow window. */
 .z2f-top {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: var(--space-xl);
   align-items: center;
 }
@@ -47,40 +70,28 @@
   }
 }
 
+/* "Cardio fitness" — a real title in display type. Prominence comes from the
+   typeface and size, not from color: accents stay reserved for data, so the
+   title is neutral white (grayscale-clean chrome law). */
+.z2f-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+}
+
+/* Score + its ± confidence beneath. No frame — at 72px the number carries itself. */
 .z2f-hero {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
-
-/* ── Hero index number (the one big figure; everything else is secondary) ─ */
-.z2f-eyebrow {
-  font-family: var(--font-body);
-  font-size: var(--type-label-size);
-  font-weight: var(--type-label-weight);
-  line-height: var(--type-label-line-height);
-  letter-spacing: var(--type-label-letter-spacing);
-  text-transform: uppercase;
-  color: var(--color-aerobic-text);
-}
-
-/* Faded frame around the number so it reads as the single focal element —
-   a recessed inset (surface is a step darker than the card) + hairline, no
-   shadow (elevation is luminance, per DESIGN.md). */
-.z2f-index-box {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-xs) var(--space-lg);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-hairline);
-}
-
 .z2f-index {
   font-family: var(--font-display);
-  font-size: var(--type-hero-metric-size);
+  font-size: var(--type-hero-metric-size); /* 72px — the DESIGN hero cap */
   font-weight: var(--type-hero-metric-weight);
   line-height: var(--type-hero-metric-line-height);
   letter-spacing: var(--type-hero-metric-letter-spacing);
@@ -89,36 +100,61 @@
 .z2f-index--stale {
   color: var(--color-text-secondary);
 }
-
-/* Secondary line under the number: ±band · out of 100 · stage. Small and muted
-   — the detail you read second, decluttered off the headline figure. */
-.z2f-index-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-xs) var(--space-sm);
-  font-variant-numeric: tabular-nums;
-}
 .z2f-index-band {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   font-weight: 600;
   color: var(--color-aerobic-text);
-}
-.z2f-index-ceiling {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* ── Two component meters — durable base + fast/form ──────────────────── */
+/* Fat index gauge — an iOS-Control-Center-style rounded bar for the whole index
+   (out of 100), filled from the bottom in aerobic teal. */
+.z2f-gauge {
+  position: relative;
+  width: 52px;
+  height: 132px;
+  border-radius: 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  overflow: hidden;
+}
+.z2f-gauge-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-aerobic);
+  transition: height 300ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .z2f-gauge-fill {
+    transition: none;
+  }
+}
+
+/* Description column, right of the gauge: stage pill + asterisked footnote. */
+.z2f-desc {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+/* ── Component breakdown — durable + fast, tracks sized to their ceilings. The
+   meter WIDTHS come from inline style (70 : 30), so align-items:flex-start keeps
+   them from stretching to full width. ──────────────────────────────────── */
 .z2f-meters {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  align-items: flex-start;
+  gap: var(--space-sm);
   min-width: 0;
 }
 .z2f-meter {
+  min-width: 200px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -156,7 +192,7 @@
 }
 
 .z2f-meter-track {
-  height: 8px;
+  height: 10px; /* thick enough to hold its own next to the fat index gauge */
   border-radius: var(--radius-full);
   background: var(--color-surface); /* neutral inset track — grayscale-clean */
   overflow: hidden;
@@ -192,18 +228,114 @@
   padding: 1px 8px;
 }
 
-/* Small neutral stage pill, demoted into the secondary meta line. */
+/* Stage pill + its asterisked footnote — no box. The pill carries a "*" that ties
+   it to the tiny caveat note beneath. */
+.z2f-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+/* Neutral stage pill (chip-filter style). */
 .z2f-stage-pill {
   display: inline-flex;
   align-items: center;
   background: var(--color-surface);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   border-radius: var(--radius-full);
-  padding: 2px 10px;
+  padding: 6px 14px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+}
+
+/* The asterisk that links the pill to its footnote — teal, so it reads as a cue. */
+.z2f-note-star {
+  color: var(--color-aerobic-text);
+  font-weight: 600;
+}
+
+/* One-line plain-language phase reading beside the stage pill. */
+.z2f-phase-line {
+  margin: 0;
+  max-width: 42ch;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
+}
+
+/* Tiny caveat footnote at the panel foot — the detail you read last. Separated
+   by a soft rule so it reads as fine print, not content. */
+.z2f-footnote {
+  margin: 0;
+  max-width: 68ch;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
-  font-weight: 600;
+  line-height: var(--type-caption-line-height);
   letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Trajectory card: the score's right-hand neighbor. Index line + confidence
+   band over the fetched 150-day window — same honesty as the ± on the score. ── */
+.z2f-trend {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+.z2f-trend-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.z2f-trend-plot {
+  flex: 1;
+  min-height: 180px;
+}
+.z2f-trend-caption {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+.z2f-trend-empty {
+  margin: auto 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+.z2f-trend--skeleton {
+  min-height: 240px;
+}
+
+/* ── Coach card: guidance summary + legend + maintenance nudge, right of the
+   calendar (Sessions-style split). ── */
+.z2f-coach {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.z2f-coach--skeleton {
+  min-height: 200px;
 }
 
 .z2f-evidence-note {
@@ -222,15 +354,6 @@
   color: var(--color-text-tertiary);
 }
 
-.z2f-honesty-caption {
-  margin: var(--space-xs) 0 0;
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  line-height: var(--type-caption-line-height);
-  letter-spacing: var(--type-caption-letter-spacing);
-  color: var(--color-text-tertiary);
-}
-
 /* ── Calendar block + coaching guidance (summary + marker legend) ─────── */
 .z2f-calendar-block {
   background: var(--color-surface-elevated);
@@ -241,14 +364,14 @@
   gap: var(--space-md);
 }
 
-/* One-line actionable coaching summary under the calendar (real weekday/dates). */
+/* The coach card's lead: one actionable sentence (real weekday/dates). */
 .z2f-guidance-summary {
   margin: 0;
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-secondary);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+  color: var(--color-text);
 }
 
 .z2f-guidance-offmonth {

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Workout, Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
@@ -128,6 +129,24 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     [latest, zone2SessionDates, todayKey]
   )
 
+  // Trajectory series for the panel's right-hand neighbor: the fetched 150-day
+  // window rendered as index line + its real confidence band (same honesty rule
+  // as the ± on the score — the band is data, not decoration).
+  const trendData = useMemo(
+    () =>
+      rows
+        .filter((r) => r.durable_base != null)
+        .map((r) => ({
+          date: r.date.slice(5),
+          index: zone2IndexValue(r),
+          band:
+            r.durable_band_lo != null && r.durable_band_hi != null
+              ? [r.durable_band_lo, r.durable_band_hi]
+              : null
+        })),
+    [rows]
+  )
+
   function handlePrevMonth(): void {
     if (viewMonth === 1) {
       setViewMonth(12)
@@ -150,15 +169,21 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   if (fitnessQuery.isLoading) {
     return (
       <section className="z2f" aria-label="Zone 2 fitness level">
-        <div className="z2f-panel z2f-panel--skeleton" aria-hidden="true">
-          <div className="z2f-skeleton-line z2f-skeleton-line--eyebrow" />
-          <div className="z2f-skeleton-line z2f-skeleton-line--hero" />
-          <div className="z2f-meters">
-            <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
-            <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
+        <div className="z2f-row z2f-row--top" aria-hidden="true">
+          <div className="z2f-panel z2f-panel--skeleton">
+            <div className="z2f-skeleton-line z2f-skeleton-line--eyebrow" />
+            <div className="z2f-skeleton-line z2f-skeleton-line--hero" />
+            <div className="z2f-meters">
+              <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
+              <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
+            </div>
           </div>
+          <div className="z2f-trend z2f-trend--skeleton" />
         </div>
-        <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
+        <div className="z2f-row z2f-row--cal">
+          <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
+          <div className="z2f-coach z2f-coach--skeleton" />
+        </div>
       </section>
     )
   }
@@ -176,7 +201,13 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const meters = zone2Meters(latest, ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING)
   const index = zone2IndexValue(latest)
   const indexRounded = index != null ? Math.round(index) : null
+  const indexPct = index != null ? Math.max(0, Math.min(100, index)) : 0
   const halfWidth = indexBandHalfWidth(latest)
+
+  // The two component tracks are drawn on ONE shared scale so their LENGTHS encode
+  // their ceilings (70 vs 30): durable spans the full width, fast is 30/70 of it.
+  const durableTrackPct = 100
+  const fastTrackPct = (ZONE2_FAST_CEILING / ZONE2_DURABLE_CEILING) * 100
 
   const atRisk = hasMaintenanceFlag(latest)
   const reason = evidenceReason(latest.evidence_state)
@@ -195,63 +226,87 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     !markerInMonth(guidance.easesFrom) ||
     !markerInMonth(guidance.holdBy)
 
+  // One plain-language reading of where the model says the user is, next to the
+  // stage pill (the long honesty caption moves to the panel foot).
+  const phaseLine =
+    guidance.phase === 'building'
+      ? 'Building: every quality Zone 2 session still adds level.'
+      : atRisk
+        ? 'Maintaining: sessions defend the base — the fast layer is fading first.'
+        : 'Maintaining: sessions defend the base you have banked.'
+
   return (
-    <section className="z2f" aria-label="Zone 2 fitness level">
+    <section className="z2f" aria-label="Cardio fitness">
+      <div className="z2f-row z2f-row--top">
       <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
+        <div className="z2f-title">Cardio fitness</div>
+
         <div className="z2f-top">
-          {/* ── Overall index — the one hero number, framed; ±band / ceiling /
-              stage demoted to a small secondary line below. ──────────────── */}
+          {/* ── The score + confidence. ── */}
           <div className="z2f-hero">
-            <div className="z2f-eyebrow">ZONE 2 FITNESS · INDEX</div>
-            <div className="z2f-index-box">
-              <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
-                {indexRounded ?? '—'}
+            <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
+              {indexRounded ?? '—'}
+            </span>
+            {halfWidth != null && <span className="z2f-index-band tabular-nums">± {halfWidth}</span>}
+          </div>
+
+          {/* ── The whole index as a fat iOS-Control-Center-style bar, out of 100. ── */}
+          <div
+            className="z2f-gauge"
+            role="img"
+            aria-label={`Cardio fitness index ${indexRounded ?? '—'} of 100`}
+          >
+            <div className="z2f-gauge-fill" style={{ height: `${indexPct}%` }} />
+          </div>
+
+          {/* ── Description, right of the gauge: stage pill + one-line phase reading.
+              The long honesty caption lives at the panel foot. ── */}
+          <div className="z2f-desc">
+            <span className="z2f-stage-pill">
+              {stageLabel(latest.stage)}
+              <span className="z2f-note-star" aria-hidden="true">*</span>
+            </span>
+            <p className="z2f-phase-line">{phaseLine}</p>
+          </div>
+        </div>
+
+        {/* ── Component breakdown below, the two tracks sized to their ceilings
+            (durable 70 spans full width, fast 30 is 30/70 of it). ──────────── */}
+        <div className="z2f-meters">
+          <div className="z2f-meter" style={{ width: `${durableTrackPct}%` }}>
+            <div className="z2f-meter-head">
+              <span className="z2f-meter-label">Durable base</span>
+              <span className="z2f-meter-value tabular-nums">
+                {meters.durableValue}
+                <span className="z2f-meter-ceil"> / {ZONE2_DURABLE_CEILING}</span>
               </span>
             </div>
-            <div className="z2f-index-meta">
-              {halfWidth != null && <span className="z2f-index-band tabular-nums">±{halfWidth}</span>}
-              <span className="z2f-index-ceiling tabular-nums">out of 100</span>
-              <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
+            <div
+              className="z2f-meter-track"
+              role="img"
+              aria-label={`Durable base ${meters.durableValue} of ${ZONE2_DURABLE_CEILING}`}
+            >
+              <div className="z2f-meter-fill z2f-meter-fill--durable" style={{ width: `${meters.durablePct}%` }} />
             </div>
           </div>
 
-          {/* ── Two component meters: durable (earned base) + fast (form) ── */}
-          <div className="z2f-meters">
-            <div className="z2f-meter">
-              <div className="z2f-meter-head">
-                <span className="z2f-meter-label">Durable base</span>
-                <span className="z2f-meter-value tabular-nums">
-                  {meters.durableValue}
-                  <span className="z2f-meter-ceil"> / {ZONE2_DURABLE_CEILING}</span>
-                </span>
-              </div>
-              <div
-                className="z2f-meter-track"
-                role="img"
-                aria-label={`Durable base ${meters.durableValue} of ${ZONE2_DURABLE_CEILING}`}
-              >
-                <div className="z2f-meter-fill z2f-meter-fill--durable" style={{ width: `${meters.durablePct}%` }} />
-              </div>
+          <div className="z2f-meter" style={{ width: `${fastTrackPct}%` }}>
+            <div className="z2f-meter-head">
+              <span className="z2f-meter-label">
+                Fast · form
+                {atRisk && <span className="z2f-meter-chip">fading</span>}
+              </span>
+              <span className="z2f-meter-value tabular-nums">
+                {meters.fastValue}
+                <span className="z2f-meter-ceil"> / {ZONE2_FAST_CEILING}</span>
+              </span>
             </div>
-
-            <div className="z2f-meter">
-              <div className="z2f-meter-head">
-                <span className="z2f-meter-label">
-                  Fast · form
-                  {atRisk && <span className="z2f-meter-chip">fading</span>}
-                </span>
-                <span className="z2f-meter-value tabular-nums">
-                  {meters.fastValue}
-                  <span className="z2f-meter-ceil"> / {ZONE2_FAST_CEILING}</span>
-                </span>
-              </div>
-              <div
-                className="z2f-meter-track"
-                role="img"
-                aria-label={`Fast layer ${meters.fastValue} of ${ZONE2_FAST_CEILING}`}
-              >
-                <div className="z2f-meter-fill z2f-meter-fill--fast" style={{ width: `${meters.fastPct}%` }} />
-              </div>
+            <div
+              className="z2f-meter-track"
+              role="img"
+              aria-label={`Fast layer ${meters.fastValue} of ${ZONE2_FAST_CEILING}`}
+            >
+              <div className="z2f-meter-fill z2f-meter-fill--fast" style={{ width: `${meters.fastPct}%` }} />
             </div>
           </div>
         </div>
@@ -263,10 +318,84 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           </p>
         )}
 
-        <p className="z2f-honesty-caption">{HONESTY_CAPTION}</p>
+        <p className="z2f-footnote">
+          <span className="z2f-note-star" aria-hidden="true">* </span>
+          {HONESTY_CAPTION}
+        </p>
       </div>
 
-      {/* ── Session calendar as a coach: forward-looking guidance markers ── */}
+      {/* ── Trajectory: the fetched 150-day window as index line + confidence band. ── */}
+      <div className="z2f-trend" aria-label="Cardio fitness trajectory, last 150 days">
+        <div className="z2f-trend-label">Trajectory · last 150 days</div>
+        {trendData.length >= 2 ? (
+          <>
+            <div className="z2f-trend-plot">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={trendData} margin={{ top: 6, right: 4, bottom: 0, left: -24 }}>
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={36}
+                  />
+                  <YAxis
+                    domain={[0, (dataMax: number) => Math.max(40, Math.ceil((dataMax * 1.25) / 10) * 10)]}
+                    tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'var(--color-surface-hover)',
+                      border: 'none',
+                      borderRadius: 12,
+                      fontSize: 13,
+                      fontVariantNumeric: 'tabular-nums'
+                    }}
+                    formatter={(v, name) =>
+                      name === 'band'
+                        ? [
+                            Array.isArray(v)
+                              ? `${Math.round(Number(v[0]))}–${Math.round(Number(v[1]))}`
+                              : v,
+                            'band'
+                          ]
+                        : [typeof v === 'number' ? Math.round(v) : v, 'index']
+                    }
+                  />
+                  <Area
+                    dataKey="band"
+                    stroke="none"
+                    fill="var(--color-aerobic-dim)"
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    dataKey="index"
+                    stroke="var(--color-aerobic)"
+                    strokeWidth={1.5}
+                    dot={false}
+                    type="monotone"
+                    isAnimationActive={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="z2f-trend-caption">
+              Line is the index; the shaded band is its honest uncertainty. Direction matters more
+              than the number.
+            </p>
+          </>
+        ) : (
+          <p className="z2f-trend-empty">
+            The trajectory draws here once the nightly model has a few days of history.
+          </p>
+        )}
+      </div>
+      </div>
+
+      {/* ── Session calendar as a coach + its guidance card, Sessions-style split ── */}
+      <div className="z2f-row z2f-row--cal">
       <div className="z2f-calendar-block">
         <CalendarHeatmap
           year={viewYear}
@@ -279,7 +408,9 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           markers={guidance.markers}
           showDayLabel
         />
+      </div>
 
+      <div className="z2f-coach">
         {/* One-line actionable summary (real weekday/date formatting). */}
         <p className="z2f-guidance-summary">{guidance.summary}</p>
         {anyMarkerOffMonth && (
@@ -328,17 +459,18 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
             </span>
           )}
         </div>
-      </div>
 
-      {/* ── Maintenance nudge (neutral inset, never the red flag banner) ── */}
-      {atRisk && (
-        <div className="z2f-maintenance" role="note">
-          <span className="z2f-maintenance-badge">
-            <BadgeDomain domain="aerobic" label="ZONE 2" />
-          </span>
-          <p className="z2f-maintenance-copy">{maintenanceMessage(latest) ?? MAINTENANCE_COPY}</p>
-        </div>
-      )}
+        {/* Maintenance nudge (neutral inset, never the red flag banner). */}
+        {atRisk && (
+          <div className="z2f-maintenance" role="note">
+            <span className="z2f-maintenance-badge">
+              <BadgeDomain domain="aerobic" label="ZONE 2" />
+            </span>
+            <p className="z2f-maintenance-copy">{maintenanceMessage(latest) ?? MAINTENANCE_COPY}</p>
+          </div>
+        )}
+      </div>
+      </div>
     </section>
   )
 }
