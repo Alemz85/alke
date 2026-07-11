@@ -31,3 +31,8 @@ supabase/.branches/
 # Claude local settings
 .claude/settings.local.json
 metrics/.venv/
+
+# Cross-tool agent skills mirror (redundant copy of .claude/skills for non-Claude
+# agents; regenerable, so it stays local). AGENTS.md itself is a symlink to
+# CLAUDE.md and IS tracked, so any agent gets the same canonical instructions.
+.agents/

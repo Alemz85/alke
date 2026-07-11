@@ -1,6 +1,18 @@
 # Personal Health Analytics Platform
 
-Private, single-user analytics for Apple Watch / Apple Health data. Three independent programs share one Supabase Postgres database: (1) an **ingestion Edge Function** that the Health Auto Export iOS app POSTs new health data to, (2) a **nightly metrics job** (Python, GitHub Actions cron) that computes training-load and recovery metrics from the raw data, and (3) an **Electron desktop app** that renders the dashboard and embeds an AI chat driven by the local Claude Code CLI. Full build spec in `SPEC.md`; all UI follows `DESIGN.md`.
+Private, single-user analytics for Apple Watch / Apple Health data. Three independent programs share one Supabase Postgres database: (1) an **ingestion Edge Function** that the Health Auto Export iOS app POSTs new health data to, (2) a **nightly metrics job** (Python, GitHub Actions cron) that computes training-load and recovery metrics from the raw data, and (3) an **Electron desktop app** that renders the dashboard and embeds an AI chat driven by the local Claude Code CLI. All UI follows `DESIGN.md`.
+
+## Purpose & scope
+
+A personal fitness self-tracking tool for **one user's own** Apple Health data — training
+load, recovery, and aerobic-base (Zone 2) trends computed from workouts, heart rate, HRV,
+sleep, and VO₂max the user already records on their own Apple Watch. It is **informational,
+not medical**: the numbers are training-analytics estimates (banded, with their
+uncertainty shown), not diagnoses or clinical advice. There is no third-party data, no
+data collection from anyone but the owner, and nothing is shared externally — the database,
+the desktop app, and the AI chat all run against the single owner's private credentials.
+The sports-science modeling (detraining kinetics, maintenance dose, efficiency trends)
+is standard endurance-training literature applied to the owner's own numbers.
 
 ## Layout
 
@@ -25,7 +37,7 @@ The desktop app ships both a dark theme (the default) and a light theme, toggled
 
 ## Running each component
 
-**Ingestion** — deployed to Supabase: `supabase functions deploy ingest`. Local tests: `deno test supabase/functions/ingest/`. Endpoint setup for the iOS app is in `SETUP.md`.
+**Ingestion** — deployed to Supabase: `supabase functions deploy ingest`. Local tests: `deno test supabase/functions/ingest/`. The Health Auto Export payload format the endpoint parses is documented under `docs/vendor/hae-wiki/`.
 
 **Metrics job** — `pip install -r metrics/requirements.txt && python -m metrics.compute` with `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` in the environment (`--full` recomputes all history). Runs nightly via GitHub Actions.
 
