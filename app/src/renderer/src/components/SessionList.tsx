@@ -4,11 +4,10 @@ import { BadgeDomain } from './BadgeDomain'
 import { EmptyState } from './EmptyState'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { ModalityIcon } from './ModalityIcon'
-import { formatWorkoutDuration } from '../lib/calendarDayLabel'
+import { EM_DASH, formatDurationHM } from '../lib/format'
 import { localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import './SessionList.css'
 
-const EM_DASH = '—'
 const PAGE_SIZE = 20
 
 export interface SessionListProps {
@@ -82,7 +81,7 @@ export function SessionList({
                 <BadgeDomain domain={badgeDomain} label={modalityLabel(w.type)} />
               </span>
               <span className="session-list-cell session-list-cell--duration tabular-nums">
-                {formatWorkoutDuration(w.duration_s ?? 0)}
+                {formatDurationHM(w.duration_s ?? 0)}
               </span>
               <span className="session-list-cell session-list-cell--distance tabular-nums">
                 {distanceKm ? `${distanceKm} km` : EM_DASH}

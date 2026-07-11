@@ -3,6 +3,7 @@
 // weeks meeting the configured weekly minimums. Kept separate from the data
 // hooks so the math is trivially unit-testable / reviewable in isolation.
 import type { Workout } from '@shared/types'
+import { formatClockDuration } from '../lib/format'
 import { workoutMatchesGoal } from '../lib/modality'
 import { isoWeekKey, localDateKey, toZonedYMD } from './sessionsDate'
 
@@ -149,10 +150,7 @@ function isoWeeksInYear(year: number): number {
   return p(year) === 4 || p(year - 1) === 3 ? 53 : 52
 }
 
+/** @deprecated delegates to lib/format.ts's formatClockDuration — import that directly in new code. */
 export function formatDuration(totalS: number): string {
-  const totalMin = Math.round(totalS / 60)
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  if (h === 0) return `${m}m`
-  return `${h}:${m.toString().padStart(2, '0')}`
+  return formatClockDuration(totalS)
 }

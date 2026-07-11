@@ -1,37 +1,34 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useMemo, type ReactElement } from 'react'
 import { TabHeader } from './TabHeader'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { SessionList } from '../components/SessionList'
-import { EmptyState, HeroMetric, StatTable } from '../components'
+import { SummaryCard } from '../components/SummaryCard'
+import { EmptyState, HeroMetric } from '../components'
 import type { StatTableRow } from '../components'
 import { useMonthWorkouts, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
-import { isoWeekKey, localDateKey, todayYMD, toZonedYMD } from '../hooks/sessionsDate'
-import { formatWorkoutDuration } from '../lib/calendarDayLabel'
+import { useMonthCalendar } from '../hooks/useMonthCalendar'
+import { isoWeekKey, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
+import { formatDurationHM, formatPerMonth, formatTrendPct } from '../lib/format'
 import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
 import './SessionsView.css'
-
-const EM_DASH = '—'
-
-function fmtTrendPct(pct: number | null): string {
-  if (pct === null) return EM_DASH
-  const sign = pct > 0 ? '+' : ''
-  return `${sign}${Math.round(pct)}%`
-}
-
-function fmtPerMonth(n: number): string {
-  return Number.isInteger(n) ? n.toString() : n.toFixed(1)
-}
 
 export function SessionsView(): ReactElement {
   const userConfigQuery = useUserConfig()
   const timezone = userConfigQuery.data?.timezone
 
-  const today = todayYMD(timezone)
-  const [viewYear, setViewYear] = useState(today.year)
-  const [viewMonth, setViewMonth] = useState(today.month) // 1-12
-  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null)
+  const {
+    today,
+    viewYear,
+    viewMonth,
+    handlePrevMonth,
+    handleNextMonth,
+    selectedDayKey,
+    openDay,
+    closeDay,
+    showMonthOf
+  } = useMonthCalendar(timezone)
 
   const monthWorkoutsQuery = useMonthWorkouts(viewYear, viewMonth)
   const yearWorkoutsQuery = useYearWorkouts(timezone)
@@ -120,18 +117,18 @@ export function SessionsView(): ReactElement {
   const monthStatRows: StatTableRow[] = hasAnySessionThisMonth
     ? [
         { label: 'Workouts', value: monthSum.workouts.toString() },
-        { label: 'Total time', value: formatWorkoutDuration(monthSum.totalDurationS) },
+        { label: 'Total time', value: formatDurationHM(monthSum.totalDurationS) },
         { label: 'Gym sessions', value: monthSum.gymSessions.toString() },
         { label: 'Cardio sessions', value: monthSum.cardioSessions.toString() },
-        { label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` }
+        { label: 'Time trend', value: `${formatTrendPct(monthSum.timeTrendPct)} vs last month` }
       ]
-    : [{ label: 'Time trend', value: `${fmtTrendPct(monthSum.timeTrendPct)} vs last month` }]
+    : [{ label: 'Time trend', value: `${formatTrendPct(monthSum.timeTrendPct)} vs last month` }]
 
   const yearStatRows: StatTableRow[] = [
-    { label: 'Workouts/mo', value: fmtPerMonth(yearSum.avgWorkoutsPerMonth) },
-    { label: 'Time/mo', value: formatWorkoutDuration(yearSum.avgDurationSPerMonth) },
-    { label: 'Gym/mo', value: fmtPerMonth(yearSum.avgGymPerMonth) },
-    { label: 'Cardio/mo', value: fmtPerMonth(yearSum.avgCardioPerMonth) }
+    { label: 'Workouts/mo', value: formatPerMonth(yearSum.avgWorkoutsPerMonth) },
+    { label: 'Time/mo', value: formatDurationHM(yearSum.avgDurationSPerMonth) },
+    { label: 'Gym/mo', value: formatPerMonth(yearSum.avgGymPerMonth) },
+    { label: 'Cardio/mo', value: formatPerMonth(yearSum.avgCardioPerMonth) }
   ]
 
   const selectedBucket = selectedDayKey
@@ -147,32 +144,10 @@ export function SessionsView(): ReactElement {
       })
     : ''
 
-  function handlePrevMonth(): void {
-    if (viewMonth === 1) {
-      setViewMonth(12)
-      setViewYear((y) => y - 1)
-    } else {
-      setViewMonth((m) => m - 1)
-    }
-  }
-
-  function handleNextMonth(): void {
-    if (viewMonth === 12) {
-      setViewMonth(1)
-      setViewYear((y) => y + 1)
-    } else {
-      setViewMonth((m) => m + 1)
-    }
-  }
-
   /** Session-list row click: jump the calendar to that day's month (if needed) and open its drawer. */
   function handleSelectSessionDay(dateKey: string): void {
-    const [y, m] = dateKey.split('-').map(Number)
-    if (y !== viewYear || m !== viewMonth) {
-      setViewYear(y)
-      setViewMonth(m)
-    }
-    setSelectedDayKey(dateKey)
+    showMonthOf(dateKey)
+    openDay(dateKey)
   }
 
   return (
@@ -193,7 +168,7 @@ export function SessionsView(): ReactElement {
             month={viewMonth}
             today={today}
             daysByKey={daysByKey}
-            onSelectDay={setSelectedDayKey}
+            onSelectDay={openDay}
             onPrevMonth={handlePrevMonth}
             onNextMonth={handleNextMonth}
             showDayLabel
@@ -206,19 +181,13 @@ export function SessionsView(): ReactElement {
         </div>
 
         <div className="sessions-grid-summary">
-          <div className="sessions-summary-card">
-            <h3 className="sessions-summary-title">Month summary</h3>
-            <StatTable rows={monthStatRows} />
-          </div>
-          <div className="sessions-summary-card">
-            <h3 className="sessions-summary-title">{viewYear} · monthly average</h3>
-            <StatTable rows={yearStatRows} />
-          </div>
+          <SummaryCard title="Month summary" rows={monthStatRows} />
+          <SummaryCard title={`${viewYear} · monthly average`} rows={yearStatRows} />
         </div>
       </div>
 
       <div className="sessions-list-section">
-        <h3 className="sessions-summary-title">All sessions</h3>
+        <h3 className="sessions-list-title">All sessions</h3>
         <SessionList
           workouts={summaryWorkouts}
           timezone={timezone}
@@ -231,7 +200,7 @@ export function SessionsView(): ReactElement {
           dateLabel={selectedDateLabel}
           workouts={selectedBucket.workouts}
           timezone={timezone}
-          onClose={() => setSelectedDayKey(null)}
+          onClose={closeDay}
         />
       )}
     </div>

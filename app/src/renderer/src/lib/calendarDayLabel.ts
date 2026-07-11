@@ -5,6 +5,7 @@
 import type { Workout } from '@shared/types'
 import type { DayBucket } from '../hooks/sessionsCompute'
 import { cardioModalityByKey, cardioModalityOf } from './cardioModality'
+import { formatDurationHM } from './format'
 
 /**
  * A short, human display name for a workout `type`. Every strength/core variant
@@ -34,15 +35,10 @@ export function workoutDisplayName(type: string | null | undefined): string {
 /**
  * Duration as the user specified: whole minutes under an hour ("45m"), else
  * hours + minutes ("1h 45m"), with a clean "1h" exactly on the hour.
+ * Delegates to lib/format.ts's formatDurationHM — kept as a named export
+ * since other files import `formatWorkoutDuration` from here.
  */
-export function formatWorkoutDuration(totalSeconds: number): string {
-  const totalMin = Math.max(0, Math.round(totalSeconds / 60))
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  if (h === 0) return `${m}m`
-  if (m === 0) return `${h}h`
-  return `${h}h ${m}m`
-}
+export const formatWorkoutDuration = formatDurationHM
 
 /** A day's calendar label, split so the cell can stack name over time. */
 export interface CalendarDayLabel {
