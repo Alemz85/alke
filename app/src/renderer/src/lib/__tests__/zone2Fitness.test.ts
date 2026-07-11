@@ -11,7 +11,7 @@ import {
   latestZone2Row,
   maintenanceMessage,
   stageLabel,
-  zone2BarGeometry,
+  zone2Meters,
   zone2CalendarGuidance,
   zone2IndexValue
 } from '../zone2Fitness'
@@ -341,79 +341,44 @@ describe('indexBandHalfWidth', () => {
   })
 })
 
-describe('zone2BarGeometry', () => {
-  it('fills each zone to its component and ghosts the remaining headroom; slices tile the bar', () => {
-    // D=35 of 70, F=15 of 30 → index 50. Total height 100.
-    const g = zone2BarGeometry(row({ durable_base: 35, sharpness: 15 }), C_D, C_F)
-    expect(g.indexValue).toBe(50)
-    expect(g.durableFillPct).toBeCloseTo(35, 5) // 35/100
-    expect(g.durableGhostPct).toBeCloseTo(35, 5) // (70-35)/100
-    expect(g.fastFillPct).toBeCloseTo(15, 5) // 15/100
-    expect(g.fastGhostPct).toBeCloseTo(15, 5) // (30-15)/100
-    // The four slices always cover the whole bar.
-    expect(g.durableFillPct + g.durableGhostPct + g.fastFillPct + g.fastGhostPct).toBeCloseTo(100, 5)
+describe('zone2Meters (v4 two-bar layout)', () => {
+  it('fills each meter against its OWN ceiling', () => {
+    // D=35 of 70 → 50%; F=15 of 30 → 50%.
+    const m = zone2Meters(row({ durable_base: 35, sharpness: 15 }), C_D, C_F)
+    expect(m.durableValue).toBe(35)
+    expect(m.durablePct).toBeCloseTo(50, 5)
+    expect(m.fastValue).toBe(15)
+    expect(m.fastPct).toBeCloseTo(50, 5)
   })
 
-  it('a thin durable base is a small solid block under a large ghost (honest headroom)', () => {
-    const g = zone2BarGeometry(row({ durable_base: 7, sharpness: 0 }), C_D, C_F)
-    expect(g.durableFillPct).toBeCloseTo(7, 5)
-    expect(g.durableGhostPct).toBeCloseTo(63, 5) // 70-7
-    expect(g.durableGhostPct).toBeGreaterThan(g.durableFillPct)
+  it('a thin base and a fuller form fill their own bars independently', () => {
+    // D=7/70 → 10%; F=11/30 → ~36.7% — the honest beginner picture (little base,
+    // more recent form), each read against its own ceiling.
+    const m = zone2Meters(row({ durable_base: 7, sharpness: 11 }), C_D, C_F)
+    expect(m.durablePct).toBeCloseTo(10, 5)
+    expect(m.fastPct).toBeCloseTo((11 / 30) * 100, 5)
+    expect(m.fastPct).toBeGreaterThan(m.durablePct)
   })
 
-  it('clamps a component that exceeds its ceiling (no fill spills past the zone)', () => {
-    const g = zone2BarGeometry(row({ durable_base: 90, sharpness: 45 }), C_D, C_F)
-    expect(g.durableFillPct).toBeCloseTo(70, 5) // clamped to C_D
-    expect(g.durableGhostPct).toBeCloseTo(0, 5)
-    expect(g.fastFillPct).toBeCloseTo(30, 5) // clamped to C_F
-    expect(g.fastGhostPct).toBeCloseTo(0, 5)
-    expect(g.indexValue).toBe(100) // clamped to total
+  it('clamps a component that exceeds its ceiling (fill never passes 100%)', () => {
+    const m = zone2Meters(row({ durable_base: 90, sharpness: 45 }), C_D, C_F)
+    expect(m.durableValue).toBe(70)
+    expect(m.durablePct).toBeCloseTo(100, 5)
+    expect(m.fastValue).toBe(30)
+    expect(m.fastPct).toBeCloseTo(100, 5)
   })
 
-  it('treats null components as 0 (empty foundation, full ghost)', () => {
-    const g = zone2BarGeometry(row({ durable_base: null, sharpness: null }), C_D, C_F)
-    expect(g.durableFillPct).toBe(0)
-    expect(g.fastFillPct).toBe(0)
-    expect(g.durableGhostPct).toBeCloseTo(70, 5)
-    expect(g.fastGhostPct).toBeCloseTo(30, 5)
-    expect(g.indexValue).toBe(0)
+  it('treats null components as 0 (empty bars)', () => {
+    const m = zone2Meters(row({ durable_base: null, sharpness: null }), C_D, C_F)
+    expect(m.durableValue).toBe(0)
+    expect(m.durablePct).toBe(0)
+    expect(m.fastValue).toBe(0)
+    expect(m.fastPct).toBe(0)
   })
 
-  it('maps the INDEX band to bar percentages, ordered and clamped', () => {
-    const g = zone2BarGeometry(
-      row({ durable_base: 40, sharpness: 10, durable_band_lo: 44, durable_band_hi: 56 }),
-      C_D,
-      C_F
-    )
-    expect(g.hasBand).toBe(true)
-    expect(g.bandLoPct).toBeCloseTo(44, 5) // 44/100
-    expect(g.bandHiPct).toBeCloseTo(56, 5) // 56/100
-    expect(g.bandHiPct).toBeGreaterThan(g.bandLoPct)
-  })
-
-  it('collapses the band onto the index when a bound is missing', () => {
-    const g = zone2BarGeometry(
-      row({ durable_base: 40, sharpness: 10, durable_band_lo: 44, durable_band_hi: null }),
-      C_D,
-      C_F
-    )
-    expect(g.hasBand).toBe(false)
-    // Both edges sit on the index (50) so the caller renders no error zone.
-    expect(g.bandLoPct).toBeCloseTo(50, 5)
-    expect(g.bandHiPct).toBeCloseTo(50, 5)
-  })
-
-  it('orders an INVERTED band (lo > hi in storage) so bandLoPct never exceeds bandHiPct', () => {
-    // Columns stored backwards: durable_band_lo=56, durable_band_hi=44 (lo > hi).
-    const g = zone2BarGeometry(
-      row({ durable_base: 40, sharpness: 10, durable_band_lo: 56, durable_band_hi: 44 }),
-      C_D,
-      C_F
-    )
-    expect(g.hasBand).toBe(true)
-    // min/max re-orders regardless of which column carried which value.
-    expect(g.bandLoPct).toBeCloseTo(44, 5)
-    expect(g.bandHiPct).toBeCloseTo(56, 5)
-    expect(g.bandHiPct).toBeGreaterThanOrEqual(g.bandLoPct)
+  it('guards a degenerate ceiling config without dividing by zero', () => {
+    const m = zone2Meters(row({ durable_base: 10, sharpness: 5 }), 0, 0)
+    expect(m.durablePct).toBe(0)
+    expect(m.fastPct).toBe(0)
   })
 })

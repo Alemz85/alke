@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Workout, Zone2Fitness } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
@@ -17,9 +17,9 @@ import {
   latestZone2Row,
   maintenanceMessage,
   stageLabel,
-  zone2BarGeometry,
   zone2CalendarGuidance,
-  zone2IndexValue
+  zone2IndexValue,
+  zone2Meters
 } from '../lib/zone2Fitness'
 import './Zone2FitnessHeader.css'
 
@@ -151,14 +151,11 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     return (
       <section className="z2f" aria-label="Zone 2 fitness level">
         <div className="z2f-panel z2f-panel--skeleton" aria-hidden="true">
-          <div className="z2f-barwrap">
-            <div className="z2f-bar z2f-bar--skeleton" />
-          </div>
-          <div className="z2f-readout">
-            <div className="z2f-skeleton-line z2f-skeleton-line--eyebrow" />
-            <div className="z2f-skeleton-line z2f-skeleton-line--hero" />
-            <div className="z2f-skeleton-line z2f-skeleton-line--body" />
-            <div className="z2f-skeleton-line z2f-skeleton-line--body" />
+          <div className="z2f-skeleton-line z2f-skeleton-line--eyebrow" />
+          <div className="z2f-skeleton-line z2f-skeleton-line--hero" />
+          <div className="z2f-meters">
+            <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
+            <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
           </div>
         </div>
         <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
@@ -176,23 +173,13 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   }
 
   const evidenceOk = latest.evidence_state === 'ok'
-  const geom = zone2BarGeometry(latest, ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING)
+  const meters = zone2Meters(latest, ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING)
   const index = zone2IndexValue(latest)
   const indexRounded = index != null ? Math.round(index) : null
   const halfWidth = indexBandHalfWidth(latest)
-  const durableRounded = Math.round(latest.durable_base)
-  const fastRounded = latest.sharpness != null ? Math.round(latest.sharpness) : 0
 
   const atRisk = hasMaintenanceFlag(latest)
   const reason = evidenceReason(latest.evidence_state)
-
-  // The durable ceiling divider sits at C_D / (C_D + C_F) of the height.
-  const dividerPct = (ZONE2_DURABLE_CEILING / (ZONE2_DURABLE_CEILING + ZONE2_FAST_CEILING)) * 100
-
-  // A single quiet 1px tick at the index level (top of the current combined fill) —
-  // the ONLY on-bar uncertainty cue; the real band lives in the "±N" text.
-  const indexTickPct = geom.durableFillPct + geom.fastFillPct
-  const indexTickStyle: CSSProperties = { bottom: `${indexTickPct}%` }
 
   // Any guidance marker that falls outside the visible month is called out in the
   // summary line instead of the grid (dates are still shown, just not annotated).
@@ -211,76 +198,72 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   return (
     <section className="z2f" aria-label="Zone 2 fitness level">
       <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
-        {/* ── Clean vertical two-zone composition bar ───────────────────── */}
-        <div className="z2f-barwrap">
-          <div
-            className="z2f-bar"
-            role="img"
-            aria-label={`Zone 2 fitness index ${indexRounded ?? '—'} of 100${
-              halfWidth != null ? `, plus or minus ${halfWidth}` : ''
-            }. Durable base ${durableRounded} of ${ZONE2_DURABLE_CEILING}, fast layer ${fastRounded} of ${ZONE2_FAST_CEILING}.`}
-          >
-            {/* Stacked top→bottom in DOM order: fast ghost, fast fill, durable ghost,
-                durable fill. Two fills, two faint ghosts — nothing else. */}
-            <div className="z2f-bar-seg z2f-bar-seg--fast-ghost" style={{ height: `${geom.fastGhostPct}%` }} />
-            <div className="z2f-bar-seg z2f-bar-seg--fast-fill" style={{ height: `${geom.fastFillPct}%` }} />
-            <div className="z2f-bar-seg z2f-bar-seg--durable-ghost" style={{ height: `${geom.durableGhostPct}%` }} />
-            <div className="z2f-bar-seg z2f-bar-seg--durable-fill" style={{ height: `${geom.durableFillPct}%` }} />
+        <div className="z2f-top">
+          {/* ── Overall index — the one hero number for the tab ──────────── */}
+          <div className="z2f-hero">
+            <div className="z2f-eyebrow">ZONE 2 FITNESS · INDEX</div>
+            <div className="z2f-index-row">
+              <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
+                {indexRounded ?? '—'}
+              </span>
+              {halfWidth != null && <span className="z2f-index-band tabular-nums">±{halfWidth}</span>}
+              <span className="z2f-index-ceiling tabular-nums">/ 100</span>
+            </div>
+          </div>
 
-            {/* Single thin divider tick at the 70 ceiling (the seam). */}
-            <div className="z2f-bar-divider" style={{ bottom: `${dividerPct}%` }} aria-hidden="true" />
+          {/* ── Two component meters: durable (earned base) + fast (form) ── */}
+          <div className="z2f-meters">
+            <div className="z2f-meter">
+              <div className="z2f-meter-head">
+                <span className="z2f-meter-label">Durable base</span>
+                <span className="z2f-meter-value tabular-nums">
+                  {meters.durableValue}
+                  <span className="z2f-meter-ceil"> / {ZONE2_DURABLE_CEILING}</span>
+                </span>
+              </div>
+              <div
+                className="z2f-meter-track"
+                role="img"
+                aria-label={`Durable base ${meters.durableValue} of ${ZONE2_DURABLE_CEILING}`}
+              >
+                <div className="z2f-meter-fill z2f-meter-fill--durable" style={{ width: `${meters.durablePct}%` }} />
+              </div>
+            </div>
 
-            {/* One quiet 1px tick at the index level — the only on-bar uncertainty cue. */}
-            <div className="z2f-bar-tick" style={indexTickStyle} aria-hidden="true" />
+            <div className="z2f-meter">
+              <div className="z2f-meter-head">
+                <span className="z2f-meter-label">
+                  Fast · form
+                  {atRisk && <span className="z2f-meter-chip">fading</span>}
+                </span>
+                <span className="z2f-meter-value tabular-nums">
+                  {meters.fastValue}
+                  <span className="z2f-meter-ceil"> / {ZONE2_FAST_CEILING}</span>
+                </span>
+              </div>
+              <div
+                className="z2f-meter-track"
+                role="img"
+                aria-label={`Fast layer ${meters.fastValue} of ${ZONE2_FAST_CEILING}`}
+              >
+                <div className="z2f-meter-fill z2f-meter-fill--fast" style={{ width: `${meters.fastPct}%` }} />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* ── Headline index + honesty labels ───────────────────────────── */}
-        <div className="z2f-readout">
-          <div className="z2f-eyebrow">ZONE 2 FITNESS · INDEX</div>
-          <div className="z2f-index-row">
-            <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
-              {indexRounded ?? '—'}
-            </span>
-            {halfWidth != null && <span className="z2f-index-band tabular-nums">±{halfWidth}</span>}
-            <span className="z2f-index-ceiling tabular-nums">/ 100</span>
-          </div>
-
-          <div className="z2f-compose tabular-nums">
-            <span className="z2f-compose-item">
-              <span className="z2f-swatch z2f-swatch--durable" /> Durable {durableRounded}
-              <span className="z2f-compose-ceil">/ {ZONE2_DURABLE_CEILING}</span>
-            </span>
-            <span className="z2f-compose-plus">+</span>
-            <span className="z2f-compose-item">
-              <span className="z2f-swatch z2f-swatch--fast" /> Fast {fastRounded}
-              <span className="z2f-compose-ceil">/ {ZONE2_FAST_CEILING}</span>
-            </span>
-          </div>
-
-          {/* Quiet legend labelling the two bar tones (no text lives on the bar). */}
-          <div className="z2f-bar-legend" aria-hidden="true">
-            <span className="z2f-bar-legend-item">
-              <span className="z2f-swatch z2f-swatch--durable" /> Durable
-            </span>
-            <span className="z2f-bar-legend-item">
-              <span className="z2f-swatch z2f-swatch--fast" /> Fast
-            </span>
-          </div>
-
-          <div className="z2f-pills">
-            <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
-          </div>
-
-          {!evidenceOk && reason && (
-            <p className="z2f-evidence-note">
-              <span className="z2f-evidence-tag">{latest.evidence_state.replace('_', ' ')}</span> {reason}
-              {' '}Showing last known value.
-            </p>
-          )}
-
-          <p className="z2f-honesty-caption">{HONESTY_CAPTION}</p>
+        <div className="z2f-pills">
+          <span className="z2f-stage-pill">{stageLabel(latest.stage)}</span>
         </div>
+
+        {!evidenceOk && reason && (
+          <p className="z2f-evidence-note">
+            <span className="z2f-evidence-tag">{latest.evidence_state.replace('_', ' ')}</span> {reason}
+            {' '}Showing last known value.
+          </p>
+        )}
+
+        <p className="z2f-honesty-caption">{HONESTY_CAPTION}</p>
       </div>
 
       {/* ── Session calendar as a coach: forward-looking guidance markers ── */}
@@ -294,6 +277,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           onPrevMonth={handlePrevMonth}
           onNextMonth={handleNextMonth}
           markers={guidance.markers}
+          showDayLabel
         />
 
         {/* One-line actionable summary (real weekday/date formatting). */}

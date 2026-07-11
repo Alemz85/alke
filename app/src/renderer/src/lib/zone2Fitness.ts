@@ -13,70 +13,37 @@ function clamp(x: number, lo: number, hi: number): number {
 }
 
 /**
- * Geometry for the v2 vertical two-zone bar (docs/zone2-fitness-model.md v2 "Visual").
- * All outputs are PERCENTAGES OF THE FULL 0→100 INDEX HEIGHT so the caller can position
- * every layer against one shared axis — the durable zone is the bottom [0, C_D] slice
- * and the fast zone is the top [C_D, C_D+C_F] slice.
+ * Two independent component METERS (v4 "two bars" layout). The confusing single
+ * stacked two-zone bar (durable bottom, fast top, ghosted headroom, a 70-divider)
+ * is replaced by two plain horizontal fill meters, each measured against its OWN
+ * ceiling — so "how full is my durable base" and "how full is my recent form" each
+ * read at a glance. The headline INDEX (durable + fast) stays the one hero number
+ * above them; these bars are its composition.
  *
- *   durableFillPct  solid "earned" teal, 0 → D (durable_base), clamped to [0, C_D]
- *   durableGhostPct ghosted headroom, D → C_D (the durable ceiling)
- *   fastFillPct     lighter "provisional" teal, C_D → C_D+F (sharpness), F clamped to [0, C_F]
- *   fastGhostPct    ghosted headroom, C_D+F → C_D+C_F (the top of the bar)
- *   indexValue      D + F (the headline number), clamped to [0, C_D+C_F]
- *   bandLoPct       lower edge of the confidence band as a % of full height
- *   bandHiPct       upper edge of the confidence band as a % of full height
- *
- * The four fill/ghost slices always sum to 100 (they tile the whole bar). Band edges
- * come from the INDEX band columns (durable_band_lo/hi); when either is missing, both
- * band percentages collapse onto the index so the caller can skip the error zone.
+ *   durableValue  rounded durable_base, clamped to [0, C_D]
+ *   durablePct    durable_base / C_D as a percentage (bar fill width)
+ *   fastValue     rounded sharpness, clamped to [0, C_F]
+ *   fastPct       sharpness / C_F as a percentage (bar fill width)
  */
-export interface Zone2BarGeometry {
-  durableFillPct: number
-  durableGhostPct: number
-  fastFillPct: number
-  fastGhostPct: number
-  indexValue: number
-  bandLoPct: number
-  bandHiPct: number
-  hasBand: boolean
+export interface Zone2Meters {
+  durableValue: number
+  durablePct: number
+  fastValue: number
+  fastPct: number
 }
 
-export function zone2BarGeometry(
-  row: Pick<Zone2Fitness, 'durable_base' | 'sharpness' | 'durable_band_lo' | 'durable_band_hi'>,
+export function zone2Meters(
+  row: Pick<Zone2Fitness, 'durable_base' | 'sharpness'>,
   durableCeiling: number,
   fastCeiling: number
-): Zone2BarGeometry {
-  const total = durableCeiling + fastCeiling
-  // Guard against a degenerate ceiling config (never happens in prod, but keeps the
-  // percentages finite for tests / bad params).
-  const toPct = (v: number): number => (total > 0 ? (v / total) * 100 : 0)
-
+): Zone2Meters {
   const d = clamp(row.durable_base ?? 0, 0, durableCeiling)
   const f = clamp(row.sharpness ?? 0, 0, fastCeiling)
-  const indexValue = clamp(d + f, 0, total)
-
-  const durableFillPct = toPct(d)
-  const durableGhostPct = toPct(durableCeiling - d)
-  const fastFillPct = toPct(f)
-  const fastGhostPct = toPct(fastCeiling - f)
-
-  const lo = row.durable_band_lo
-  const hi = row.durable_band_hi
-  const hasBand = lo != null && hi != null && Number.isFinite(lo) && Number.isFinite(hi)
-  // Band edges are the INDEX band, clamped to the bar and ordered lo ≤ hi even if the
-  // stored columns are inverted. Absent band → collapse both edges onto the index.
-  const bandLoRaw = hasBand ? clamp(Math.min(lo as number, hi as number), 0, total) : indexValue
-  const bandHiRaw = hasBand ? clamp(Math.max(lo as number, hi as number), 0, total) : indexValue
-
   return {
-    durableFillPct,
-    durableGhostPct,
-    fastFillPct,
-    fastGhostPct,
-    indexValue,
-    bandLoPct: toPct(bandLoRaw),
-    bandHiPct: toPct(bandHiRaw),
-    hasBand
+    durableValue: Math.round(d),
+    durablePct: durableCeiling > 0 ? (d / durableCeiling) * 100 : 0,
+    fastValue: Math.round(f),
+    fastPct: fastCeiling > 0 ? (f / fastCeiling) * 100 : 0
   }
 }
 

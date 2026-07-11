@@ -1,8 +1,8 @@
-/* Zone-2 fitness model header (docs/zone2-fitness-model.md v2 "Visual").
-   A single VERTICAL two-zone bar carries the composition: a solid "earned" durable
-   foundation on the bottom [0,70], a lighter "provisional" fast cap on top [70,100],
-   each ghosting to its ceiling. Neutral chrome everywhere; teal (aerobic) is the only
-   accent — two tones of it, per DESIGN.md. Grayscale-clean by law. */
+/* Zone-2 fitness model header (docs/zone2-fitness-model.md, v4 "two bars").
+   The one hero INDEX number sits above TWO plain horizontal component meters —
+   durable base (earned, solid teal) and fast/form (provisional, lighter teal) —
+   each filled against its own ceiling. Neutral chrome; teal (aerobic) is the only
+   accent, in two tones. Grayscale-clean by law (only the fills carry color). */
 
 .z2f {
   margin-top: var(--space-xl);
@@ -11,24 +11,20 @@
   gap: var(--space-lg);
 }
 
-/* ── Panel: bar on the left, readout on the right ─────────────────────── */
+/* ── Panel: hero index + two meters, stacked ──────────────────────────── */
 .z2f-panel {
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-xl);
-  align-items: stretch;
-  /* "Fast" (provisional) tone shared by the bar fill/ghost AND the swatches in
-     the readout — component-scoped so [data-theme='light'] can override both
-     from one place instead of duplicating rgba literals per usage. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  /* "Fast" (provisional) teal tone shared by the fast meter fill AND the at-risk
+     chip — component-scoped so [data-theme='light'] overrides both from here. */
   --z2f-fast-fill: rgba(45, 212, 191, 0.42);
-  --z2f-fast-ghost: rgba(45, 212, 191, 0.07);
 }
 [data-theme='light'] .z2f-panel {
   --z2f-fast-fill: rgba(15, 118, 110, 0.5);
-  --z2f-fast-ghost: rgba(15, 118, 110, 0.12);
 }
 
 /* Whole panel greyed when evidence is not ok (insufficient / ambiguous / low-confidence). */
@@ -36,88 +32,28 @@
   opacity: 0.62;
 }
 
+/* Top row: hero number on the left, the two meters filling the rest; collapses
+   to a stack on a narrow window. */
+.z2f-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: center;
+}
 @media (max-width: 620px) {
-  .z2f-panel {
+  .z2f-top {
     grid-template-columns: 1fr;
     gap: var(--space-lg);
   }
 }
 
-/* ── Vertical bar — the minimum that reads instantly ──────────────────────
-   Two fills (durable solid teal bottom, fast lighter teal top), two faint
-   ghosts for headroom, one divider tick at the 70 ceiling, one quiet tick at
-   the index level. Nothing hatched, no on-bar text. */
-.z2f-barwrap {
-  display: flex;
-  align-items: stretch;
-}
-
-.z2f-bar {
-  position: relative;
-  width: 40px;
-  min-height: 240px;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column; /* DOM order = top→bottom: fast-ghost, fast-fill, durable-ghost, durable-fill */
-  background: var(--color-surface);
-}
-
-.z2f-bar-seg {
-  width: 100%;
-  flex: 0 0 auto;
-}
-
-/* Durable = bottom zone. Solid "earned" teal; ONE quiet ghost tone for headroom. */
-.z2f-bar-seg--durable-fill {
-  background: var(--color-aerobic);
-}
-.z2f-bar-seg--durable-ghost {
-  background: var(--color-aerobic-dim);
-}
-
-/* Fast = top zone. Lighter/translucent "provisional" teal; ONE fainter ghost.
-   Tone comes from the --z2f-fast-* custom properties defined on .z2f-panel
-   (shared with the swatches below) so both re-derive together under
-   [data-theme='light'] instead of duplicating rgba literals per usage. */
-.z2f-bar-seg--fast-fill {
-  background: var(--z2f-fast-fill);
-}
-.z2f-bar-seg--fast-ghost {
-  background: var(--z2f-fast-ghost);
-}
-
-/* Single thin divider at the 70 ceiling (the seam between the two zones) —
-   uses the shared hairline token so it stays legible in both themes. */
-.z2f-bar-divider {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 0;
-  border-top: 1px solid var(--color-hairline);
-  pointer-events: none;
-}
-
-/* One quiet 1px tick at the index level — the only on-bar uncertainty cue.
-   (The real band lives in the "±N" text beside the number.) */
-.z2f-bar-tick {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 0;
-  border-top: 1px solid var(--color-text);
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-/* ── Readout: index + composition + honesty ───────────────────────────── */
-.z2f-readout {
+.z2f-hero {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  min-width: 0;
 }
 
+/* ── Hero index number (the one big figure; the band is the ±N beside it) ─ */
 .z2f-eyebrow {
   font-family: var(--font-body);
   font-size: var(--type-label-size);
@@ -162,59 +98,85 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Composition line: Durable D/70 + Fast F/30. Never a summed single value. */
-.z2f-compose {
+/* ── Two component meters — durable base + fast/form ──────────────────── */
+.z2f-meters {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+.z2f-meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.z2f-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--space-sm);
+}
+.z2f-meter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.z2f-meter-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  letter-spacing: var(--type-heading-sm-letter-spacing);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+.z2f-meter-ceil {
+  color: var(--color-text-tertiary);
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-secondary);
-}
-.z2f-compose-item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-}
-.z2f-compose-ceil {
-  color: var(--color-text-tertiary);
-  margin-left: 2px;
-}
-.z2f-compose-plus {
-  color: var(--color-text-tertiary);
+  font-weight: 400;
 }
 
-.z2f-swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
+.z2f-meter-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface); /* neutral inset track — grayscale-clean */
+  overflow: hidden;
 }
-.z2f-swatch--durable {
-  background: var(--color-aerobic);
+.z2f-meter-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 300ms ease;
 }
-.z2f-swatch--fast {
-  /* Mirrors the bar's fast-fill tone (--z2f-fast-fill, defined on .z2f-panel above). */
-  background: var(--z2f-fast-fill);
+.z2f-meter-fill--durable {
+  background: var(--color-aerobic); /* solid "earned" teal */
+}
+.z2f-meter-fill--fast {
+  background: var(--z2f-fast-fill); /* lighter "provisional" teal */
+}
+@media (prefers-reduced-motion: reduce) {
+  .z2f-meter-fill {
+    transition: none;
+  }
 }
 
-/* Quiet legend labelling the two bar tones — no text lives on the bar itself. */
-.z2f-bar-legend {
-  display: flex;
-  gap: var(--space-md);
-  margin-top: var(--space-xxs);
+/* Small teal "fading" chip on the fast meter when the maintenance flag holds —
+   badge-domain style, NEVER red (a fading form is information, not an alarm). */
+.z2f-meter-chip {
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
-  letter-spacing: var(--type-caption-letter-spacing);
-  color: var(--color-text-tertiary);
-}
-.z2f-bar-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--color-aerobic-text);
+  background: var(--color-aerobic-dim);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
 }
 
 .z2f-pills {
@@ -367,14 +329,6 @@
 
 /* ── Loading skeleton — reserves the panel + calendar block's layout height so
    the tab doesn't jump once the query resolves (was: render nothing). ─────── */
-.z2f-panel--skeleton {
-  align-items: stretch;
-}
-
-.z2f-bar--skeleton {
-  background: var(--color-surface);
-}
-
 .z2f-skeleton-line {
   height: 14px;
   border-radius: var(--radius-sm);
@@ -386,11 +340,13 @@
 }
 .z2f-skeleton-line--hero {
   width: 30%;
-  height: 40px;
-  margin-top: var(--space-xs);
+  height: 48px;
+  margin: var(--space-xs) 0 var(--space-sm);
 }
-.z2f-skeleton-line--body {
-  width: 80%;
+.z2f-skeleton-line--meter {
+  width: 100%;
+  height: 8px;
+  border-radius: var(--radius-full);
 }
 
 .z2f-calendar-block--skeleton {

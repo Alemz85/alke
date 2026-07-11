@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { DayBucket } from '../hooks/sessionsCompute'
 import { durationStepIndex } from '../hooks/sessionsCompute'
+import { calendarDayLabel } from '../lib/calendarDayLabel'
 import { buildMonthGrid, MONTH_NAMES, WEEKDAY_LABELS, type YMD } from '../hooks/sessionsDate'
 import { modalityToDomain } from './modalityAccent'
 import './CalendarHeatmap.css'
@@ -27,6 +28,12 @@ export interface CalendarHeatmapProps {
    * undefined — the Sessions view passes nothing and is unaffected.
    */
   markers?: Record<string, CalendarDayMarker>
+  /**
+   * When true, each workout day shows a compact bottom-corner label — the
+   * longest activity's name (strength/core collapse to "Gym") + total duration
+   * ("Swim · 44m", "Gym · 1h 45m"). Opt-in — the Zone 2 calendar leaves it off.
+   */
+  showDayLabel?: boolean
 }
 
 export function CalendarHeatmap({
@@ -37,7 +44,8 @@ export function CalendarHeatmap({
   onSelectDay,
   onPrevMonth,
   onNextMonth,
-  markers
+  markers,
+  showDayLabel = false
 }: CalendarHeatmapProps): ReactElement {
   const cells = buildMonthGrid(year, month)
   const todayKey = `${today.year.toString().padStart(4, '0')}-${today.month.toString().padStart(2, '0')}-${today.day.toString().padStart(2, '0')}`
@@ -86,8 +94,9 @@ export function CalendarHeatmap({
           const hasWorkouts = !!bucket && bucket.workouts.length > 0
           const stepIndex = hasWorkouts ? durationStepIndex(bucket.totalDurationS) : -1
           const marker = markers?.[cell.key]
+          const dayLabel = showDayLabel && hasWorkouts ? calendarDayLabel(bucket) : null
           const sessionLabel = hasWorkouts
-            ? `${cell.ymd.day}: ${bucket!.workouts.length} session${bucket!.workouts.length > 1 ? 's' : ''}`
+            ? `${cell.ymd.day}: ${dayLabel ? `${dayLabel.name} ${dayLabel.duration}` : `${bucket!.workouts.length} session${bucket!.workouts.length > 1 ? 's' : ''}`}`
             : `${cell.ymd.day}: no sessions`
           const cellLabel = marker ? `${sessionLabel}. ${marker.label}` : sessionLabel
 
@@ -108,18 +117,28 @@ export function CalendarHeatmap({
             >
               {marker && <span className="calendar-heatmap-marker" aria-hidden="true" />}
               <span className="calendar-heatmap-daynum">{cell.ymd.day}</span>
-              {hasWorkouts && bucket!.modalities.length > 0 && (
-                <span className="calendar-heatmap-dots">
-                  {bucket!.modalities.map((modality) => {
-                    const domain = modalityToDomain(modality)
-                    return (
-                      <span
-                        key={modality}
-                        className={`calendar-heatmap-dot calendar-heatmap-dot--${domain}`}
-                      />
-                    )
-                  })}
-                </span>
+              {hasWorkouts && (bucket!.modalities.length > 0 || dayLabel) && (
+                <div className="calendar-heatmap-cell-foot">
+                  {bucket!.modalities.length > 0 && (
+                    <span className="calendar-heatmap-dots">
+                      {bucket!.modalities.map((modality) => {
+                        const domain = modalityToDomain(modality)
+                        return (
+                          <span
+                            key={modality}
+                            className={`calendar-heatmap-dot calendar-heatmap-dot--${domain}`}
+                          />
+                        )
+                      })}
+                    </span>
+                  )}
+                  {dayLabel && (
+                    <span className="calendar-heatmap-daylabel">
+                      <span className="calendar-heatmap-daylabel-name">{dayLabel.name}</span>
+                      <span className="calendar-heatmap-daylabel-time">{dayLabel.duration}</span>
+                    </span>
+                  )}
+                </div>
               )}
             </button>
           )

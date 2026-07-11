@@ -174,6 +174,57 @@
   background: var(--color-text-tertiary);
 }
 
+/* ── Bottom-corner day label (opt-in via `showDayLabel`) ──────────────────
+   The cell foot lays dots on the left and the "Swim · 44m" label on the right.
+   The label truncates on a narrow cell; its color tracks the daynum per step so
+   it stays legible on the sessions-accent fills. */
+.calendar-heatmap-cell-foot {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+}
+.calendar-heatmap-daylabel {
+  margin-left: auto; /* pin right even when there are no dots */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+/* Activity name on top (a touch stronger), duration below (muted). Both truncate
+   on a narrow cell. */
+.calendar-heatmap-daylabel-name {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0.1px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.calendar-heatmap-daylabel-time {
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.78;
+}
+.calendar-heatmap-cell--step-0 .calendar-heatmap-daylabel {
+  color: var(--color-text-secondary);
+}
+.calendar-heatmap-cell--step-1 .calendar-heatmap-daylabel,
+.calendar-heatmap-cell--step-2 .calendar-heatmap-daylabel {
+  color: var(--color-text);
+}
+.calendar-heatmap-cell--step-3 .calendar-heatmap-daylabel {
+  color: var(--color-text-on-accent);
+}
+
 /* ── Forward-looking coaching markers (Zone 2 tab; opt-in via `markers` prop) ──
    Additive: a colored ring around the day cell + a small dot in the top-right
    corner so the guidance reads even against a filled session cell. NEVER red —

@@ -122,6 +122,7 @@ export function SessionsView(): ReactElement {
             onSelectDay={setSelectedDayKey}
             onPrevMonth={handlePrevMonth}
             onNextMonth={handleNextMonth}
+            showDayLabel
           />
           {!hasAnySessionThisMonth && (
             <div className="sessions-empty-note">
