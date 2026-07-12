@@ -29,6 +29,12 @@ extraResources:
     to: chatctx/CLAUDE.md
   - from: ../chatctx/db.py
     to: chatctx/db.py
+  - from: ../chatctx/injuries.py
+    to: chatctx/injuries.py
+  - from: ../chatctx/goals.py
+    to: chatctx/goals.py
+  - from: ../chatctx/modes
+    to: chatctx/modes
   - from: ../chatctx/.claude
     to: chatctx/.claude
 mac:

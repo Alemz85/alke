@@ -20,6 +20,18 @@ const CHATCTX_DIR = app.isPackaged
   ? join(process.resourcesPath, 'chatctx')
   : join(__dirname, '../../../chatctx')
 
+// Chat sessions are routed to a role via chatctx's `health` skill: the first
+// message of a fresh CLI session opens with `/health <mode>`, which makes the
+// agent read that mode's instruction files (chatctx/modes/). Resumed CLI
+// sessions already carry the mode files in context, so no prefix is re-sent.
+export type ChatMode = 'analysis' | 'injuries' | 'goals'
+const DEFAULT_MODE: ChatMode = 'analysis'
+
+// Standard closing sentence for every headless (non-interactive) spawn, so
+// the contract is one shared constant instead of ad-hoc phrasing per caller.
+const NONINTERACTIVE_SUFFIX =
+  'Run end-to-end without asking for confirmations; make reasonable assumptions and state them.'
+
 // Tracks the in-flight CLI child process per DB session id, so a stop
 // request can locate and signal the right one. `markStopped` flips the
 // closure-local `stopped` flag in the matching sendMessage() call, so its
@@ -38,7 +50,8 @@ export function checkClaude(): Promise<ChatStatus> {
 export async function sendMessage(
   window: BrowserWindow,
   sessionId: string | null,
-  message: string
+  message: string,
+  mode: ChatMode = DEFAULT_MODE
 ): Promise<{ sessionId: string }> {
   let session = sessionId ? await db.getChatSession(sessionId) : null
   if (!session) {
@@ -52,9 +65,12 @@ export async function sendMessage(
     if (!window.isDestroyed()) window.webContents.send('chat:stream', { sessionId: session!.id, event })
   }
 
+  // Fresh CLI session → open with the mode route; the stored/displayed
+  // message stays the raw user text, only the spawned prompt is prefixed.
+  const prompt = session.claude_session_id ? message : `/health ${mode}\n\n${message}`
   const args = [
     '-p',
-    message,
+    prompt,
     '--output-format',
     'stream-json',
     '--verbose',
@@ -184,12 +200,12 @@ export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: 
   metricBuildsInFlight.add(goalId)
 
   const prompt =
+    `/health goals\n\n` +
     `A goal card with id ${goalId} was just created in the app and has no progress metric yet. ` +
-    `Follow the Goals section of your instructions: read the goal (python3 goals.py list, ` +
+    `Follow your goals-mode instructions: read the goal (python3 goals.py list, ` +
     `plus db.py for the data), design its progress metric, save it with goals.py set-metric, ` +
     `materialize the series with goals.py recompute, and if the goal's description is empty ` +
-    `write a short factual one via goals.py update. Run end-to-end without asking for ` +
-    `confirmations; make reasonable assumptions and state them in the metric description.`
+    `write a short factual one via goals.py update. ${NONINTERACTIVE_SUFFIX}`
 
   return new Promise((resolve) => {
     execFile(
