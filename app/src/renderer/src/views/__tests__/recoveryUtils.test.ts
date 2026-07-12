@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { DailyMetric } from '@shared/types'
 import {
+  bucketAggregate,
   daysAgo,
   EM_DASH,
+  fmtBucketLabel,
+  fmtClockTime,
   fmtDelta,
   fmtHoursAsHm,
   fmtHoursMinutes,
   fmtLocalDate,
   fmtNum,
+  granularityForDays,
   mean,
   median,
   readStageHours,
@@ -237,5 +241,89 @@ describe('weeklyMedianByDate', () => {
     const rows = [makeMetric({ date: '2026-01-05', hrv_sdnn_ms: null })]
     const result = weeklyMedianByDate(rows, 'hrv_sdnn_ms')
     expect(result.has('2026-01-05')).toBe(false)
+  })
+})
+
+describe('fmtClockTime', () => {
+  it('formats an ISO instant as 24h clock time in the given timezone', () => {
+    // 22:42 UTC on the given day → 23:42 in Berlin (UTC+1 in January).
+    expect(fmtClockTime('2026-01-05T22:42:00Z', 'Europe/Berlin')).toBe('23:42')
+  })
+
+  it('returns the em-dash for null / undefined / unparseable input', () => {
+    expect(fmtClockTime(null, 'Europe/Berlin')).toBe(EM_DASH)
+    expect(fmtClockTime(undefined, 'Europe/Berlin')).toBe(EM_DASH)
+    expect(fmtClockTime('not-a-date', 'Europe/Berlin')).toBe(EM_DASH)
+  })
+
+  it('falls back to UTC when no timezone is supplied', () => {
+    expect(fmtClockTime('2026-01-05T07:05:00Z', null)).toBe('07:05')
+  })
+})
+
+describe('granularityForDays', () => {
+  it('picks daily for short windows, weekly at 90d, monthly beyond', () => {
+    expect(granularityForDays(7)).toBe('daily')
+    expect(granularityForDays(30)).toBe('daily')
+    expect(granularityForDays(90)).toBe('weekly')
+    expect(granularityForDays(365)).toBe('monthly')
+  })
+})
+
+describe('bucketAggregate', () => {
+  it('passes daily rows through unchanged, nulling absent readings', () => {
+    const rows = [
+      makeMetric({ date: '2026-01-05', resting_hr: 50 }),
+      makeMetric({ date: '2026-01-06', resting_hr: null })
+    ]
+    const out = bucketAggregate(rows, 'resting_hr', 'daily')
+    expect(out).toEqual([
+      { date: '2026-01-05', value: 50, n: 1 },
+      { date: '2026-01-06', value: null, n: 0 }
+    ])
+  })
+
+  it('collapses a week into its mean (ISO-Monday anchor)', () => {
+    // 2026-01-05 is a Monday; the whole week anchors to it.
+    const rows = [
+      makeMetric({ date: '2026-01-05', resting_hr: 50 }),
+      makeMetric({ date: '2026-01-07', resting_hr: 52 }),
+      makeMetric({ date: '2026-01-11', resting_hr: 54 })
+    ]
+    const out = bucketAggregate(rows, 'resting_hr', 'weekly', 'mean')
+    expect(out).toEqual([{ date: '2026-01-05', value: 52, n: 3 }])
+  })
+
+  it('collapses months to the 1st-of-month anchor and supports median', () => {
+    const rows = [
+      makeMetric({ date: '2026-01-03', hrv_sdnn_ms: 40 }),
+      makeMetric({ date: '2026-01-20', hrv_sdnn_ms: 60 }),
+      makeMetric({ date: '2026-02-14', hrv_sdnn_ms: 80 })
+    ]
+    const out = bucketAggregate(rows, 'hrv_sdnn_ms', 'monthly', 'median')
+    expect(out).toEqual([
+      { date: '2026-01-01', value: 50, n: 2 },
+      { date: '2026-02-01', value: 80, n: 1 }
+    ])
+  })
+
+  it('drops empty buckets rather than plotting phantom zeros', () => {
+    const rows = [
+      makeMetric({ date: '2026-01-05', resting_hr: null }),
+      makeMetric({ date: '2026-01-06', resting_hr: null })
+    ]
+    expect(bucketAggregate(rows, 'resting_hr', 'weekly')).toEqual([])
+  })
+})
+
+describe('fmtBucketLabel', () => {
+  it('labels days, weeks, and months distinctly', () => {
+    expect(fmtBucketLabel('2026-01-05', 'daily', 'Europe/Berlin')).toBe(
+      fmtLocalDate('2026-01-05', 'Europe/Berlin')
+    )
+    expect(fmtBucketLabel('2026-01-05', 'weekly', 'Europe/Berlin')).toBe(
+      `wk ${fmtLocalDate('2026-01-05', 'Europe/Berlin')}`
+    )
+    expect(fmtBucketLabel('2026-01-01', 'monthly', 'Europe/Berlin')).toBe('Jan 2026')
   })
 })

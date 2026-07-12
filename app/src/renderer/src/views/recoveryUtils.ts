@@ -54,6 +54,26 @@ export function fmtLocalDate(dateStr: string, _timezone: string | null | undefin
   }).format(date)
 }
 
+/**
+ * Formats a real instant (sleep_start / sleep_end, stored timestamptz ISO) as a
+ * 24-hour clock time in the user's timezone, e.g. "23:42". Unlike fmtLocalDate,
+ * these are true instants, so projecting through the named timezone is correct.
+ */
+export function fmtClockTime(
+  iso: string | null | undefined,
+  timezone: string | null | undefined
+): string {
+  if (!iso) return EM_DASH
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return EM_DASH
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone ?? 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(d)
+}
+
 /** Number of whole days between a "YYYY-MM-DD" date string and today (UTC-anchored). */
 export function daysAgo(dateStr: string): number {
   const then = new Date(`${dateStr}T00:00:00Z`).getTime()
@@ -212,6 +232,102 @@ export function buildWeightSeries(
 
     return { date: r.date, weight: r.weight_kg, trend }
   })
+}
+
+/**
+ * Chart granularity. Daily plots every reading (fine for short windows); at
+ * longer windows daily points crowd into noise, so we aggregate into weekly or
+ * monthly buckets to let the trend read clearly.
+ */
+export type Granularity = 'daily' | 'weekly' | 'monthly'
+
+/** Bucket size chosen from a window length: daily ≤30d, weekly ≤90d, monthly beyond. */
+export function granularityForDays(days: number): Granularity {
+  if (days <= 30) return 'daily'
+  if (days <= 90) return 'weekly'
+  return 'monthly'
+}
+
+/** The bucket key (a "YYYY-MM-DD" anchor date) a given date falls into. */
+function bucketKeyOf(dateStr: string, g: Granularity): string {
+  if (g === 'daily') return dateStr
+  if (g === 'monthly') return `${dateStr.slice(0, 7)}-01`
+  // weekly: anchor to the ISO Monday of that date's week.
+  const d = new Date(`${dateStr}T00:00:00Z`)
+  const day = d.getUTCDay() === 0 ? 7 : d.getUTCDay()
+  d.setUTCDate(d.getUTCDate() - (day - 1))
+  return d.toISOString().slice(0, 10)
+}
+
+export interface BucketPoint {
+  /** Anchor date of the bucket (the day itself, the week's Monday, or the 1st of the month). */
+  date: string
+  /** Aggregated value across the bucket, or null if the bucket had no readings. */
+  value: number | null
+  /** How many non-null readings fell into the bucket. */
+  n: number
+}
+
+/**
+ * Aggregates a date-ascending metric series into daily / weekly / monthly
+ * buckets. At daily granularity every row passes through unchanged (value null
+ * where the reading is absent); at coarser granularities each bucket collapses
+ * to the mean or median of the readings it contains, and empty buckets are
+ * dropped (so the series stays gap-honest rather than plotting phantom zeros).
+ */
+export function bucketAggregate(
+  rows: DailyMetric[],
+  field: keyof Pick<
+    DailyMetric,
+    'sleep_duration_min' | 'resting_hr' | 'hrv_sdnn_ms' | 'respiratory_rate'
+  >,
+  granularity: Granularity,
+  agg: 'mean' | 'median' = 'mean'
+): BucketPoint[] {
+  if (granularity === 'daily') {
+    return rows.map((r) => {
+      const v = r[field]
+      const num = typeof v === 'number' && !Number.isNaN(v) ? v : null
+      return { date: r.date, value: num, n: num === null ? 0 : 1 }
+    })
+  }
+
+  const buckets = new Map<string, number[]>()
+  for (const r of rows) {
+    const v = r[field]
+    if (typeof v !== 'number' || Number.isNaN(v)) continue
+    const key = bucketKeyOf(r.date, granularity)
+    const list = buckets.get(key) ?? []
+    list.push(v)
+    buckets.set(key, list)
+  }
+
+  return [...buckets.keys()]
+    .sort()
+    .map((key) => {
+      const vals = buckets.get(key) as number[]
+      return { date: key, value: agg === 'median' ? median(vals) : mean(vals), n: vals.length }
+    })
+}
+
+/**
+ * Axis / tooltip label for a bucket anchor date, matched to its granularity:
+ * a day reads "Tue 8 Jul", a week "wk 8 Jul", a month "Jul 2026".
+ */
+export function fmtBucketLabel(
+  dateStr: string,
+  granularity: Granularity,
+  timezone: string | null | undefined
+): string {
+  if (granularity === 'monthly') {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      month: 'short',
+      year: 'numeric'
+    }).format(new Date(`${dateStr}T00:00:00Z`))
+  }
+  if (granularity === 'weekly') return `wk ${fmtLocalDate(dateStr, timezone)}`
+  return fmtLocalDate(dateStr, timezone)
 }
 
 export { EM_DASH }

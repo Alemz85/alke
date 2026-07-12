@@ -25,10 +25,14 @@ import {
 } from '../hooks/useRecoveryData'
 import {
   buildWeightSeries,
+  bucketAggregate,
   daysAgo,
+  fmtBucketLabel,
+  fmtClockTime,
   fmtHoursAsHm,
   fmtHoursMinutes,
   fmtLocalDate,
+  granularityForDays,
   mean,
   readStageHours,
   rollingAverage,
@@ -105,15 +109,32 @@ export function RecoveryView(): ReactElement {
     heroCaption = `${deltaPart}${agePart}`
   }
 
-  // --- Sleep chart data (bars + 7d rolling avg line), stage legend ---
+  // --- Sleep chart data ---
+  // Short windows plot daily bars + a 7d rolling-avg line; long windows (90d/1y)
+  // collapse into weekly/monthly average bars so the trend isn't lost in noise.
   const sleepDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[sleepRange])
+  const sleepGran = granularityForDays(RANGE_DAYS[sleepRange])
   const sleepRollingAvg = rollingAverage(allMetrics, 'sleep_duration_min')
-  const sleepChartData = sleepDaysWindow.map((r) => ({
-    date: r.date,
-    hours: r.sleep_duration_min === null ? null : r.sleep_duration_min / 60,
-    avgHours: sleepRollingAvg.has(r.date) ? (sleepRollingAvg.get(r.date) as number) / 60 : null
-  }))
+  const sleepChartData =
+    sleepGran === 'daily'
+      ? sleepDaysWindow.map((r) => ({
+          date: r.date,
+          hours: r.sleep_duration_min === null ? null : r.sleep_duration_min / 60,
+          avgHours: sleepRollingAvg.has(r.date) ? (sleepRollingAvg.get(r.date) as number) / 60 : null
+        }))
+      : bucketAggregate(sleepDaysWindow, 'sleep_duration_min', sleepGran, 'mean').map((b) => ({
+          date: b.date,
+          hours: b.value === null ? null : b.value / 60,
+          avgHours: null as number | null
+        }))
   const hasSleepData = sleepChartData.some((d) => d.hours !== null)
+  const sleepBarLabel =
+    sleepGran === 'weekly' ? 'Weekly avg' : sleepGran === 'monthly' ? 'Monthly avg' : 'Sleep'
+
+  // Bedtime / wake for the most recent night with a recorded sleep window.
+  const latestBedtime = fmtClockTime(latestSleepRow?.sleep_start, timezone)
+  const latestWake = fmtClockTime(latestSleepRow?.sleep_end, timezone)
+  const hasBedtime = Boolean(latestSleepRow?.sleep_start || latestSleepRow?.sleep_end)
 
   const latestStages =
     latestSleepRow?.sleep_stages && typeof latestSleepRow.sleep_stages === 'object'
@@ -127,44 +148,80 @@ export function RecoveryView(): ReactElement {
 
   // --- RHR chart data ---
   const rhrDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[rhrRange])
+  const rhrGran = granularityForDays(RANGE_DAYS[rhrRange])
   const computedByDate = new Map(allComputed.map((c) => [c.date, c]))
   // Baseline band: a +/-3bpm corridor around the 60d baseline. Renders as a
   // shaded Area once computed_daily.rhr_baseline_60d is populated by the
   // nightly job; while that column is empty (current phase) baseline is null
-  // for every row and the Area contributes nothing to the chart.
+  // for every row and the Area contributes nothing to the chart. The band is a
+  // daily-only overlay — at weekly/monthly granularity we plot bucket means.
   const BASELINE_BAND_BPM = 3
-  const rhrChartData = rhrDaysWindow.map((r) => {
-    const computed = computedByDate.get(r.date)
-    const baseline = computed?.rhr_baseline_60d ?? null
-    return {
-      date: r.date,
-      rhr: r.resting_hr,
-      baselineLow: baseline === null ? null : baseline - BASELINE_BAND_BPM,
-      baselineBand: baseline === null ? null : BASELINE_BAND_BPM * 2
-    }
-  })
+  const rhrChartData =
+    rhrGran === 'daily'
+      ? rhrDaysWindow.map((r) => {
+          const computed = computedByDate.get(r.date)
+          const baseline = computed?.rhr_baseline_60d ?? null
+          return {
+            date: r.date,
+            rhr: r.resting_hr,
+            baselineLow: baseline === null ? null : baseline - BASELINE_BAND_BPM,
+            baselineBand: baseline === null ? null : BASELINE_BAND_BPM * 2
+          }
+        })
+      : bucketAggregate(rhrDaysWindow, 'resting_hr', rhrGran, 'mean').map((b) => ({
+          date: b.date,
+          rhr: b.value,
+          baselineLow: null as number | null,
+          baselineBand: null as number | null
+        }))
   const hasRhrData = rhrChartData.some((d) => d.rhr !== null)
   const hasRhrBaseline = rhrChartData.some((d) => d.baselineLow !== null)
+  const rhrLineLabel =
+    rhrGran === 'weekly' ? 'Weekly avg' : rhrGran === 'monthly' ? 'Monthly avg' : 'RHR'
 
-  // --- HRV chart data ---
+  // --- HRV chart data (dots + median line; HRV is noisy so we lead with median) ---
   const hrvDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[hrvRange])
+  const hrvGran = granularityForDays(RANGE_DAYS[hrvRange])
   const hrvWeeklyMedian = weeklyMedianByDate(hrvDaysWindow, 'hrv_sdnn_ms')
-  const hrvChartData = hrvDaysWindow.map((r) => ({
-    date: r.date,
-    hrv: r.hrv_sdnn_ms,
-    weeklyMedian: hrvWeeklyMedian.get(r.date) ?? null
-  }))
-  const hasHrvData = hrvChartData.some((d) => d.hrv !== null)
+  const hrvChartData =
+    hrvGran === 'daily'
+      ? hrvDaysWindow.map((r) => ({
+          date: r.date,
+          hrv: r.hrv_sdnn_ms,
+          weeklyMedian: hrvWeeklyMedian.get(r.date) ?? null
+        }))
+      : bucketAggregate(hrvDaysWindow, 'hrv_sdnn_ms', hrvGran, 'median').map((b) => ({
+          date: b.date,
+          hrv: null as number | null,
+          weeklyMedian: b.value
+        }))
+  const hasHrvData = hrvChartData.some((d) => d.hrv !== null || d.weeklyMedian !== null)
+  const hrvMedianLabel =
+    hrvGran === 'weekly'
+      ? 'Weekly median'
+      : hrvGran === 'monthly'
+        ? 'Monthly median'
+        : 'Weekly median'
 
   // --- Respiratory rate chart data (dots + 7d rolling avg line) ---
   const respDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[respRange])
+  const respGran = granularityForDays(RANGE_DAYS[respRange])
   const respRollingAvg = rollingAverage(allMetrics, 'respiratory_rate')
-  const respChartData = respDaysWindow.map((r) => ({
-    date: r.date,
-    resp: r.respiratory_rate,
-    avgResp: respRollingAvg.has(r.date) ? (respRollingAvg.get(r.date) as number) : null
-  }))
-  const hasRespData = respChartData.some((d) => d.resp !== null)
+  const respChartData =
+    respGran === 'daily'
+      ? respDaysWindow.map((r) => ({
+          date: r.date,
+          resp: r.respiratory_rate,
+          avgResp: respRollingAvg.has(r.date) ? (respRollingAvg.get(r.date) as number) : null
+        }))
+      : bucketAggregate(respDaysWindow, 'respiratory_rate', respGran, 'mean').map((b) => ({
+          date: b.date,
+          resp: null as number | null,
+          avgResp: b.value
+        }))
+  const hasRespData = respChartData.some((d) => d.resp !== null || d.avgResp !== null)
+  const respLineLabel =
+    respGran === 'weekly' ? 'Weekly avg' : respGran === 'monthly' ? 'Monthly avg' : '7d avg'
 
   // --- VO2max sparse scatter (1y) ---
   const vo2Window = sliceLastNDays(allMetrics, RANGE_DAYS['1y'])
@@ -224,7 +281,7 @@ export function RecoveryView(): ReactElement {
                       axisLine={AXIS_LINE}
                       tickLine={false}
                       minTickGap={32}
-                      tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      tickFormatter={(d: string) => fmtBucketLabel(d, sleepGran, timezone)}
                     />
                     <YAxis
                       tick={AXIS_TICK}
@@ -237,10 +294,10 @@ export function RecoveryView(): ReactElement {
                       contentStyle={TOOLTIP_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      labelFormatter={(d: string) => fmtBucketLabel(d, sleepGran, timezone)}
                       formatter={(value: number, name: string) => [
                         `${value.toFixed(1)}h`,
-                        name === 'avgHours' ? '7d avg' : 'Sleep'
+                        name === 'avgHours' ? '7d avg' : sleepBarLabel
                       ]}
                     />
                     <Bar
@@ -251,17 +308,24 @@ export function RecoveryView(): ReactElement {
                       strokeWidth={1}
                       radius={[2, 2, 0, 0]}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="avgHours"
-                      name="avgHours"
-                      stroke="var(--color-recovery)"
-                      strokeWidth={1.5}
-                      dot={false}
-                      connectNulls={false}
-                    />
+                    {sleepGran === 'daily' && (
+                      <Line
+                        type="monotone"
+                        dataKey="avgHours"
+                        name="avgHours"
+                        stroke="var(--color-recovery)"
+                        strokeWidth={1.5}
+                        dot={false}
+                        connectNulls={false}
+                      />
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
+                {hasBedtime && (
+                  <p className="recovery-chart-caption">
+                    Last night · asleep {latestBedtime} → awake {latestWake}
+                  </p>
+                )}
                 {hasStageLegend && (
                   <div className="recovery-stage-legend">
                     <span className="recovery-stage-legend-item">
@@ -301,17 +365,26 @@ export function RecoveryView(): ReactElement {
                     axisLine={AXIS_LINE}
                     tickLine={false}
                     minTickGap={32}
-                    tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                    tickFormatter={(d: string) => fmtBucketLabel(d, rhrGran, timezone)}
                   />
-                  <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={32} domain={['auto', 'auto']} />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={32}
+                    domain={['auto', 'auto']}
+                    // Bucket means produce fractional ticks ("65.55") that clip at
+                    // this width — whole bpm is all the precision RHR carries anyway.
+                    tickFormatter={(v: number) => v.toFixed(0)}
+                  />
                   <Tooltip
                     contentStyle={TOOLTIP_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
-                    labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                    labelFormatter={(d: string) => fmtBucketLabel(d, rhrGran, timezone)}
                     formatter={(value: number, name: string) => [
                       `${value.toFixed(0)} bpm`,
-                      name === 'rhr' ? 'RHR' : '60d baseline'
+                      name === 'rhr' ? rhrLineLabel : '60d baseline'
                     ]}
                   />
                   {hasRhrBaseline && (
@@ -346,7 +419,11 @@ export function RecoveryView(): ReactElement {
                     name="rhr"
                     stroke="var(--color-recovery)"
                     strokeWidth={1.5}
-                    dot={false}
+                    dot={
+                      rhrGran === 'daily'
+                        ? false
+                        : { r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }
+                    }
                     connectNulls={false}
                   />
                 </ComposedChart>
@@ -374,37 +451,51 @@ export function RecoveryView(): ReactElement {
                       axisLine={AXIS_LINE}
                       tickLine={false}
                       minTickGap={32}
-                      tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      tickFormatter={(d: string) => fmtBucketLabel(d, hrvGran, timezone)}
                     />
-                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={32} domain={['auto', 'auto']} />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={32}
+                      domain={['auto', 'auto']}
+                      // Weekly medians can be fractional and clip at this width.
+                      tickFormatter={(v: number) => v.toFixed(0)}
+                    />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      labelFormatter={(d: string) => fmtBucketLabel(d, hrvGran, timezone)}
                       formatter={(value: number, name: string) => [
                         `${value.toFixed(0)} ms`,
-                        name === 'weeklyMedian' ? 'Weekly median' : 'HRV'
+                        name === 'weeklyMedian' ? hrvMedianLabel : 'HRV'
                       ]}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="hrv"
-                      name="hrv"
-                      stroke="var(--color-recovery)"
-                      strokeOpacity={0.35}
-                      strokeWidth={0}
-                      dot={{ r: 2, fill: 'var(--color-recovery)', fillOpacity: 0.35, strokeWidth: 0 }}
-                      connectNulls={false}
-                      isAnimationActive={false}
-                    />
+                    {hrvGran === 'daily' && (
+                      <Line
+                        type="monotone"
+                        dataKey="hrv"
+                        name="hrv"
+                        stroke="var(--color-recovery)"
+                        strokeOpacity={0.35}
+                        strokeWidth={0}
+                        dot={{ r: 2, fill: 'var(--color-recovery)', fillOpacity: 0.35, strokeWidth: 0 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="weeklyMedian"
                       name="weeklyMedian"
                       stroke="var(--color-recovery)"
                       strokeWidth={1.5}
-                      dot={false}
+                      dot={
+                        hrvGran === 'daily'
+                          ? false
+                          : { r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }
+                      }
                       connectNulls={false}
                     />
                   </ComposedChart>
@@ -434,7 +525,7 @@ export function RecoveryView(): ReactElement {
                       axisLine={AXIS_LINE}
                       tickLine={false}
                       minTickGap={32}
-                      tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      tickFormatter={(d: string) => fmtBucketLabel(d, respGran, timezone)}
                     />
                     <YAxis
                       tick={AXIS_TICK}
@@ -443,35 +534,43 @@ export function RecoveryView(): ReactElement {
                       width={32}
                       domain={['auto', 'auto']}
                       label={{ value: 'br/min', position: 'insideTopLeft', fill: 'var(--color-text-tertiary)', fontSize: 12 }}
+                      // Bucket means can be long fractions that clip at this width.
+                      tickFormatter={(v: number) => v.toFixed(1)}
                     />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                      labelFormatter={(d: string) => fmtBucketLabel(d, respGran, timezone)}
                       formatter={(value: number, name: string) => [
                         `${value.toFixed(1)} br/min`,
-                        name === 'avgResp' ? '7d avg' : 'Respiratory rate'
+                        name === 'avgResp' ? respLineLabel : 'Respiratory rate'
                       ]}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="resp"
-                      name="resp"
-                      stroke="var(--color-recovery)"
-                      strokeOpacity={0.35}
-                      strokeWidth={0}
-                      dot={{ r: 2, fill: 'var(--color-recovery)', fillOpacity: 0.35, strokeWidth: 0 }}
-                      connectNulls={false}
-                      isAnimationActive={false}
-                    />
+                    {respGran === 'daily' && (
+                      <Line
+                        type="monotone"
+                        dataKey="resp"
+                        name="resp"
+                        stroke="var(--color-recovery)"
+                        strokeOpacity={0.35}
+                        strokeWidth={0}
+                        dot={{ r: 2, fill: 'var(--color-recovery)', fillOpacity: 0.35, strokeWidth: 0 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="avgResp"
                       name="avgResp"
                       stroke="var(--color-recovery)"
                       strokeWidth={1.5}
-                      dot={false}
+                      dot={
+                        respGran === 'daily'
+                          ? false
+                          : { r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }
+                      }
                       connectNulls={false}
                     />
                   </ComposedChart>
