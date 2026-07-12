@@ -186,6 +186,121 @@ export interface PlanItemCheck {
   source: string
 }
 
+// Canonical exercise catalog for the Gym tab. Grows on first use (autocomplete
+// + create-on-type); case-insensitively unique by name, never deleted from the
+// UI so set history keeps meaning.
+export interface Exercise {
+  id: string
+  name: string
+  muscle_group: string | null
+  created_at: string | null
+}
+
+// One line of a gym template: an exercise plus optional targets ("3×8 @ 60kg").
+export interface GymTemplateItem {
+  id: string
+  template_id: string
+  exercise_id: string
+  exercise_name: string // joined from exercises at read time
+  position: number
+  target_sets: number | null
+  target_reps: number | null
+  target_weight_kg: number | null
+  note: string | null
+}
+
+export interface GymTemplate {
+  id: string
+  name: string
+  notes: string | null
+  archived: boolean
+  items: GymTemplateItem[]
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface GymSet {
+  id: number
+  session_id: string
+  exercise_id: string
+  exercise_name: string // joined from exercises at read time
+  position: number
+  reps: number | null
+  weight_kg: number | null // null = bodyweight
+  rpe: number | null
+  is_warmup: boolean
+  note: string | null
+}
+
+// A logged gym session. `sets` empty = quick log ("did legs, roughly template
+// X"); sets present = full per-set log. Dual granularity is a data shape, not
+// a mode. workout_id links the Apple-Health-synced workout (one log per
+// workout); null = logged without a synced workout.
+export interface GymSession {
+  id: string
+  workout_id: string | null
+  template_id: string | null
+  performed_at: string
+  title: string | null
+  notes: string | null
+  source: string
+  sets: GymSet[]
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface NewGymSet {
+  exercise_id: string
+  reps: number | null
+  weight_kg: number | null
+  rpe?: number | null
+  is_warmup?: boolean
+  note?: string | null
+}
+
+// New session log from the Gym tab (source is set to 'user' by the main
+// process — not caller-controlled). When workout_id is set, performed_at is
+// derived server-side from the linked workout and the field here is ignored.
+export interface NewGymSession {
+  workout_id?: string | null
+  template_id?: string | null
+  performed_at?: string // ISO instant; only used when workout_id is null
+  title?: string | null
+  notes?: string | null
+  sets: NewGymSet[]
+}
+
+// Editable subset of a logged session; `sets`, when present, replaces the
+// session's whole set list.
+export interface GymSessionPatch {
+  title?: string | null
+  notes?: string | null
+  template_id?: string | null
+  sets?: NewGymSet[]
+}
+
+export interface NewGymTemplateItem {
+  exercise_id: string
+  target_sets: number | null
+  target_reps: number | null
+  target_weight_kg: number | null
+  note?: string | null
+}
+
+export interface NewGymTemplate {
+  name: string
+  notes: string | null
+  items: NewGymTemplateItem[]
+}
+
+// `items`, when present, replaces the template's whole item list.
+export interface GymTemplatePatch {
+  name?: string
+  notes?: string | null
+  archived?: boolean
+  items?: NewGymTemplateItem[]
+}
+
 export interface Goal {
   id: string
   title: string
@@ -290,6 +405,15 @@ export interface HealthApi {
   getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]>
   getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
   setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<void>
+  getExercises(): Promise<Exercise[]>
+  addExercise(name: string, muscleGroup: string | null): Promise<Exercise>
+  getGymTemplates(): Promise<GymTemplate[]>
+  addGymTemplate(template: NewGymTemplate): Promise<GymTemplate>
+  updateGymTemplate(id: string, patch: GymTemplatePatch): Promise<GymTemplate>
+  getGymSessions(fromIso: string, toIso: string): Promise<GymSession[]>
+  addGymSession(session: NewGymSession): Promise<GymSession>
+  updateGymSession(id: string, patch: GymSessionPatch): Promise<GymSession>
+  deleteGymSession(id: string): Promise<void>
   getGoals(): Promise<Goal[]>
   getGoalProgress(goalId: string): Promise<GoalProgressPoint[]>
   addGoal(goal: NewGoal): Promise<Goal>
@@ -328,6 +452,15 @@ export const IPC_CHANNELS = {
   getInjuryPlan: 'db:getInjuryPlan',
   getInjuryPlanChecks: 'db:getInjuryPlanChecks',
   setPlanItemCheck: 'db:setPlanItemCheck',
+  getExercises: 'db:getExercises',
+  addExercise: 'db:addExercise',
+  getGymTemplates: 'db:getGymTemplates',
+  addGymTemplate: 'db:addGymTemplate',
+  updateGymTemplate: 'db:updateGymTemplate',
+  getGymSessions: 'db:getGymSessions',
+  addGymSession: 'db:addGymSession',
+  updateGymSession: 'db:updateGymSession',
+  deleteGymSession: 'db:deleteGymSession',
   getGoals: 'db:getGoals',
   getGoalProgress: 'db:getGoalProgress',
   addGoal: 'db:addGoal',

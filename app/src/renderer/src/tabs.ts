@@ -2,6 +2,7 @@ export type TabId =
   | 'dashboard'
   | 'zone2'
   | 'sessions'
+  | 'gym'
   | 'recovery'
   | 'insights'
   | 'injuries'

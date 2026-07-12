@@ -27,6 +27,7 @@ Loaded by every data-touching mode.
 - `user_config(hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, weekly_min_sessions, zone2_weekly_target_min, timezone)` — single row.
 - `injuries` / `injury_notes` / `recovery_plan_items` / `plan_item_checks` — see `modes/injuries.md`.
 - `goals` / `goal_progress` — see `modes/goals.md`.
+- `gym_sessions(workout_id, template_id, performed_at, title, notes)` / `gym_sets(session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup)` / `exercises(name, muscle_group)` / `gym_templates` + `gym_template_exercises` — user-logged lifting content, attached to synced strength workouts via `workout_id` (a `gym_sessions` row with no sets is a deliberate quick log, not missing data). The user logs these in the app's Gym tab; read-only for you.
 
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
 

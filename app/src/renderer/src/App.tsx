@@ -9,6 +9,7 @@ import { DbErrorState } from './views/DbErrorState'
 import { DashboardView } from './views/DashboardView'
 import { Zone2View } from './views/Zone2View'
 import { SessionsView } from './views/SessionsView'
+import { GymView } from './views/GymView'
 import { RecoveryView } from './views/RecoveryView'
 import { InsightsView } from './views/InsightsView'
 import { InjuriesView } from './views/InjuriesView'
@@ -21,6 +22,7 @@ const VIEWS: Record<TabId, () => ReactElement> = {
   dashboard: DashboardView,
   zone2: Zone2View,
   sessions: SessionsView,
+  gym: GymView,
   recovery: RecoveryView,
   insights: InsightsView,
   injuries: InjuriesView,

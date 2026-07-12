@@ -23,6 +23,17 @@ const api: HealthApi = {
     ipcRenderer.invoke(IPC_CHANNELS.getInjuryPlanChecks, injuryId, fromDate),
   setPlanItemCheck: (itemId, doneDate, done) =>
     ipcRenderer.invoke(IPC_CHANNELS.setPlanItemCheck, itemId, doneDate, done),
+  getExercises: () => ipcRenderer.invoke(IPC_CHANNELS.getExercises),
+  addExercise: (name, muscleGroup) =>
+    ipcRenderer.invoke(IPC_CHANNELS.addExercise, name, muscleGroup),
+  getGymTemplates: () => ipcRenderer.invoke(IPC_CHANNELS.getGymTemplates),
+  addGymTemplate: (template) => ipcRenderer.invoke(IPC_CHANNELS.addGymTemplate, template),
+  updateGymTemplate: (id, patch) => ipcRenderer.invoke(IPC_CHANNELS.updateGymTemplate, id, patch),
+  getGymSessions: (fromIso, toIso) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getGymSessions, fromIso, toIso),
+  addGymSession: (session) => ipcRenderer.invoke(IPC_CHANNELS.addGymSession, session),
+  updateGymSession: (id, patch) => ipcRenderer.invoke(IPC_CHANNELS.updateGymSession, id, patch),
+  deleteGymSession: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteGymSession, id),
   getGoals: () => ipcRenderer.invoke(IPC_CHANNELS.getGoals),
   getGoalProgress: (goalId) => ipcRenderer.invoke(IPC_CHANNELS.getGoalProgress, goalId),
   addGoal: (goal) => ipcRenderer.invoke(IPC_CHANNELS.addGoal, goal),

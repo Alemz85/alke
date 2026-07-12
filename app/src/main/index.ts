@@ -26,7 +26,11 @@ import {
   type UserConfigPatch,
   type Flag,
   type GoalPatch,
+  type GymSessionPatch,
+  type GymTemplatePatch,
   type NewGoal,
+  type NewGymSession,
+  type NewGymTemplate,
   type NewInjuryLog
 } from '@shared/types'
 import * as db from './db'
@@ -137,6 +141,27 @@ function registerIpcHandlers(): void {
     (_event, itemId: string, doneDate: string, done: boolean) =>
       db.setPlanItemCheck(itemId, doneDate, done)
   )
+  ipcMain.handle(IPC_CHANNELS.getExercises, () => db.getExercises())
+  ipcMain.handle(IPC_CHANNELS.addExercise, (_event, name: string, muscleGroup: string | null) =>
+    db.addExercise(name, muscleGroup)
+  )
+  ipcMain.handle(IPC_CHANNELS.getGymTemplates, () => db.getGymTemplates())
+  ipcMain.handle(IPC_CHANNELS.addGymTemplate, (_event, template: NewGymTemplate) =>
+    db.addGymTemplate(template)
+  )
+  ipcMain.handle(IPC_CHANNELS.updateGymTemplate, (_event, id: string, patch: GymTemplatePatch) =>
+    db.updateGymTemplate(id, patch)
+  )
+  ipcMain.handle(IPC_CHANNELS.getGymSessions, (_event, fromIso: string, toIso: string) =>
+    db.getGymSessions(fromIso, toIso)
+  )
+  ipcMain.handle(IPC_CHANNELS.addGymSession, (_event, session: NewGymSession) =>
+    db.addGymSession(session)
+  )
+  ipcMain.handle(IPC_CHANNELS.updateGymSession, (_event, id: string, patch: GymSessionPatch) =>
+    db.updateGymSession(id, patch)
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteGymSession, (_event, id: string) => db.deleteGymSession(id))
   ipcMain.handle(IPC_CHANNELS.getGoals, () => db.getGoals())
   ipcMain.handle(IPC_CHANNELS.getGoalProgress, (_event, goalId: string) =>
     db.getGoalProgress(goalId)

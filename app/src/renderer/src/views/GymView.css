@@ -1,0 +1,557 @@
+/* Gym — strength-session logging. Neutral chrome throughout (buttons/inputs
+   never accent-colored per DESIGN.md); the only accent is the hero metric's
+   domain eyebrow/delta, which reuses the 'load' family already bound to
+   strength workouts in components/modalityAccent.ts. */
+
+/* ── sections ────────────────────────────────────────────────────────────── */
+.gym-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gym-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.gym-section-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.gym-quiet-action {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  text-decoration: underline;
+  transition: color var(--motion-hover);
+}
+
+.gym-quiet-action:hover {
+  color: var(--color-text);
+}
+
+/* ── to-log rows ─────────────────────────────────────────────────────────── */
+.gym-tolog-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.gym-tolog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md) var(--space-lg);
+}
+
+.gym-tolog-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.gym-tolog-date {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.gym-tolog-time,
+.gym-tolog-duration,
+.gym-tolog-hr {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.gym-tolog-more {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+/* ── history rows ────────────────────────────────────────────────────────── */
+.gym-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gym-history-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1.4fr;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  background: var(--color-surface-elevated);
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-md) var(--space-lg);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-hover);
+  font-family: var(--font-body);
+}
+
+.gym-history-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.gym-history-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.gym-history-title {
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-history-linked {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.24px;
+  text-transform: uppercase;
+}
+
+.gym-history-date {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.gym-history-summary {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .gym-history-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-xxs);
+  }
+  .gym-history-summary {
+    text-align: left;
+  }
+}
+
+/* ── templates ───────────────────────────────────────────────────────────── */
+.gym-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-md);
+}
+
+.gym-template-grid--archived {
+  opacity: 0.55;
+}
+
+.gym-template-card {
+  position: relative;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.gym-template-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  width: 100%;
+  border: none;
+  background: none;
+  padding: var(--space-lg);
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+  border-radius: var(--radius-lg);
+  transition: background var(--motion-hover);
+}
+
+.gym-template-card-body:hover {
+  background: var(--color-surface-hover);
+}
+
+.gym-template-name {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.gym-template-items {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.gym-template-notes {
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.gym-unarchive {
+  padding: 0 var(--space-lg) var(--space-md);
+}
+
+/* ── modal (mirrors injury-modal / profile-modal) ───────────────────────── */
+.gym-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.gym-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.gym-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.gym-modal-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.gym-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.gym-modal-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.gym-modal-close:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.gym-modal-body {
+  padding: var(--space-lg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gym-linked-summary {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.gym-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.gym-field-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.gym-input,
+.gym-textarea,
+select.gym-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  resize: vertical;
+}
+
+.gym-input::placeholder,
+.gym-textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.gym-input:focus-visible,
+.gym-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.gym-template-select-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gym-template-select-row .gym-input {
+  flex: 1;
+}
+
+.gym-quicklog-hint {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.gym-error {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-flag-text);
+}
+
+/* ── exercise blocks / set rows (session editor) ────────────────────────── */
+.gym-exercise-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gym-exercise-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+}
+
+.gym-exercise-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.gym-exercise-input {
+  flex: 1;
+}
+
+.gym-set-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.gym-set-index {
+  width: 18px;
+  flex-shrink: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.gym-set-input {
+  width: 84px;
+  padding: 8px 10px;
+}
+
+.gym-set-warmup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.gym-set-remove {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.gym-set-remove:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.gym-add-set {
+  align-self: flex-start;
+  font-size: var(--type-caption-size);
+}
+
+/* ── template item rows (template editor) ───────────────────────────────── */
+.gym-template-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gym-template-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.gym-template-target-input {
+  width: 64px;
+  padding: 8px 10px;
+}
+
+.gym-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+/* ── modal actions / buttons (mirrors profile-btn) ──────────────────────── */
+.gym-modal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+.gym-btn {
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 0 16px;
+  height: 40px;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.gym-btn:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+
+.gym-btn:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.gym-btn--primary {
+  background: var(--color-text);
+  color: var(--color-on-emphasis);
+}
+
+.gym-btn--primary:hover:not(:disabled) {
+  background: var(--color-emphasis-pressed);
+}
+
+.gym-btn--primary:disabled {
+  color: var(--color-on-emphasis);
+  opacity: 0.4;
+}
+
+/* Delete stays neutral chrome (no red button surface) — the flag-text color
+   used only for the label, per DESIGN.md's "red is for flags" rule bent just
+   enough to signal a destructive text action without a colored surface. */
+.gym-btn--danger {
+  color: var(--color-flag-text);
+}
+
+.gym-delete-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.gym-delete-confirm-label {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
