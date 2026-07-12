@@ -385,7 +385,7 @@
   {
     "name": "Concentration Curl",
     "aliases": [
-      "curl di concentrazione",
+      "curl concentrato",
       "seated concentration curl"
     ],
     "body_part": "arms",
@@ -653,7 +653,7 @@
     ],
     "equipment": "other",
     "mechanics": "compound",
-    "movement_pattern": "lunge"
+    "movement_pattern": "carry"
   },
   {
     "name": "Battle Ropes",
@@ -673,14 +673,13 @@
     ],
     "equipment": "other",
     "mechanics": "compound",
-    "movement_pattern": "isolation"
+    "movement_pattern": "core"
   },
   {
     "name": "Turkish Get-Up",
     "aliases": [
       "tgu",
-      "turkish getup",
-      "get up turco"
+      "turkish getup"
     ],
     "body_part": "full body",
     "primary_muscles": [
