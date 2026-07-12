@@ -43,8 +43,12 @@ the mitigation and the single most important step below — never skip it.
    question, confidence, date_written, applies_to_user, citations`). This is what
    the agent reads for an answer — state the claim, its strength, and the
    "applies to user?" caveat. Point `citations` at the paper files.
-6. **Update `INDEX.md`** — add/edit the one-line entry (topics section and/or
-   papers section) with the core claim + a quality/date note.
+6. **Update `INDEX.md`** — it's organized **by subject**, not by paper title:
+   find the matching subject heading (Zone 2, VO2max, training load…) or add a
+   new one, put the topic file under it with its core claim, and list papers as
+   indented evidence lines beneath their topic. Lead each entry with the concept,
+   not the filename — the index is scanned for "what do we know about X." Keep
+   entries terse; this is the always-read file.
 7. **Reconcile contradictions.** If the new evidence contradicts an existing
    topic file, update that topic and note the revision with its date — don't
    leave two files disagreeing silently.
