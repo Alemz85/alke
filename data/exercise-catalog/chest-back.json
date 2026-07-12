@@ -1,0 +1,767 @@
+[
+  {
+    "name": "Bench Press",
+    "aliases": [
+      "panca piana",
+      "flat bench",
+      "bb bench",
+      "barbell bench",
+      "bench",
+      "flat barbell bench press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Incline Bench Press",
+    "aliases": [
+      "panca inclinata",
+      "incline bb bench",
+      "incline barbell bench",
+      "incline press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts",
+      "triceps"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Decline Bench Press",
+    "aliases": [
+      "panca declinata",
+      "decline bb bench",
+      "decline barbell bench"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Dumbbell Bench Press",
+    "aliases": [
+      "panca piana manubri",
+      "db bench",
+      "flat db press",
+      "dumbbell flat press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Incline Dumbbell Press",
+    "aliases": [
+      "panca inclinata manubri",
+      "incline db press",
+      "incline db bench"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts",
+      "triceps"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Machine Chest Press",
+    "aliases": [
+      "chest press machine",
+      "pectoral machine press",
+      "seated chest press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Smith Machine Bench Press",
+    "aliases": [
+      "panca smith",
+      "smith bench",
+      "smith bench press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "smith machine",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Push-Up",
+    "aliases": [
+      "piegamenti",
+      "pushup",
+      "push up",
+      "floor push-up"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts",
+      "abs"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Incline Push-Up",
+    "aliases": [
+      "piegamenti su rialzo",
+      "incline pushup",
+      "hands elevated push-up",
+      "push-up on bench"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Decline Push-Up",
+    "aliases": [
+      "piegamenti declinati",
+      "decline pushup",
+      "feet elevated push-up"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts",
+      "triceps"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Chest Dip",
+    "aliases": [
+      "dips",
+      "parallele",
+      "dip",
+      "chest dips",
+      "parallel bar dips"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Dumbbell Fly",
+    "aliases": [
+      "croci manubri",
+      "croci piane",
+      "flat db fly",
+      "dumbbell flyes",
+      "flat fly"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Incline Dumbbell Fly",
+    "aliases": [
+      "croci inclinate",
+      "incline db fly",
+      "incline flyes"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Cable Crossover",
+    "aliases": [
+      "croci ai cavi",
+      "cable fly",
+      "high to low cable fly",
+      "crossover ai cavi"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Low-to-High Cable Fly",
+    "aliases": [
+      "croci ai cavi dal basso",
+      "low cable fly",
+      "upward cable fly",
+      "reverse cable crossover"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Pec Deck",
+    "aliases": [
+      "butterfly",
+      "farfalla",
+      "pec deck machine",
+      "chest fly machine"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "front delts"
+    ],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Dumbbell Pullover",
+    "aliases": [
+      "pullover manubrio",
+      "pullover",
+      "db pullover"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "lats",
+      "triceps"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Standing Cable Chest Press",
+    "aliases": [
+      "cable press",
+      "standing cable press",
+      "cable chest press",
+      "single arm cable press"
+    ],
+    "body_part": "chest",
+    "primary_muscles": [
+      "chest"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "front delts"
+    ],
+    "equipment": "cable",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Deadlift",
+    "aliases": [
+      "stacco da terra",
+      "stacco",
+      "conventional deadlift",
+      "bb deadlift",
+      "dl"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lower back",
+      "lats"
+    ],
+    "secondary_muscles": [
+      "glutes",
+      "hamstrings",
+      "traps"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Sumo Deadlift",
+    "aliases": [
+      "stacco sumo",
+      "sumo dl",
+      "wide stance deadlift"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lower back",
+      "glutes"
+    ],
+    "secondary_muscles": [
+      "hamstrings",
+      "adductors",
+      "traps"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Trap Bar Deadlift",
+    "aliases": [
+      "stacco trap bar",
+      "hex bar deadlift",
+      "hex bar dl"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lower back",
+      "glutes"
+    ],
+    "secondary_muscles": [
+      "quadriceps",
+      "hamstrings",
+      "traps"
+    ],
+    "equipment": "trap bar",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Rack Pull",
+    "aliases": [
+      "stacco parziale",
+      "partial deadlift",
+      "rack pulls"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lower back",
+      "traps"
+    ],
+    "secondary_muscles": [
+      "lats",
+      "glutes",
+      "hamstrings"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Barbell Row",
+    "aliases": [
+      "rematore bilanciere",
+      "bb row",
+      "bent over row",
+      "barbell bent over row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts",
+      "lower back"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Pendlay Row",
+    "aliases": [
+      "rematore pendlay",
+      "dead stop row",
+      "explosive barbell row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Dumbbell Row",
+    "aliases": [
+      "rematore manubrio",
+      "db row",
+      "one arm dumbbell row",
+      "single arm row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Seal Row",
+    "aliases": [
+      "chest supported row",
+      "rematore su panca",
+      "bench row",
+      "prone row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "T-Bar Row",
+    "aliases": [
+      "rematore t-bar",
+      "t bar row",
+      "landmine row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Seated Cable Row",
+    "aliases": [
+      "pulley basso",
+      "pulley",
+      "cable row",
+      "seated row",
+      "low pulley row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "cable",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Machine Row",
+    "aliases": [
+      "rematore alla macchina",
+      "chest supported machine row",
+      "row machine"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Pull-Up",
+    "aliases": [
+      "trazioni",
+      "pullup",
+      "pull up",
+      "wide grip pull-up"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "upper back",
+      "forearms"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Chin-Up",
+    "aliases": [
+      "trazioni presa supina",
+      "chinup",
+      "chin up",
+      "underhand pull-up"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "upper back",
+      "forearms"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Neutral-Grip Pull-Up",
+    "aliases": [
+      "trazioni presa neutra",
+      "neutral grip pullup",
+      "hammer grip pull-up"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "upper back",
+      "forearms"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Assisted Pull-Up Machine",
+    "aliases": [
+      "trazioni assistite",
+      "assisted pullup",
+      "pull-up machine",
+      "assisted chin-up machine"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "upper back"
+    ],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Lat Pulldown",
+    "aliases": [
+      "lat machine",
+      "pulldown",
+      "lat pull down",
+      "wide grip pulldown"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "upper back"
+    ],
+    "equipment": "cable",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Close-Grip Lat Pulldown",
+    "aliases": [
+      "lat machine presa stretta",
+      "close grip pulldown",
+      "v-bar pulldown"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "upper back"
+    ],
+    "equipment": "cable",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Straight-Arm Pulldown",
+    "aliases": [
+      "pulldown a braccia tese",
+      "straight arm pushdown",
+      "lat pushdown"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "upper back"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Cable Pullover",
+    "aliases": [
+      "pullover ai cavi",
+      "face-away cable pullover",
+      "cable lat pullover"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats"
+    ],
+    "secondary_muscles": [
+      "upper back",
+      "triceps"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Inverted Row",
+    "aliases": [
+      "rematore corpo libero",
+      "bodyweight row",
+      "australian pull-up",
+      "smith machine inverted row"
+    ],
+    "body_part": "back",
+    "primary_muscles": [
+      "lats",
+      "upper back"
+    ],
+    "secondary_muscles": [
+      "biceps",
+      "rear delts"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal pull"
+  }
+]

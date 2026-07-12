@@ -24,8 +24,7 @@ const api: HealthApi = {
   setPlanItemCheck: (itemId, doneDate, done) =>
     ipcRenderer.invoke(IPC_CHANNELS.setPlanItemCheck, itemId, doneDate, done),
   getExercises: () => ipcRenderer.invoke(IPC_CHANNELS.getExercises),
-  addExercise: (name, muscleGroup) =>
-    ipcRenderer.invoke(IPC_CHANNELS.addExercise, name, muscleGroup),
+  addExercise: (name, bodyPart) => ipcRenderer.invoke(IPC_CHANNELS.addExercise, name, bodyPart),
   getGymTemplates: () => ipcRenderer.invoke(IPC_CHANNELS.getGymTemplates),
   addGymTemplate: (template) => ipcRenderer.invoke(IPC_CHANNELS.addGymTemplate, template),
   updateGymTemplate: (id, patch) => ipcRenderer.invoke(IPC_CHANNELS.updateGymTemplate, id, patch),

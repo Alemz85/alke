@@ -1,0 +1,552 @@
+[
+  {
+    "name": "Back Squat",
+    "aliases": ["barbell squat", "high bar squat", "squat con bilanciere"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "lower back", "abs"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Front Squat",
+    "aliases": ["squat frontale"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["abs", "upper back"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Goblet Squat",
+    "aliases": ["squat goblet", "kb goblet squat", "db goblet squat"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["abs", "adductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Smith Machine Squat",
+    "aliases": ["smith squat", "squat multipower", "squat al multipower"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "smith machine",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Hack Squat Machine",
+    "aliases": ["hack squat", "pressa hack"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps"],
+    "secondary_muscles": ["glutes"],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Bulgarian Split Squat",
+    "aliases": ["bss", "rear foot elevated split squat", "rfess", "squat bulgaro", "affondo bulgaro"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "adductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Leg Press",
+    "aliases": ["pressa", "pressa a 45", "45 degree leg press"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Romanian Deadlift",
+    "aliases": ["rdl", "stacco rumeno", "stacco romeno"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings", "glutes"],
+    "secondary_muscles": ["lower back", "forearms"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Dumbbell Romanian Deadlift",
+    "aliases": ["db rdl", "dumbbell rdl", "stacco rumeno con manubri"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings", "glutes"],
+    "secondary_muscles": ["lower back", "forearms"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Stiff-Leg Deadlift",
+    "aliases": ["stiff leg deadlift", "sldl", "straight leg deadlift", "stacco a gambe tese"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings", "glutes"],
+    "secondary_muscles": ["lower back"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Good Morning",
+    "aliases": ["good mornings", "buongiorno"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings", "lower back"],
+    "secondary_muscles": ["glutes"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Hip Thrust",
+    "aliases": ["barbell hip thrust", "spinta anca", "hip thrust con bilanciere"],
+    "body_part": "legs",
+    "primary_muscles": ["glutes"],
+    "secondary_muscles": ["hamstrings", "abs"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Glute Bridge",
+    "aliases": ["ponte glutei", "bodyweight hip bridge"],
+    "body_part": "legs",
+    "primary_muscles": ["glutes"],
+    "secondary_muscles": ["hamstrings", "abs"],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Walking Lunge",
+    "aliases": ["affondi in camminata", "walking lunges", "db walking lunge"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "adductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Reverse Lunge",
+    "aliases": ["affondi indietro", "affondo inverso", "db reverse lunge"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "adductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Lateral Lunge",
+    "aliases": ["affondi laterali", "side lunge"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "adductors"],
+    "secondary_muscles": ["glutes", "abductors"],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Step-Up",
+    "aliases": ["step up", "salita sul rialzo", "box step up", "db step up"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Leg Extension",
+    "aliases": ["leg extension machine", "estensioni gambe", "estensioni quadricipiti"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps"],
+    "secondary_muscles": [],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Lying Leg Curl",
+    "aliases": ["leg curl sdraiato", "prone leg curl", "leg curl a pancia in giu"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings"],
+    "secondary_muscles": ["calves"],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Seated Leg Curl",
+    "aliases": ["leg curl da seduto", "leg curl seduto"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings"],
+    "secondary_muscles": ["calves"],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Nordic Curl",
+    "aliases": ["nordic hamstring curl", "nordic ham curl"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings"],
+    "secondary_muscles": ["glutes"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Standing Calf Raise",
+    "aliases": ["polpacci in piedi", "standing calf raise machine"],
+    "body_part": "legs",
+    "primary_muscles": ["calves"],
+    "secondary_muscles": [],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Seated Calf Raise",
+    "aliases": ["polpacci da seduto", "polpacci seduto"],
+    "body_part": "legs",
+    "primary_muscles": ["calves"],
+    "secondary_muscles": [],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Leg Press Calf Raise",
+    "aliases": ["polpacci alla pressa", "calf press on leg press"],
+    "body_part": "legs",
+    "primary_muscles": ["calves"],
+    "secondary_muscles": [],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Adductor Machine",
+    "aliases": ["hip adduction machine", "adduttori", "macchina adduttori"],
+    "body_part": "legs",
+    "primary_muscles": ["adductors"],
+    "secondary_muscles": [],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Abductor Machine",
+    "aliases": ["hip abduction machine", "abduttori", "macchina abduttori"],
+    "body_part": "legs",
+    "primary_muscles": ["abductors"],
+    "secondary_muscles": ["glutes"],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Cable Glute Kickback",
+    "aliases": ["cable kickback", "glute kickback", "kickback ai cavi"],
+    "body_part": "legs",
+    "primary_muscles": ["glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Sissy Squat",
+    "aliases": ["sissy squats", "quad squat"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps"],
+    "secondary_muscles": [],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Box Squat",
+    "aliases": ["squat sulla box", "squat al box"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "lower back"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Pistol Squat",
+    "aliases": ["one leg squat", "squat su una gamba"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings", "abductors"],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Kettlebell Swing",
+    "aliases": ["kb swing", "swing con kettlebell"],
+    "body_part": "legs",
+    "primary_muscles": ["glutes", "hamstrings"],
+    "secondary_muscles": ["lower back", "abs"],
+    "equipment": "kettlebell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Single-Leg Romanian Deadlift",
+    "aliases": ["single leg rdl", "sl rdl", "stacco rumeno monopodalico"],
+    "body_part": "legs",
+    "primary_muscles": ["hamstrings", "glutes"],
+    "secondary_muscles": ["lower back", "abductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Cyclist Squat",
+    "aliases": ["heels elevated squat", "squat da ciclista", "squat con talloni rialzati"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps"],
+    "secondary_muscles": ["glutes"],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Belt Squat",
+    "aliases": ["squat con cintura", "belt squat machine"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "V-Squat Machine",
+    "aliases": ["v squat", "pendulum squat"],
+    "body_part": "legs",
+    "primary_muscles": ["quadriceps", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Curtsy Lunge",
+    "aliases": ["affondo incrociato"],
+    "body_part": "legs",
+    "primary_muscles": ["glutes", "abductors"],
+    "secondary_muscles": ["quadriceps", "adductors"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "45-Degree Back Extension",
+    "aliases": ["back extension", "hyperextension", "iperestensioni", "45 degree hyperextension", "roman chair extension"],
+    "body_part": "core",
+    "primary_muscles": ["lower back", "glutes"],
+    "secondary_muscles": ["hamstrings"],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Crunch",
+    "aliases": ["addominali", "sit-up crunch", "floor crunch"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": [],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Cable Crunch",
+    "aliases": ["crunch ai cavi", "kneeling cable crunch"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": [],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Sit-Up",
+    "aliases": ["sit up", "addominali completi"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Plank",
+    "aliases": ["plancia", "front plank", "forearm plank"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["obliques", "lower back"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Side Plank",
+    "aliases": ["plank laterale", "plancia laterale"],
+    "body_part": "core",
+    "primary_muscles": ["obliques"],
+    "secondary_muscles": ["abs"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Hanging Leg Raise",
+    "aliases": ["leg raise alla sbarra", "sollevamento gambe alla sbarra"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors", "forearms"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Hanging Knee Raise",
+    "aliases": ["knee raise alla sbarra", "sollevamento ginocchia alla sbarra"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors", "forearms"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Lying Leg Raise",
+    "aliases": ["leg raise sdraiato", "sollevamento gambe da sdraiato"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Ab Wheel Rollout",
+    "aliases": ["ab wheel", "ruota addominali", "rollout con ruota"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["lower back", "lats"],
+    "equipment": "other",
+    "mechanics": "compound",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Russian Twist",
+    "aliases": ["twist russo", "torsioni russe"],
+    "body_part": "core",
+    "primary_muscles": ["obliques"],
+    "secondary_muscles": ["abs"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "rotation"
+  },
+  {
+    "name": "Mountain Climbers",
+    "aliases": ["scalatore", "corsa in appoggio"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors", "quadriceps"],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Dead Bug",
+    "aliases": ["dead bugs"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Bird Dog",
+    "aliases": ["bird dogs"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["lower back", "glutes"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Pallof Press",
+    "aliases": ["cable pallof press"],
+    "body_part": "core",
+    "primary_muscles": ["obliques", "abs"],
+    "secondary_muscles": [],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "rotation"
+  },
+  {
+    "name": "Cable Woodchopper",
+    "aliases": ["woodchopper", "boscaiolo ai cavi", "wood chop"],
+    "body_part": "core",
+    "primary_muscles": ["obliques"],
+    "secondary_muscles": ["abs"],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "rotation"
+  },
+  {
+    "name": "Weighted Plank",
+    "aliases": ["plank con sovraccarico", "loaded plank"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["obliques", "lower back"],
+    "equipment": "other",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Hollow Body Hold",
+    "aliases": ["hollow hold", "hollow body"],
+    "body_part": "core",
+    "primary_muscles": ["abs"],
+    "secondary_muscles": ["hip flexors"],
+    "equipment": "bodyweight",
+    "mechanics": "isolation",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Farmer's Carry",
+    "aliases": ["farmers carry", "farmer's walk", "camminata del contadino", "farmer carry"],
+    "body_part": "core",
+    "primary_muscles": ["abs", "forearms"],
+    "secondary_muscles": ["traps", "glutes"],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "carry"
+  }
+]

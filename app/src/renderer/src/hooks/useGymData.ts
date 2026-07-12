@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   Exercise,
+  GymBodyPart,
   GymSession,
   GymSessionPatch,
   GymTemplate,
@@ -24,8 +25,8 @@ export function useExercises() {
 export function useAddExercise() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ name, muscleGroup }: { name: string; muscleGroup: string | null }) =>
-      window.api.addExercise(name, muscleGroup),
+    mutationFn: ({ name, bodyPart }: { name: string; bodyPart: GymBodyPart | null }) =>
+      window.api.addExercise(name, bodyPart),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['health', 'exercises'] })
     }

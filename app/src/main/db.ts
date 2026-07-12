@@ -8,7 +8,9 @@ if (typeof globalThis.WebSocket === 'undefined') {
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import {
+  GYM_BODY_PARTS,
   INJURY_CONTEXTS,
+  type GymBodyPart,
   type InsightCorrelation,
   type InsightModel,
   type ChatMessage,
@@ -668,7 +670,8 @@ export async function setPlanItemCheck(
 // All writes hardwire source='user' server-side; the chat agent gets its own
 // scoped helper (chatctx) if/when chat logging lands.
 
-const EXERCISE_COLUMNS = 'id, name, muscle_group, created_at'
+const EXERCISE_COLUMNS =
+  'id, name, aliases, body_part, primary_muscles, secondary_muscles, equipment, mechanics, movement_pattern, source, created_at'
 
 const GYM_TEMPLATE_COLUMNS = 'id, name, notes, archived, created_at, updated_at'
 
@@ -683,7 +686,7 @@ const GYM_TEMPLATE_ITEM_NUMERIC_KEYS: (keyof GymTemplateItem)[] = [
 ]
 
 const GYM_SESSION_COLUMNS =
-  'id, workout_id, template_id, performed_at, title, notes, source, created_at, updated_at'
+  'id, workout_id, template_id, performed_at, title, notes, source, body_parts, created_at, updated_at'
 
 const GYM_SET_COLUMNS =
   'id, session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup, note'
@@ -760,20 +763,34 @@ export async function getExercises(): Promise<Exercise[]> {
   return (data ?? []) as Exercise[]
 }
 
+function assertBodyParts(parts: unknown): asserts parts is GymBodyPart[] {
+  if (
+    !Array.isArray(parts) ||
+    parts.length > GYM_BODY_PARTS.length ||
+    new Set(parts).size !== parts.length ||
+    !parts.every((p) => (GYM_BODY_PARTS as readonly string[]).includes(p))
+  ) {
+    throw new Error('invalid body_parts')
+  }
+}
+
 // Create-on-type from the autocomplete. Case-insensitively idempotent: a name
-// that already exists (any casing) returns the existing catalog row.
-export async function addExercise(name: string, muscleGroup: string | null): Promise<Exercise> {
+// that already exists (any casing) returns the existing catalog row. Custom
+// rows carry only name + optional body part; the curated catalog rows come
+// from scripts/seed_exercises.ts.
+export async function addExercise(name: string, bodyPart: GymBodyPart | null): Promise<Exercise> {
   if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 120) {
     throw new Error('invalid name')
   }
-  assertOptionalText(muscleGroup, 'muscle_group', 40)
+  if (bodyPart !== null && !(GYM_BODY_PARTS as readonly string[]).includes(bodyPart)) {
+    throw new Error('invalid body_part')
+  }
   const trimmed = name.trim()
-  const group = muscleGroup?.trim() || null
 
   const supabase = getClient()
   const { data, error } = await supabase
     .from('exercises')
-    .insert({ name: trimmed, muscle_group: group })
+    .insert({ name: trimmed, body_part: bodyPart })
     .select(EXERCISE_COLUMNS)
     .single()
 
@@ -1013,6 +1030,9 @@ export async function addGymSession(session: NewGymSession): Promise<GymSession>
   if (session.template_id !== undefined && session.template_id !== null) {
     assertUuid(session.template_id, 'template_id')
   }
+  if (session.body_parts !== undefined && session.body_parts !== null) {
+    assertBodyParts(session.body_parts)
+  }
   assertGymSets(session.sets)
 
   const supabase = getClient()
@@ -1021,6 +1041,7 @@ export async function addGymSession(session: NewGymSession): Promise<GymSession>
     template_id: session.template_id ?? null,
     title: session.title ?? null,
     notes: session.notes ?? null,
+    body_parts: session.body_parts ?? null,
     source: 'user'
   }
 
@@ -1074,6 +1095,10 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
   if (patch.template_id !== undefined) {
     if (patch.template_id !== null) assertUuid(patch.template_id, 'template_id')
     row.template_id = patch.template_id
+  }
+  if (patch.body_parts !== undefined) {
+    if (patch.body_parts !== null) assertBodyParts(patch.body_parts)
+    row.body_parts = patch.body_parts
   }
   if (patch.sets !== undefined) assertGymSets(patch.sets)
 

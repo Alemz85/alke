@@ -205,13 +205,36 @@ export interface PlanItemCheck {
   source: string
 }
 
-// Canonical exercise catalog for the Gym tab. Grows on first use (autocomplete
-// + create-on-type); case-insensitively unique by name, never deleted from the
-// UI so set history keeps meaning.
+// Body-part vocabulary shared by the exercise catalog, the picker's filter
+// flow, and body-parts-only quick logs. Must match the CHECK constraints in
+// the gym_exercise_catalog migration.
+export const GYM_BODY_PARTS = [
+  'chest',
+  'back',
+  'shoulders',
+  'arms',
+  'legs',
+  'core',
+  'full body'
+] as const
+export type GymBodyPart = (typeof GYM_BODY_PARTS)[number]
+
+// Canonical exercise catalog for the Gym tab: curated rows seeded from
+// data/exercise-catalog/ (source='catalog', structured metadata + lowercase
+// aliases incl. non-English gym terms) plus user rows from create-on-type
+// (source='user', name + optional body_part only). Case-insensitively unique
+// by name; never deleted from the UI so set history keeps meaning.
 export interface Exercise {
   id: string
   name: string
-  muscle_group: string | null
+  aliases: string[]
+  body_part: string | null
+  primary_muscles: string[]
+  secondary_muscles: string[]
+  equipment: string | null
+  mechanics: string | null
+  movement_pattern: string | null
+  source: string
   created_at: string | null
 }
 
@@ -263,6 +286,10 @@ export interface GymSession {
   title: string | null
   notes: string | null
   source: string
+  // User-declared body parts — the laziest logging tier ("did legs + core").
+  // When sets exist the renderer derives body parts from the sets' exercises
+  // instead; this column is the fallback for set-less logs.
+  body_parts: string[] | null
   sets: GymSet[]
   created_at: string | null
   updated_at: string | null
@@ -286,6 +313,7 @@ export interface NewGymSession {
   performed_at?: string // ISO instant; only used when workout_id is null
   title?: string | null
   notes?: string | null
+  body_parts?: GymBodyPart[] | null
   sets: NewGymSet[]
 }
 
@@ -295,6 +323,7 @@ export interface GymSessionPatch {
   title?: string | null
   notes?: string | null
   template_id?: string | null
+  body_parts?: GymBodyPart[] | null
   sets?: NewGymSet[]
 }
 
@@ -425,7 +454,7 @@ export interface HealthApi {
   getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
   setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<void>
   getExercises(): Promise<Exercise[]>
-  addExercise(name: string, muscleGroup: string | null): Promise<Exercise>
+  addExercise(name: string, bodyPart: GymBodyPart | null): Promise<Exercise>
   getGymTemplates(): Promise<GymTemplate[]>
   addGymTemplate(template: NewGymTemplate): Promise<GymTemplate>
   updateGymTemplate(id: string, patch: GymTemplatePatch): Promise<GymTemplate>

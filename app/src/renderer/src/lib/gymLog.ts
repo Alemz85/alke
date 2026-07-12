@@ -2,7 +2,8 @@
 // everything takes explicit data so it's unit-testable in isolation (mirrors
 // lib/injuryStats.ts, lib/profileStats.ts).
 
-import type { GymSession, GymSet, GymTemplate, NewGymSet } from '@shared/types'
+import { GYM_BODY_PARTS, type Exercise, type GymSession, type GymSet, type GymTemplate, type NewGymSet } from '@shared/types'
+import type { ExerciseUsageEntry } from './exerciseSearch'
 
 /** One contiguous run of same-exercise sets, in original order. */
 export interface ExerciseBlock {
@@ -48,14 +49,43 @@ function formatVolume(kg: number): string {
   return Math.round(kg).toLocaleString('en-US')
 }
 
+/** "legs" -> "Legs", "full body" -> "Full body" — display form of a body part. */
+export function displayBodyPart(part: string): string {
+  return part.charAt(0).toUpperCase() + part.slice(1)
+}
+
 /**
- * The one-line History summary. Full logs (sets present) read as
- * "5 exercises · 23 sets · 6,240 kg"; quick logs (sets empty) read as
- * "Quick log — roughly <template name>" or plain "Quick log" when unlinked
- * to a template.
+ * The body parts a session touched, in GYM_BODY_PARTS order. Sets win over
+ * the stored declaration: with sets present, derive from the set exercises'
+ * body_part metadata (exercises looked up by id; customs without a body part
+ * contribute nothing); without sets, fall back to the user-declared
+ * session.body_parts (the lazy tier).
+ */
+export function sessionBodyParts(session: GymSession, exercisesById: Map<string, Exercise>): string[] {
+  const found = new Set<string>()
+  if (session.sets.length > 0) {
+    for (const set of session.sets) {
+      const part = exercisesById.get(set.exercise_id)?.body_part
+      if (part) found.add(part)
+    }
+  } else {
+    for (const part of session.body_parts ?? []) found.add(part)
+  }
+  return GYM_BODY_PARTS.filter((p) => found.has(p))
+}
+
+/**
+ * The one-line History summary, by granularity tier: full logs (sets present)
+ * read as "5 exercises · 23 sets · 6,240 kg"; set-less logs fall back to the
+ * declared body parts ("Body parts — Legs · Core"), then the template
+ * ("Quick log — roughly <template name>"), then plain "Quick log".
  */
 export function summarizeSession(session: GymSession, templateName: string | null): string {
   if (session.sets.length === 0) {
+    const parts = sessionBodyParts(session, new Map())
+    if (parts.length > 0) {
+      return `Body parts — ${parts.map(displayBodyPart).join(' · ')}`
+    }
     return templateName ? `Quick log — roughly ${templateName}` : 'Quick log'
   }
   const blocks = groupSetsIntoBlocks(session.sets)
@@ -98,6 +128,59 @@ export function prefillFromTemplate(template: GymTemplate): PrefillSetRow[] {
     }
   }
   return rows
+}
+
+/**
+ * The most recent prior performance of an exercise: working sets (warmups
+ * excluded) from the newest session containing it, skipping the session being
+ * edited. Null when the exercise has never been logged (or only as warmups).
+ */
+export function lastPerformance(
+  exerciseId: string,
+  sessions: GymSession[],
+  excludeSessionId: string | null
+): { sets: GymSet[]; performedAt: string } | null {
+  const candidates = sessions
+    .filter((s) => s.id !== excludeSessionId)
+    .sort((a, b) => b.performed_at.localeCompare(a.performed_at))
+  for (const session of candidates) {
+    const sets = session.sets
+      .filter((s) => s.exercise_id === exerciseId && !s.is_warmup)
+      .sort((a, b) => a.position - b.position)
+    if (sets.length > 0) return { sets, performedAt: session.performed_at }
+  }
+  return null
+}
+
+/** "8×80 · 8×80 · 8×77.5" — compact reps×kg rendering of a working-set list ("×12" when weight is blank = bodyweight). */
+export function formatSetLine(sets: GymSet[]): string {
+  return sets
+    .map((s) => {
+      const reps = s.reps ?? '?'
+      return s.weight_kg === null ? `${reps}×bw` : `${reps}×${s.weight_kg}`
+    })
+    .join(' · ')
+}
+
+/**
+ * Per-exercise usage from the fetched sessions: how many sessions contain the
+ * exercise + the most recent performed_at. Feeds the picker's "most likely"
+ * ranking (lib/exerciseSearch.ts).
+ */
+export function exerciseUsage(sessions: GymSession[]): Map<string, ExerciseUsageEntry> {
+  const usage = new Map<string, ExerciseUsageEntry>()
+  for (const session of sessions) {
+    const inSession = new Set(session.sets.map((s) => s.exercise_id))
+    for (const id of inSession) {
+      const prev = usage.get(id)
+      usage.set(id, {
+        count: (prev?.count ?? 0) + 1,
+        lastIso:
+          prev?.lastIso && prev.lastIso > session.performed_at ? prev.lastIso : session.performed_at
+      })
+    }
+  }
+  return usage
 }
 
 /** /strength|core/i test against a workout type — single source for the Gym tab. */

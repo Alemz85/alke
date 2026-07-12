@@ -1,13 +1,13 @@
 import { useMemo, useState, type ReactElement } from 'react'
-import type { GymSession, GymTemplate, Workout } from '@shared/types'
+import type { Exercise, GymSession, GymTemplate, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ButtonSoft } from '../components/ButtonSoft'
 import { EmptyState } from '../components/EmptyState'
 import { HeroMetric } from '../components/HeroMetric'
 import { useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
-import { useGymSessions, useGymTemplates, useUpdateGymTemplate } from '../hooks/useGymData'
+import { useExercises, useGymSessions, useGymTemplates, useUpdateGymTemplate } from '../hooks/useGymData'
 import { isoWeekKey, toZonedYMD } from '../hooks/sessionsDate'
-import { isStrengthWorkout, summarizeSession } from '../lib/gymLog'
+import { displayBodyPart, isStrengthWorkout, sessionBodyParts, summarizeSession } from '../lib/gymLog'
 import { EM_DASH, formatDurationHM } from '../lib/format'
 import { SessionEditorModal, type EditorTarget } from './gym/SessionEditorModal'
 import { TemplateEditorModal } from './gym/TemplateEditorModal'
@@ -123,14 +123,25 @@ function ToLogSection({
 
 // ── history section ──────────────────────────────────────────────────────────
 
+/** "Legs · Core · Back +1" — derived body parts for a history row, subtle, max 3 shown. */
+function bodyPartsLabel(session: GymSession, exercisesById: Map<string, Exercise>): string | null {
+  if (session.sets.length === 0) return null // set-less logs already say it in the summary
+  const parts = sessionBodyParts(session, exercisesById).map(displayBodyPart)
+  if (parts.length === 0) return null
+  const shown = parts.slice(0, 3).join(' · ')
+  return parts.length > 3 ? `${shown} +${parts.length - 3}` : shown
+}
+
 function HistoryRow({
   session,
   templateName,
+  bodyParts,
   timezone,
   onOpen
 }: {
   session: GymSession
   templateName: string | null
+  bodyParts: string | null
   timezone: string | null | undefined
   onOpen: () => void
 }): ReactElement {
@@ -140,6 +151,7 @@ function HistoryRow({
       <div className="gym-history-main">
         <span className="gym-history-title">{title}</span>
         {session.workout_id !== null && <span className="gym-history-linked">synced</span>}
+        {bodyParts && <span className="gym-history-bodyparts">{bodyParts}</span>}
       </div>
       <span className="gym-history-date tabular-nums">{formatDateShort(session.performed_at, timezone)}</span>
       <span className="gym-history-summary">{summarizeSession(session, templateName)}</span>
@@ -164,6 +176,12 @@ function HistorySection({
     return m
   }, [templates])
 
+  const exercisesQuery = useExercises()
+  const exercisesById = useMemo(
+    () => new Map((exercisesQuery.data ?? []).map((e) => [e.id, e])),
+    [exercisesQuery.data]
+  )
+
   return (
     <section className="gym-section">
       <h2 className="gym-section-title">History</h2>
@@ -176,6 +194,7 @@ function HistorySection({
               key={s.id}
               session={s}
               templateName={s.template_id ? (templateNameById.get(s.template_id) ?? null) : null}
+              bodyParts={bodyPartsLabel(s, exercisesById)}
               timezone={timezone}
               onOpen={() => onOpen(s)}
             />
@@ -385,6 +404,7 @@ export function GymView(): ReactElement {
         <SessionEditorModal
           target={editorTarget}
           templates={templates}
+          sessions={gymSessions}
           timezone={timezone}
           onClose={() => setEditorTarget(null)}
         />

@@ -1,0 +1,740 @@
+[
+  {
+    "name": "Overhead Press",
+    "aliases": [
+      "ohp",
+      "military press",
+      "lento avanti",
+      "standing barbell press",
+      "barbell shoulder press"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "upper back"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Seated Dumbbell Shoulder Press",
+    "aliases": [
+      "shoulder press",
+      "db shoulder press",
+      "seated db press",
+      "dumbbell press",
+      "lento manubri"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Arnold Press",
+    "aliases": [
+      "arnold shoulder press",
+      "rotational db press"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "rear delts"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Machine Shoulder Press",
+    "aliases": [
+      "shoulder press machine",
+      "seated machine press"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps"
+    ],
+    "equipment": "machine",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Smith Machine Shoulder Press",
+    "aliases": [
+      "smith shoulder press",
+      "smith machine ohp"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps"
+    ],
+    "equipment": "smith machine",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Lateral Raise",
+    "aliases": [
+      "alzate laterali",
+      "side raise",
+      "db lateral raise",
+      "dumbbell lateral raise"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "side delts"
+    ],
+    "secondary_muscles": [],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Cable Lateral Raise",
+    "aliases": [
+      "cable side raise",
+      "alzate laterali ai cavi",
+      "single arm cable lateral raise"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "side delts"
+    ],
+    "secondary_muscles": [],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Front Raise",
+    "aliases": [
+      "alzate frontali",
+      "db front raise",
+      "dumbbell front raise"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts"
+    ],
+    "secondary_muscles": [],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Rear Delt Fly",
+    "aliases": [
+      "reverse fly",
+      "croci inverse",
+      "bent over rear delt fly",
+      "db rear delt fly",
+      "reverse dumbbell fly"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "rear delts"
+    ],
+    "secondary_muscles": [
+      "upper back"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Reverse Pec Deck",
+    "aliases": [
+      "reverse pec deck fly",
+      "machine rear delt fly",
+      "pec deck inverso",
+      "reverse fly machine",
+      "rear delt machine"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "rear delts"
+    ],
+    "secondary_muscles": [
+      "upper back"
+    ],
+    "equipment": "machine",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Face Pull",
+    "aliases": [
+      "cable face pull",
+      "rope face pull",
+      "face pull ai cavi"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "rear delts"
+    ],
+    "secondary_muscles": [
+      "upper back",
+      "traps"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "horizontal pull"
+  },
+  {
+    "name": "Upright Row",
+    "aliases": [
+      "tirate al mento",
+      "barbell upright row",
+      "cable upright row"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "side delts",
+      "traps"
+    ],
+    "secondary_muscles": [
+      "biceps"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "vertical pull"
+  },
+  {
+    "name": "Barbell Shrug",
+    "aliases": [
+      "scrollate",
+      "scrollate bilanciere",
+      "shrugs"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "traps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "barbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Dumbbell Shrug",
+    "aliases": [
+      "scrollate manubri",
+      "db shrug"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "traps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Push Press",
+    "aliases": [
+      "barbell push press",
+      "push press bilanciere"
+    ],
+    "body_part": "shoulders",
+    "primary_muscles": [
+      "front delts",
+      "side delts"
+    ],
+    "secondary_muscles": [
+      "triceps",
+      "quadriceps"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "vertical push"
+  },
+  {
+    "name": "Barbell Curl",
+    "aliases": [
+      "curl bilanciere",
+      "standing barbell curl",
+      "bb curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "barbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "EZ Bar Curl",
+    "aliases": [
+      "ez curl",
+      "curl bilanciere ez",
+      "curl bastone ez"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "ez bar",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Dumbbell Curl",
+    "aliases": [
+      "curl manubri",
+      "standing dumbbell curl",
+      "db curl",
+      "alternating dumbbell curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Hammer Curl",
+    "aliases": [
+      "curl a martello",
+      "neutral grip curl",
+      "db hammer curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps",
+      "forearms"
+    ],
+    "secondary_muscles": [],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Incline Dumbbell Curl",
+    "aliases": [
+      "incline curl",
+      "curl manubri panca inclinata",
+      "incline db curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Preacher Curl",
+    "aliases": [
+      "panca scott",
+      "scott curl",
+      "preacher bench curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "ez bar",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Concentration Curl",
+    "aliases": [
+      "curl di concentrazione",
+      "seated concentration curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Cable Curl",
+    "aliases": [
+      "curl ai cavi",
+      "standing cable curl",
+      "cable bicep curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "biceps"
+    ],
+    "secondary_muscles": [
+      "forearms"
+    ],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Triceps Pushdown",
+    "aliases": [
+      "pushdown",
+      "push down ai cavi",
+      "cable pushdown",
+      "tricep pushdown",
+      "pushdown corda",
+      "rope pushdown"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Skullcrusher",
+    "aliases": [
+      "french press",
+      "lying triceps extension",
+      "ez bar skullcrusher",
+      "estensioni tricipiti sdraiato"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "ez bar",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Overhead Triceps Extension",
+    "aliases": [
+      "overhead tricep extension",
+      "french press in piedi",
+      "cable overhead extension",
+      "db overhead extension",
+      "single arm overhead extension"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "cable",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Close-Grip Bench Press",
+    "aliases": [
+      "cgbp",
+      "close grip bench",
+      "panca presa stretta"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [
+      "chest",
+      "front delts"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Bench Dips",
+    "aliases": [
+      "tricep bench dips",
+      "dip su panca"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [
+      "chest",
+      "front delts"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "horizontal push"
+  },
+  {
+    "name": "Triceps Kickback",
+    "aliases": [
+      "kickback tricipiti",
+      "db kickback",
+      "dumbbell kickback"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "triceps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "dumbbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Wrist Curl",
+    "aliases": [
+      "curl polsi",
+      "barbell wrist curl",
+      "forearm curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "forearms"
+    ],
+    "secondary_muscles": [],
+    "equipment": "barbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Reverse Wrist Curl",
+    "aliases": [
+      "curl polsi inverso",
+      "extensor wrist curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "forearms"
+    ],
+    "secondary_muscles": [],
+    "equipment": "barbell",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Reverse Curl",
+    "aliases": [
+      "curl inverso",
+      "reverse grip curl",
+      "overhand curl"
+    ],
+    "body_part": "arms",
+    "primary_muscles": [
+      "forearms",
+      "biceps"
+    ],
+    "secondary_muscles": [],
+    "equipment": "ez bar",
+    "mechanics": "isolation",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Power Clean",
+    "aliases": [
+      "clean bilanciere",
+      "barbell power clean"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "glutes",
+      "hamstrings",
+      "traps"
+    ],
+    "secondary_muscles": [
+      "quadriceps",
+      "front delts",
+      "lower back"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Thruster",
+    "aliases": [
+      "squat to press",
+      "barbell thruster",
+      "db thruster",
+      "dumbbell thruster"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "quadriceps",
+      "front delts"
+    ],
+    "secondary_muscles": [
+      "glutes",
+      "triceps",
+      "abs"
+    ],
+    "equipment": "barbell",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Burpee",
+    "aliases": [
+      "burpees"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "quadriceps",
+      "chest"
+    ],
+    "secondary_muscles": [
+      "abs",
+      "front delts",
+      "glutes"
+    ],
+    "equipment": "bodyweight",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  },
+  {
+    "name": "Sled Push",
+    "aliases": [
+      "prowler push",
+      "spinta slitta",
+      "sled press"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "quadriceps",
+      "glutes"
+    ],
+    "secondary_muscles": [
+      "calves",
+      "front delts",
+      "abs"
+    ],
+    "equipment": "other",
+    "mechanics": "compound",
+    "movement_pattern": "lunge"
+  },
+  {
+    "name": "Battle Ropes",
+    "aliases": [
+      "battle rope",
+      "corde ondulatorie",
+      "rope slams"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "front delts",
+      "abs"
+    ],
+    "secondary_muscles": [
+      "forearms",
+      "side delts"
+    ],
+    "equipment": "other",
+    "mechanics": "compound",
+    "movement_pattern": "isolation"
+  },
+  {
+    "name": "Turkish Get-Up",
+    "aliases": [
+      "tgu",
+      "turkish getup",
+      "get up turco"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "abs",
+      "front delts"
+    ],
+    "secondary_muscles": [
+      "glutes",
+      "quadriceps",
+      "triceps"
+    ],
+    "equipment": "kettlebell",
+    "mechanics": "compound",
+    "movement_pattern": "core"
+  },
+  {
+    "name": "Dumbbell Clean and Press",
+    "aliases": [
+      "db clean and press",
+      "clean and press manubri",
+      "dumbbell clean & press"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "front delts",
+      "glutes"
+    ],
+    "secondary_muscles": [
+      "quadriceps",
+      "triceps",
+      "traps"
+    ],
+    "equipment": "dumbbell",
+    "mechanics": "compound",
+    "movement_pattern": "hinge"
+  },
+  {
+    "name": "Wall Ball Shot",
+    "aliases": [
+      "wall ball",
+      "wall balls",
+      "medicine ball wall shot"
+    ],
+    "body_part": "full body",
+    "primary_muscles": [
+      "quadriceps",
+      "front delts"
+    ],
+    "secondary_muscles": [
+      "glutes",
+      "abs"
+    ],
+    "equipment": "other",
+    "mechanics": "compound",
+    "movement_pattern": "squat"
+  }
+]

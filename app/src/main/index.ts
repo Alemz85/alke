@@ -26,6 +26,7 @@ import {
   type UserConfigPatch,
   type Flag,
   type GoalPatch,
+  type GymBodyPart,
   type GymSessionPatch,
   type GymTemplatePatch,
   type NewGoal,
@@ -146,8 +147,8 @@ function registerIpcHandlers(): void {
       db.setPlanItemCheck(itemId, doneDate, done)
   )
   ipcMain.handle(IPC_CHANNELS.getExercises, () => db.getExercises())
-  ipcMain.handle(IPC_CHANNELS.addExercise, (_event, name: string, muscleGroup: string | null) =>
-    db.addExercise(name, muscleGroup)
+  ipcMain.handle(IPC_CHANNELS.addExercise, (_event, name: string, bodyPart: GymBodyPart | null) =>
+    db.addExercise(name, bodyPart)
   )
   ipcMain.handle(IPC_CHANNELS.getGymTemplates, () => db.getGymTemplates())
   ipcMain.handle(IPC_CHANNELS.addGymTemplate, (_event, template: NewGymTemplate) =>

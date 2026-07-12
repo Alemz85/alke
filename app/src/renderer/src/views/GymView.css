@@ -149,6 +149,13 @@
   text-transform: uppercase;
 }
 
+.gym-history-bodyparts {
+  flex-shrink: 0;
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
 .gym-history-date {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
@@ -406,6 +413,126 @@ select.gym-input {
 
 .gym-exercise-input {
   flex: 1;
+}
+
+/* body-part filter select — compact, left of the exercise picker */
+.gym-bodypart-select {
+  width: auto;
+  flex: 0 0 auto;
+  max-width: 110px;
+  color: var(--color-text-secondary);
+}
+
+/* "Last: 8×80 · 8×80 — Jul 7" hint under a block header */
+.gym-last-hint {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── exercise picker dropdown ───────────────────────────────────────────── */
+.gym-picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.gym-picker .gym-exercise-input {
+  width: 100%;
+}
+
+.gym-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.gym-picker-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.gym-picker-row--active {
+  background: var(--color-surface-hover);
+}
+
+.gym-picker-name {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-picker-meta {
+  flex-shrink: 0;
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.gym-picker-row--create .gym-picker-name {
+  color: var(--color-text-secondary);
+}
+
+/* ── body-part chips (lazy logging tier) ────────────────────────────────── */
+.gym-field-label-note {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.gym-bodypart-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.gym-bodypart-chip {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  padding: 5px 13px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: 600;
+  letter-spacing: 0.24px;
+  cursor: pointer;
+}
+
+.gym-bodypart-chip--active {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-on-emphasis);
+}
+
+.gym-bodypart-chip--derived {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.gym-bodypart-chip:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .gym-set-row {

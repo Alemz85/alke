@@ -1,14 +1,17 @@
 // Template create/edit modal: name, notes, an ordered item list (exercise +
 // optional targets), and an archive toggle for existing templates.
 import { useEffect, useState, type ReactElement } from 'react'
-import type { GymTemplate, NewGymTemplateItem } from '@shared/types'
-import { useAddExercise, useAddGymTemplate, useExercises, useUpdateGymTemplate } from '../../hooks/useGymData'
+import { GYM_BODY_PARTS, type GymBodyPart, type GymTemplate, type NewGymTemplateItem } from '@shared/types'
+import { useAddGymTemplate, useUpdateGymTemplate } from '../../hooks/useGymData'
+import { ExercisePicker } from './ExercisePicker'
 import '../GymView.css'
 
 interface ItemRow {
   key: string
   exerciseId: string | null
   exerciseName: string
+  // UI-only picker filter, autofilled back from a picked exercise's body_part.
+  bodyPartFilter: GymBodyPart | null
   targetSets: string
   targetReps: string
   targetWeightKg: string
@@ -26,6 +29,7 @@ function blankItem(): ItemRow {
     key: nextItemKey(),
     exerciseId: null,
     exerciseName: '',
+    bodyPartFilter: null,
     targetSets: '',
     targetReps: '',
     targetWeightKg: '',
@@ -40,6 +44,7 @@ function itemsFromTemplate(template: GymTemplate): ItemRow[] {
       key: nextItemKey(),
       exerciseId: item.exercise_id,
       exerciseName: item.exercise_name,
+      bodyPartFilter: null,
       targetSets: item.target_sets != null ? String(item.target_sets) : '',
       targetReps: item.target_reps != null ? String(item.target_reps) : '',
       targetWeightKg: item.target_weight_kg != null ? String(item.target_weight_kg) : '',
@@ -61,55 +66,6 @@ function toNullableFloat(s: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-function ItemExercisePicker({
-  value,
-  onResolved
-}: {
-  value: string
-  onResolved: (id: string, name: string) => void
-}): ReactElement {
-  const exercisesQuery = useExercises()
-  const addExercise = useAddExercise()
-  const exercises = exercisesQuery.data ?? []
-  const [text, setText] = useState(value)
-
-  useEffect(() => setText(value), [value])
-
-  const commit = (): void => {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    const existing = exercises.find((e) => e.name.toLowerCase() === trimmed.toLowerCase())
-    if (existing) {
-      onResolved(existing.id, existing.name)
-      return
-    }
-    addExercise.mutate(
-      { name: trimmed, muscleGroup: null },
-      { onSuccess: (created) => onResolved(created.id, created.name) }
-    )
-  }
-
-  return (
-    <>
-      <input
-        className="gym-input gym-exercise-input"
-        type="text"
-        list="gym-exercise-catalog"
-        placeholder="Exercise"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit()
-          }
-        }}
-      />
-    </>
-  )
-}
-
 function TemplateItemEditor({
   item,
   onChange,
@@ -121,9 +77,29 @@ function TemplateItemEditor({
 }): ReactElement {
   return (
     <div className="gym-template-item-row">
-      <ItemExercisePicker
+      <select
+        className="gym-input gym-bodypart-select"
+        aria-label="Filter by body part"
+        value={item.bodyPartFilter ?? ''}
+        onChange={(e) => onChange({ bodyPartFilter: (e.target.value || null) as GymBodyPart | null })}
+      >
+        <option value="">any</option>
+        {GYM_BODY_PARTS.map((part) => (
+          <option key={part} value={part}>
+            {part}
+          </option>
+        ))}
+      </select>
+      <ExercisePicker
         value={item.exerciseName}
-        onResolved={(id, name) => onChange({ exerciseId: id, exerciseName: name })}
+        bodyPart={item.bodyPartFilter}
+        onResolved={(exercise) =>
+          onChange({
+            exerciseId: exercise.id,
+            exerciseName: exercise.name,
+            bodyPartFilter: (exercise.body_part as GymBodyPart | null) ?? item.bodyPartFilter
+          })
+        }
       />
       <input
         className="gym-input gym-template-target-input"

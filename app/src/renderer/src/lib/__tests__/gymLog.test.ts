@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { GymSession, GymSet, GymTemplate } from '@shared/types'
+import type { Exercise, GymSession, GymSet, GymTemplate } from '@shared/types'
 import {
+  exerciseUsage,
+  formatSetLine,
   groupSetsIntoBlocks,
   isStrengthWorkout,
+  lastPerformance,
   prefillFromTemplate,
+  sessionBodyParts,
   sessionVolumeKg,
   summarizeSession
 } from '../gymLog'
@@ -33,9 +37,26 @@ function session(partial: Partial<GymSession> = {}): GymSession {
     title: null,
     notes: null,
     source: 'user',
+    body_parts: null,
     sets: [],
     created_at: null,
     updated_at: null,
+    ...partial
+  }
+}
+
+function exercise(partial: Partial<Exercise> & { id: string }): Exercise {
+  return {
+    name: partial.id,
+    aliases: [],
+    body_part: null,
+    primary_muscles: [],
+    secondary_muscles: [],
+    equipment: null,
+    mechanics: null,
+    movement_pattern: null,
+    source: 'catalog',
+    created_at: null,
     ...partial
   }
 }
@@ -165,6 +186,17 @@ describe('summarizeSession', () => {
     expect(summarizeSession(s, null)).toBe('Quick log')
   })
 
+  it('body-parts-only log beats the template fallback', () => {
+    const s = session({ sets: [], template_id: 'tmpl-1', body_parts: ['core', 'legs'] })
+    expect(summarizeSession(s, 'Legs')).toBe('Body parts — Legs · Core')
+  })
+
+  it('sets beat a stale body-parts declaration', () => {
+    const sets = [set({ exercise_id: 'squat', position: 0, reps: 8, weight_kg: 60 })]
+    const s = session({ sets, body_parts: ['chest'] })
+    expect(summarizeSession(s, null)).toBe('1 exercise · 1 set · 480 kg')
+  })
+
   it('formats large volume with thousands grouping', () => {
     const sets = [set({ exercise_id: 'squat', position: 0, reps: 100, weight_kg: 100 })]
     const s = session({ sets })
@@ -275,5 +307,117 @@ describe('isStrengthWorkout', () => {
 
   it('handles null', () => {
     expect(isStrengthWorkout(null)).toBe(false)
+  })
+})
+
+// ── sessionBodyParts ───────────────────────────────────────────────────────────
+
+describe('sessionBodyParts', () => {
+  const catalog = new Map([
+    ['squat', exercise({ id: 'squat', body_part: 'legs' })],
+    ['bench', exercise({ id: 'bench', body_part: 'chest' })],
+    ['custom', exercise({ id: 'custom', body_part: null })]
+  ])
+
+  it('derives from set exercises in GYM_BODY_PARTS order, deduped', () => {
+    const sets = [
+      set({ exercise_id: 'squat', position: 0 }),
+      set({ exercise_id: 'bench', position: 1 }),
+      set({ exercise_id: 'squat', position: 2 })
+    ]
+    expect(sessionBodyParts(session({ sets }), catalog)).toEqual(['chest', 'legs'])
+  })
+
+  it('ignores customs without a body part and unknown exercise ids', () => {
+    const sets = [
+      set({ exercise_id: 'custom', position: 0 }),
+      set({ exercise_id: 'not-in-catalog', position: 1 })
+    ]
+    expect(sessionBodyParts(session({ sets }), catalog)).toEqual([])
+  })
+
+  it('falls back to the declared list when there are no sets', () => {
+    const s = session({ body_parts: ['core', 'legs'] })
+    expect(sessionBodyParts(s, catalog)).toEqual(['legs', 'core'])
+  })
+
+  it('sets override the declared list', () => {
+    const sets = [set({ exercise_id: 'squat', position: 0 })]
+    const s = session({ sets, body_parts: ['chest'] })
+    expect(sessionBodyParts(s, catalog)).toEqual(['legs'])
+  })
+})
+
+// ── lastPerformance / formatSetLine ───────────────────────────────────────────
+
+describe('lastPerformance', () => {
+  const older = session({
+    id: 'old',
+    performed_at: '2026-07-01T10:00:00.000Z',
+    sets: [set({ exercise_id: 'squat', position: 0, reps: 8, weight_kg: 70 })]
+  })
+  const newer = session({
+    id: 'new',
+    performed_at: '2026-07-08T10:00:00.000Z',
+    sets: [
+      set({ exercise_id: 'squat', position: 1, reps: 8, weight_kg: 80 }),
+      set({ exercise_id: 'squat', position: 0, reps: 10, weight_kg: 40, is_warmup: true })
+    ]
+  })
+
+  it('returns working sets from the most recent session containing the exercise', () => {
+    const last = lastPerformance('squat', [older, newer], null)
+    expect(last?.performedAt).toBe('2026-07-08T10:00:00.000Z')
+    expect(last?.sets.map((s) => s.weight_kg)).toEqual([80])
+  })
+
+  it('skips the session being edited', () => {
+    const last = lastPerformance('squat', [older, newer], 'new')
+    expect(last?.performedAt).toBe('2026-07-01T10:00:00.000Z')
+  })
+
+  it('skips warmup-only sessions and returns null when never logged', () => {
+    const warmupOnly = session({
+      id: 'w',
+      sets: [set({ exercise_id: 'bench', position: 0, reps: 10, weight_kg: 20, is_warmup: true })]
+    })
+    expect(lastPerformance('bench', [warmupOnly], null)).toBeNull()
+    expect(lastPerformance('nope', [older, newer], null)).toBeNull()
+  })
+})
+
+describe('formatSetLine', () => {
+  it('renders reps×kg per set, bodyweight when weight is null', () => {
+    const sets = [
+      set({ exercise_id: 'squat', position: 0, reps: 8, weight_kg: 77.5 }),
+      set({ exercise_id: 'squat', position: 1, reps: 10, weight_kg: null })
+    ]
+    expect(formatSetLine(sets)).toBe('8×77.5 · 10×bw')
+  })
+})
+
+// ── exerciseUsage ──────────────────────────────────────────────────────────────
+
+describe('exerciseUsage', () => {
+  it('counts sessions per exercise (not sets) and keeps the newest date', () => {
+    const a = session({
+      id: 'a',
+      performed_at: '2026-07-01T10:00:00.000Z',
+      sets: [
+        set({ exercise_id: 'squat', position: 0 }),
+        set({ exercise_id: 'squat', position: 1 })
+      ]
+    })
+    const b = session({
+      id: 'b',
+      performed_at: '2026-07-08T10:00:00.000Z',
+      sets: [set({ exercise_id: 'squat', position: 0 })]
+    })
+    const usage = exerciseUsage([b, a])
+    expect(usage.get('squat')).toEqual({ count: 2, lastIso: '2026-07-08T10:00:00.000Z' })
+  })
+
+  it('is empty for set-less sessions', () => {
+    expect(exerciseUsage([session({ body_parts: ['legs'] })]).size).toBe(0)
   })
 })
