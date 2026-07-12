@@ -52,6 +52,17 @@ the mitigation and the single most important step below — never skip it.
 7. **Reconcile contradictions.** If the new evidence contradicts an existing
    topic file, update that topic and note the revision with its date — don't
    leave two files disagreeing silently.
+8. **Verify no dangling wikilinks** before committing (`[[slug]]`, no `.md`):
+   ```
+   comm -23 \
+     <(grep -rho '\[\[[a-z0-9-]*\]\]' topics papers | sed 's/\[\[//;s/\]\]//' | sort -u) \
+     <(ls topics papers | sed 's/\.md$//' | grep -v '^$' | sort -u)
+   ```
+   Empty output = clean.
+
+For the judgment layer — sourcing hierarchy, honesty patterns, fetching
+workarounds for paywalls, and INDEX conventions — read `knowledge/CURATING.md`.
+It's the "how to do this well" companion to these mechanical steps.
 
 ## Curation loop (when revising, not just adding)
 
