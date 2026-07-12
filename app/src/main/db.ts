@@ -39,11 +39,13 @@ import {
   type NewInjuryLog,
   type PlanItemCheck,
   type RecoveryPlanItem,
+  type RoutePoint,
   type SwimSet,
   type UserConfig,
   type UserConfigPatch,
   type Workout,
   type WorkoutDetail,
+  type WorkoutGeo,
   type WorkoutHrSample,
   type Zone2Fitness
 } from '@shared/types'
@@ -191,6 +193,14 @@ const SWIM_SET_NUMERIC_KEYS: (keyof SwimSet)[] = [
   'rest_after_s'
 ]
 
+const ROUTE_POINT_COLUMNS = 'workout_id, seq, lat, lon, elevation_m'
+
+const ROUTE_POINT_NUMERIC_KEYS: (keyof RoutePoint)[] = ['seq', 'lat', 'lon', 'elevation_m']
+
+const WORKOUT_GEO_COLUMNS = 'workout_id, city, country, admin, lat, lon, geocoded_at'
+
+const WORKOUT_GEO_NUMERIC_KEYS: (keyof WorkoutGeo)[] = ['lat', 'lon']
+
 export async function getWorkouts(fromIso: string, toIso: string): Promise<Workout[]> {
   const supabase = getClient()
 
@@ -241,7 +251,9 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
   const [
     { data: hrSamples, error: hrError },
     { data: computed, error: computedError },
-    { data: swimSets, error: swimSetsError }
+    { data: swimSets, error: swimSetsError },
+    { data: routePoints, error: routeError },
+    { data: geo, error: geoError }
   ] = await Promise.all([
     supabase
       .from('workout_hr_samples')
@@ -253,12 +265,20 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
       .from('swim_sets')
       .select(SWIM_SET_COLUMNS)
       .eq('workout_id', id)
-      .order('set_index', { ascending: true })
+      .order('set_index', { ascending: true }),
+    supabase
+      .from('workout_route_points')
+      .select(ROUTE_POINT_COLUMNS)
+      .eq('workout_id', id)
+      .order('seq', { ascending: true }),
+    supabase.from('workout_geo').select(WORKOUT_GEO_COLUMNS).eq('workout_id', id).maybeSingle()
   ])
 
   if (hrError) throw new Error(`getWorkoutDetail (hr samples): ${hrError.message}`)
   if (computedError) throw new Error(`getWorkoutDetail (computed): ${computedError.message}`)
   if (swimSetsError) throw new Error(`getWorkoutDetail (swim sets): ${swimSetsError.message}`)
+  if (routeError) throw new Error(`getWorkoutDetail (route points): ${routeError.message}`)
+  if (geoError) throw new Error(`getWorkoutDetail (geo): ${geoError.message}`)
 
   return {
     workout: normalizeNumeric(workout as Workout, WORKOUT_NUMERIC_KEYS),
@@ -266,7 +286,11 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
     swimSets: (swimSets ?? []).map((row) => normalizeNumeric(row as SwimSet, SWIM_SET_NUMERIC_KEYS)),
     computed: computed
       ? normalizeNumeric(computed as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
-      : null
+      : null,
+    route: (routePoints ?? []).map((row) =>
+      normalizeNumeric(row as RoutePoint, ROUTE_POINT_NUMERIC_KEYS)
+    ),
+    geo: geo ? normalizeNumeric(geo as WorkoutGeo, WORKOUT_GEO_NUMERIC_KEYS) : null
   }
 }
 

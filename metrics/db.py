@@ -166,3 +166,45 @@ def exec_readonly(sb: Client, sql: str) -> list[dict]:
 def upsert_goal_progress(sb: Client, rows: list[dict]) -> None:
     for i in range(0, len(rows), WRITE_CHUNK):
         sb.table("goal_progress").upsert(rows[i : i + WRITE_CHUNK], on_conflict="goal_id,date").execute()
+
+
+def fetch_workouts_needing_geo(sb: Client) -> list[dict]:
+    """Workouts with a start coordinate but no workout_geo row yet — the
+    nightly geocoding job's input. Prefers workout_route_points (seq=0) over
+    the raw._route_start fallback when both exist. Volume is dozens, so the
+    anti-join against the geocoded set is done in Python rather than SQL."""
+    geocoded_ids = {r["workout_id"] for r in _fetch_all(lambda: sb.table("workout_geo").select("workout_id"))}
+
+    starts: dict[str, dict] = {}
+
+    # fallback source first so the route_points source (preferred) overwrites it
+    def q_raw():
+        return sb.table("workouts").select("id, raw")
+
+    for row in _fetch_all(q_raw):
+        raw = row.get("raw") or {}
+        route_start = raw.get("_route_start") if isinstance(raw, dict) else None
+        if not route_start:
+            continue
+        lat = route_start.get("latitude")
+        lon = route_start.get("longitude")
+        if lat is None or lon is None:
+            continue
+        starts[row["id"]] = {"workout_id": row["id"], "lat": lat, "lon": lon}
+
+    def q_points():
+        return sb.table("workout_route_points").select("workout_id, lat, lon").eq("seq", 0)
+
+    for row in _fetch_all(q_points):
+        starts[row["workout_id"]] = {
+            "workout_id": row["workout_id"],
+            "lat": row["lat"],
+            "lon": row["lon"],
+        }
+
+    return [s for wid, s in starts.items() if wid not in geocoded_ids]
+
+
+def upsert_workout_geo(sb: Client, rows: list[dict]) -> None:
+    for i in range(0, len(rows), WRITE_CHUNK):
+        sb.table("workout_geo").upsert(rows[i : i + WRITE_CHUNK], on_conflict="workout_id").execute()

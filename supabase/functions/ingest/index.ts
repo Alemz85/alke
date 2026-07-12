@@ -38,9 +38,12 @@ function tooLarge(): Response {
 
 function getSupabaseClient() {
   const url = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_SERVICE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const key = Deno.env.get("SUPABASE_SERVICE_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) {
-    throw new Error("SUPABASE_URL / SUPABASE_SERVICE_KEY env vars are required");
+    throw new Error(
+      "SUPABASE_URL / SUPABASE_SERVICE_KEY env vars are required",
+    );
   }
   return createClient(url, key, { auth: { persistSession: false } });
 }
@@ -118,14 +121,18 @@ Deno.serve(async (req: Request) => {
     .from("raw_payloads")
     .insert({ payload });
   if (rawInsertError) {
-    return jsonResponse({ error: `failed to store raw payload: ${rawInsertError.message}` }, 500);
+    return jsonResponse({
+      error: `failed to store raw payload: ${rawInsertError.message}`,
+    }, 500);
   }
 
   let parsed;
   try {
     parsed = parseIngestPayload(payload);
   } catch (e) {
-    const reason = e instanceof ParseError ? e.message : "failed to parse payload";
+    const reason = e instanceof ParseError
+      ? e.message
+      : "failed to parse payload";
     return jsonResponse({ error: reason }, 422);
   }
 
@@ -140,14 +147,24 @@ Deno.serve(async (req: Request) => {
       .select("id, external_id")
       .in("external_id", externalIds);
     if (existingErr) {
-      return jsonResponse({ error: `failed to read existing workouts: ${existingErr.message}` }, 500);
+      return jsonResponse({
+        error: `failed to read existing workouts: ${existingErr.message}`,
+      }, 500);
     }
     const existingByExternalId = new Map(
-      (existingWorkouts ?? []).map((w: { id: string; external_id: string }) => [w.external_id, w.id]),
+      (existingWorkouts ?? []).map((
+        w: { id: string; external_id: string },
+      ) => [w.external_id, w.id]),
     );
 
     const rows = parsed.workouts.map((w: NormalizedWorkout) => {
-      const { hrSamples: _hrSamples, swimSamples: _swimSamples, swimSets: _swimSets, ...workoutRow } = w;
+      const {
+        hrSamples: _hrSamples,
+        swimSamples: _swimSamples,
+        swimSets: _swimSets,
+        route: _route,
+        ...workoutRow
+      } = w;
       return workoutRow;
     });
 
@@ -156,7 +173,9 @@ Deno.serve(async (req: Request) => {
       .upsert(rows, { onConflict: "external_id" })
       .select("id, external_id");
     if (upsertErr) {
-      return jsonResponse({ error: `failed to upsert workouts: ${upsertErr.message}` }, 500);
+      return jsonResponse({
+        error: `failed to upsert workouts: ${upsertErr.message}`,
+      }, 500);
     }
 
     for (const row of upserted ?? []) {
@@ -165,7 +184,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const idByExternalId = new Map(
-      (upserted ?? []).map((w: { id: string; external_id: string }) => [w.external_id, w.id]),
+      (upserted ?? []).map((
+        w: { id: string; external_id: string },
+      ) => [w.external_id, w.id]),
     );
 
     // --- HR samples: bulk insert, skip rows that already exist -------
@@ -174,15 +195,24 @@ Deno.serve(async (req: Request) => {
       const workoutId = idByExternalId.get(w.external_id);
       if (!workoutId) continue;
       for (const sample of w.hrSamples) {
-        hrRows.push({ workout_id: workoutId, offset_s: sample.offset_s, bpm: sample.bpm });
+        hrRows.push({
+          workout_id: workoutId,
+          offset_s: sample.offset_s,
+          bpm: sample.bpm,
+        });
       }
     }
     if (hrRows.length > 0) {
       const { error: hrErr } = await supabase
         .from("workout_hr_samples")
-        .upsert(hrRows, { onConflict: "workout_id,offset_s", ignoreDuplicates: true });
+        .upsert(hrRows, {
+          onConflict: "workout_id,offset_s",
+          ignoreDuplicates: true,
+        });
       if (hrErr) {
-        return jsonResponse({ error: `failed to insert HR samples: ${hrErr.message}` }, 500);
+        return jsonResponse({
+          error: `failed to insert HR samples: ${hrErr.message}`,
+        }, 500);
       }
     }
 
@@ -218,9 +248,14 @@ Deno.serve(async (req: Request) => {
     }
     if (swimWorkoutIds.length > 0) {
       for (const table of ["swim_sets", "workout_swim_samples"] as const) {
-        const { error } = await supabase.from(table).delete().in("workout_id", swimWorkoutIds);
+        const { error } = await supabase.from(table).delete().in(
+          "workout_id",
+          swimWorkoutIds,
+        );
         if (error) {
-          return jsonResponse({ error: `failed to clear ${table}: ${error.message}` }, 500);
+          return jsonResponse({
+            error: `failed to clear ${table}: ${error.message}`,
+          }, 500);
         }
       }
       // ~1700 sample rows per swim; insert in chunks to keep request bodies sane.
@@ -229,13 +264,61 @@ Deno.serve(async (req: Request) => {
           .from("workout_swim_samples")
           .insert(swimSampleRows.slice(i, i + 1000));
         if (error) {
-          return jsonResponse({ error: `failed to insert swim samples: ${error.message}` }, 500);
+          return jsonResponse({
+            error: `failed to insert swim samples: ${error.message}`,
+          }, 500);
         }
       }
       if (swimSetRows.length > 0) {
         const { error } = await supabase.from("swim_sets").insert(swimSetRows);
         if (error) {
-          return jsonResponse({ error: `failed to insert swim sets: ${error.message}` }, 500);
+          return jsonResponse({
+            error: `failed to insert swim sets: ${error.message}`,
+          }, 500);
+        }
+      }
+    }
+
+    // --- Route points: wholesale replace per workout ----------------------
+    // Mirrors the swim delete+replace pattern: re-derivation may re-downsample
+    // to different vertices, so row-level dedupe is wrong here too.
+    const routeWorkoutIds: string[] = [];
+    const routePointRows: {
+      workout_id: string;
+      seq: number;
+      lat: number;
+      lon: number;
+      elevation_m: number | null;
+    }[] = [];
+    for (const w of parsed.workouts) {
+      const workoutId = idByExternalId.get(w.external_id);
+      if (!workoutId || w.route.length === 0) continue;
+      routeWorkoutIds.push(workoutId);
+      for (const p of w.route) {
+        routePointRows.push({ workout_id: workoutId, ...p });
+      }
+    }
+    if (routeWorkoutIds.length > 0) {
+      const { error: deleteErr } = await supabase
+        .from("workout_route_points")
+        .delete()
+        .in("workout_id", routeWorkoutIds);
+      if (deleteErr) {
+        return jsonResponse(
+          {
+            error: `failed to clear workout_route_points: ${deleteErr.message}`,
+          },
+          500,
+        );
+      }
+      for (let i = 0; i < routePointRows.length; i += 1000) {
+        const { error } = await supabase
+          .from("workout_route_points")
+          .insert(routePointRows.slice(i, i + 1000));
+        if (error) {
+          return jsonResponse({
+            error: `failed to insert route points: ${error.message}`,
+          }, 500);
         }
       }
     }
@@ -250,7 +333,10 @@ Deno.serve(async (req: Request) => {
       .in("date", dates);
     if (existingDailyErr) {
       return jsonResponse(
-        { error: `failed to read existing daily_metrics: ${existingDailyErr.message}` },
+        {
+          error:
+            `failed to read existing daily_metrics: ${existingDailyErr.message}`,
+        },
         500,
       );
     }
@@ -266,7 +352,9 @@ Deno.serve(async (req: Request) => {
       .from("daily_metrics")
       .upsert(mergedRows, { onConflict: "date" });
     if (dailyUpsertErr) {
-      return jsonResponse({ error: `failed to upsert daily_metrics: ${dailyUpsertErr.message}` }, 500);
+      return jsonResponse({
+        error: `failed to upsert daily_metrics: ${dailyUpsertErr.message}`,
+      }, 500);
     }
 
     for (const d of parsed.dailyMetrics) {
@@ -277,7 +365,10 @@ Deno.serve(async (req: Request) => {
 
   return jsonResponse({ inserted, updated }, 200);
 
-  async function saveRawAndFail(rawText: string, reason: string): Promise<Response> {
+  async function saveRawAndFail(
+    rawText: string,
+    reason: string,
+  ): Promise<Response> {
     const supabase = getSupabaseClient();
     let payload: unknown = null;
     try {
@@ -288,7 +379,9 @@ Deno.serve(async (req: Request) => {
     }
     const { error } = await supabase.from("raw_payloads").insert({ payload });
     if (error) {
-      return jsonResponse({ error: `${reason}; also failed to store raw payload: ${error.message}` }, 422);
+      return jsonResponse({
+        error: `${reason}; also failed to store raw payload: ${error.message}`,
+      }, 422);
     }
     return jsonResponse({ error: reason }, 422);
   }

@@ -1,6 +1,11 @@
 // Tests for the pure parsing layer. No network, no Deno.env — fixtures only.
-import { assertEquals, assertAlmostEquals, assertThrows } from "jsr:@std/assert@1";
 import {
+  assertAlmostEquals,
+  assertEquals,
+  assertThrows,
+} from "jsr:@std/assert@1";
+import {
+  downsampleRoute,
   mergeDailyMetric,
   type NormalizedDailyMetric,
   ParseError,
@@ -210,7 +215,11 @@ Deno.test("strips top-level arrays with more than 50 elements from raw, recordin
   assertEquals(raw.activeEnergy, undefined);
   assertEquals(raw.stepCount, undefined);
   assertEquals(Array.isArray(raw.shortSeries), true);
-  assertEquals(raw._stripped, { swimDistance: 60, activeEnergy: 55, stepCount: 51 });
+  assertEquals(raw._stripped, {
+    swimDistance: 60,
+    activeEnergy: 55,
+    stepCount: 51,
+  });
 });
 
 Deno.test("keeps short arrays (50 or fewer elements) in raw with no _stripped key", () => {
@@ -253,7 +262,11 @@ Deno.test("extracts _route_start from first route point and strips route even wh
               course: 180.2,
               horizontalAccuracy: 3.1,
             },
-            { latitude: 43.2966, longitude: -2.9877, timestamp: "2026-07-08 08:52:49 +0200" },
+            {
+              latitude: 43.2966,
+              longitude: -2.9877,
+              timestamp: "2026-07-08 08:52:49 +0200",
+            },
           ],
         },
       ],
@@ -304,7 +317,11 @@ Deno.test("_route_start is null-tolerant when the first route point is malformed
   const result = parseIngestPayload(payload);
   const raw = result.workouts[0].raw;
   assertEquals(raw.route, undefined);
-  assertEquals(raw._route_start, { latitude: null, longitude: null, timestamp: null });
+  assertEquals(raw._route_start, {
+    latitude: null,
+    longitude: null,
+    timestamp: null,
+  });
 });
 
 Deno.test("explicit HR strips are also recorded in _stripped", () => {
@@ -495,8 +512,14 @@ Deno.test("falls back to deterministic external_id when id missing, idempotently
   };
   const result1 = parseIngestPayload(payload);
   const result2 = parseIngestPayload(payload);
-  assertEquals(result1.workouts[0].external_id, result2.workouts[0].external_id);
-  assertEquals(result1.workouts[0].external_id, "surfing-2026-07-08T05:00:00.000Z");
+  assertEquals(
+    result1.workouts[0].external_id,
+    result2.workouts[0].external_id,
+  );
+  assertEquals(
+    result1.workouts[0].external_id,
+    "surfing-2026-07-08T05:00:00.000Z",
+  );
 });
 
 Deno.test("normalizes name with mixed case and spaces to lowercase snake_case", () => {
@@ -554,7 +577,10 @@ Deno.test("ignores unknown metric names gracefully without throwing", () => {
   const result = parseIngestPayload(metricsExportFixture);
   // some_unknown_future_metric must not appear on any known column
   const dm = result.dailyMetrics[0];
-  assertEquals((dm as unknown as Record<string, unknown>).some_unknown_future_metric, undefined);
+  assertEquals(
+    (dm as unknown as Record<string, unknown>).some_unknown_future_metric,
+    undefined,
+  );
 });
 
 Deno.test("daily metric date uses the LOCAL date part of the sample timestamp, not UTC", () => {
@@ -606,10 +632,26 @@ Deno.test("maps vo2_max, hrv, respiratory_rate, wrist temp metrics", () => {
   const payload = {
     data: {
       metrics: [
-        { name: "vo2_max", units: "ml/kg/min", data: [{ date: "2026-07-08 00:00:00 +0200", qty: 45.1 }] },
-        { name: "heart_rate_variability", units: "ms", data: [{ date: "2026-07-08 00:00:00 +0200", qty: 62.3 }] },
-        { name: "respiratory_rate", units: "count/min", data: [{ date: "2026-07-08 00:00:00 +0200", qty: 14.5 }] },
-        { name: "apple_sleeping_wrist_temperature", units: "degC", data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0.3 }] },
+        {
+          name: "vo2_max",
+          units: "ml/kg/min",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 45.1 }],
+        },
+        {
+          name: "heart_rate_variability",
+          units: "ms",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 62.3 }],
+        },
+        {
+          name: "respiratory_rate",
+          units: "count/min",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 14.5 }],
+        },
+        {
+          name: "apple_sleeping_wrist_temperature",
+          units: "degC",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0.3 }],
+        },
       ],
       workouts: [],
     },
@@ -668,14 +710,21 @@ Deno.test("maps state_of_mind metric into jsonb", () => {
         {
           name: "state_of_mind",
           units: "",
-          data: [{ date: "2026-07-08 00:00:00 +0200", valence: 0.5, labels: ["happy"] }],
+          data: [{
+            date: "2026-07-08 00:00:00 +0200",
+            valence: 0.5,
+            labels: ["happy"],
+          }],
         },
       ],
       workouts: [],
     },
   };
   const result = parseIngestPayload(payload);
-  assertEquals(result.dailyMetrics[0].state_of_mind, { valence: 0.5, labels: ["happy"] });
+  assertEquals(result.dailyMetrics[0].state_of_mind, {
+    valence: 0.5,
+    labels: ["happy"],
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -725,7 +774,11 @@ Deno.test("mergeDailyMetric: incoming non-null overwrites existing", () => {
 
 Deno.test("mergeDailyMetric: incoming null never clobbers existing value", () => {
   const existing = { date: "2026-07-08", resting_hr: 50, hrv_sdnn_ms: 60 };
-  const incoming = { date: "2026-07-08", resting_hr: null, hrv_sdnn_ms: undefined };
+  const incoming = {
+    date: "2026-07-08",
+    resting_hr: null,
+    hrv_sdnn_ms: undefined,
+  };
   const merged = mergeDailyMetric(existing, incoming);
   assertEquals(merged.resting_hr, 50);
   assertEquals(merged.hrv_sdnn_ms, 60);
@@ -814,7 +867,10 @@ Deno.test("mergeDailyMetric: sleep group is not mixed across exports", () => {
 
 Deno.test("mergeDailyMetric: equal-duration incoming sleep refreshes the group", () => {
   // Same length, later export — adopt it (stage breakdown may be refined).
-  const refreshed = { ...FULL_NIGHT, sleep_stages: { rem: 2.01, core: 3.81, deep: 0.02, awake: 0.23 } };
+  const refreshed = {
+    ...FULL_NIGHT,
+    sleep_stages: { rem: 1.9, core: 3.8, deep: 0.4, awake: 0.3 },
+  };
   const existing = { date: "2026-07-10", ...FULL_NIGHT };
   const incoming = { date: "2026-07-10", ...refreshed };
   const merged = mergeDailyMetric(existing, incoming);
@@ -828,28 +884,48 @@ Deno.test("mergeDailyMetric: equal-duration incoming sleep refreshes the group",
 /** Builds per-second swim series entries starting at the given offset. */
 function swimSeries(
   startIso: string, // e.g. "2026-07-11 17:00:09 +0200"
-  segments: { fromS: number; seconds: number; mPerS?: number; strokesPerS?: number }[],
+  segments: {
+    fromS: number;
+    seconds: number;
+    mPerS?: number;
+    strokesPerS?: number;
+  }[],
 ): { distance: unknown[]; stroke: unknown[] } {
-  const base = new Date(startIso.replace(" ", "T").replace(" +", "+")).getTime();
+  const base = new Date(startIso.replace(" ", "T").replace(" +", "+"))
+    .getTime();
   const stamp = (offset: number): string => {
     const d = new Date(base + offset * 1000);
     const p = (n: number): string => String(n).padStart(2, "0");
     // Series timestamps arrive in local time +0200 in fixtures; emit UTC with +0000.
-    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
-      `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} +0000`;
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${
+      p(d.getUTCDate())
+    } ` +
+      `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${
+        p(d.getUTCSeconds())
+      } +0000`;
   };
   const distance: unknown[] = [];
   const stroke: unknown[] = [];
   for (const seg of segments) {
     for (let i = 0; i < seg.seconds; i++) {
-      distance.push({ date: stamp(seg.fromS + i), qty: seg.mPerS ?? 0.9, units: "m" });
-      stroke.push({ date: stamp(seg.fromS + i), qty: seg.strokesPerS ?? 0.4, units: "count" });
+      distance.push({
+        date: stamp(seg.fromS + i),
+        qty: seg.mPerS ?? 0.9,
+        units: "m",
+      });
+      stroke.push({
+        date: stamp(seg.fromS + i),
+        qty: seg.strokesPerS ?? 0.4,
+        units: "count",
+      });
     }
   }
   return { distance, stroke };
 }
 
-function swimWorkoutFixture(series: { distance: unknown[]; stroke: unknown[] }) {
+function swimWorkoutFixture(
+  series: { distance: unknown[]; stroke: unknown[] },
+) {
   return {
     data: {
       workouts: [
@@ -869,7 +945,10 @@ function swimWorkoutFixture(series: { distance: unknown[]; stroke: unknown[] }) 
 }
 
 Deno.test("parses swim series into per-second samples with offsets from workout start", () => {
-  const series = swimSeries("2026-07-11 17:23:53 +0200", [{ fromS: 9, seconds: 3 }]);
+  const series = swimSeries("2026-07-11 17:00:00 +0200", [{
+    fromS: 9,
+    seconds: 3,
+  }]);
   const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
   assertEquals(workouts[0].swimSamples, [
     { offset_s: 9, distance_m: 0.9, strokes: 0.4 },
@@ -924,7 +1003,10 @@ Deno.test("drops sub-10m artifact blocks; rest spans across the dropped block", 
 });
 
 Deno.test("swim series are stripped from raw and workouts without series get empty swim fields", () => {
-  const series = swimSeries("2026-07-11 17:23:53 +0200", [{ fromS: 0, seconds: 60 }]);
+  const series = swimSeries("2026-07-11 17:00:00 +0200", [{
+    fromS: 0,
+    seconds: 60,
+  }]);
   const { workouts } = parseIngestPayload(swimWorkoutFixture(series));
   assertEquals("swimDistance" in workouts[0].raw, false);
   assertEquals("swimStroke" in workouts[0].raw, false);
@@ -935,4 +1017,219 @@ Deno.test("swim series are stripped from raw and workouts without series get emp
   const { workouts: plain } = parseIngestPayload(workoutsExportFixture);
   assertEquals(plain[0].swimSamples, []);
   assertEquals(plain[0].swimSets, []);
+});
+
+// ---------------------------------------------------------------------------
+// GPS route downsampling — downsampleRoute (pure, RDP-based)
+// ---------------------------------------------------------------------------
+
+/** Builds a wiggly outdoor route with `n` points, roughly a zig-zag path. */
+function makeRoute(
+  n: number,
+): { latitude: number; longitude: number; altitude: number }[] {
+  const points: { latitude: number; longitude: number; altitude: number }[] =
+    [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    points.push({
+      latitude: 43.3 + t * 0.05 + (i % 7 === 0 ? 0.002 : 0), // occasional turns
+      longitude: -2.98 + t * 0.08 + (i % 11 === 0 ? -0.003 : 0),
+      altitude: 10 + Math.sin(t * 10) * 5,
+    });
+  }
+  return points;
+}
+
+Deno.test("downsampleRoute: returns [] for non-array input", () => {
+  assertEquals(downsampleRoute(undefined), []);
+  assertEquals(downsampleRoute(null), []);
+  assertEquals(downsampleRoute("not-an-array"), []);
+  assertEquals(downsampleRoute(42), []);
+});
+
+Deno.test("downsampleRoute: returns [] for an empty array", () => {
+  assertEquals(downsampleRoute([]), []);
+});
+
+Deno.test("downsampleRoute: caps at <= 300 points and preserves exact first & last coordinate", () => {
+  const raw = makeRoute(4100);
+  const result = downsampleRoute(raw);
+  assertEquals(result.length <= 300, true);
+  assertEquals(result[0].lat, raw[0].latitude);
+  assertEquals(result[0].lon, raw[0].longitude);
+  assertEquals(result[result.length - 1].lat, raw[raw.length - 1].latitude);
+  assertEquals(result[result.length - 1].lon, raw[raw.length - 1].longitude);
+});
+
+Deno.test("downsampleRoute: input at or below cap is returned as-is (mapped), no thinning", () => {
+  const raw = makeRoute(250);
+  const result = downsampleRoute(raw, 300);
+  assertEquals(result.length, 250);
+  for (let i = 0; i < raw.length; i++) {
+    assertEquals(result[i].lat, raw[i].latitude);
+    assertEquals(result[i].lon, raw[i].longitude);
+  }
+});
+
+Deno.test("downsampleRoute: maps altitude to elevation_m, and null when altitude absent", () => {
+  const raw = [
+    { latitude: 1, longitude: 2, altitude: 12.5 },
+    { latitude: 1.001, longitude: 2.001 }, // no altitude
+  ];
+  const result = downsampleRoute(raw);
+  assertEquals(result[0].elevation_m, 12.5);
+  assertEquals(result[1].elevation_m, null);
+});
+
+Deno.test("downsampleRoute: skips points with missing or non-finite lat/lon", () => {
+  const raw = [
+    { latitude: 1, longitude: 2, altitude: 1 },
+    { latitude: null, longitude: 2, altitude: 1 }, // missing lat: skipped
+    { longitude: 2, altitude: 1 }, // missing lat: skipped
+    { latitude: NaN, longitude: 2, altitude: 1 }, // non-finite: skipped
+    { latitude: 1.002, longitude: 2.002, altitude: 1 },
+  ];
+  const result = downsampleRoute(raw);
+  assertEquals(result.length, 2);
+});
+
+Deno.test("downsampleRoute: seq is 0-based and strictly monotonic", () => {
+  const raw = makeRoute(1000);
+  const result = downsampleRoute(raw, 300);
+  assertEquals(result[0].seq, 0);
+  for (let i = 1; i < result.length; i++) {
+    assertEquals(result[i].seq, result[i - 1].seq + 1);
+  }
+  assertEquals(result[result.length - 1].seq, result.length - 1);
+});
+
+Deno.test("downsampleRoute: preserves a sharp turn vertex rather than striding past it", () => {
+  // A route that goes straight, then sharply turns, then straight again.
+  // A naive every-Nth stride could skip the turn vertex entirely (leaving a
+  // multi-hundred-point gap either side); RDP must keep a point right at
+  // the bend since it's the point of maximum deviation from any chord that
+  // spans across it.
+  const raw: { latitude: number; longitude: number }[] = [];
+  for (let i = 0; i <= 500; i++) {
+    raw.push({ latitude: 43.0, longitude: -2.0 + i * 0.0001 });
+  }
+  const turnIndex = raw.length; // index of the corner point itself
+  raw.push({ latitude: 43.05, longitude: raw[raw.length - 1].longitude }); // sharp corner
+  for (let i = 1; i <= 500; i++) {
+    raw.push({
+      latitude: 43.05 + i * 0.0001,
+      longitude: raw[turnIndex].longitude,
+    });
+  }
+  const result = downsampleRoute(raw, 50);
+  // A kept point should land within a couple of samples of the true corner
+  // (not hundreds away, as a naive stride could produce).
+  const closestOffset = Math.min(
+    ...result.map((p) => {
+      const idx = raw.findIndex((r) =>
+        r.latitude === p.lat && r.longitude === p.lon
+      );
+      return Math.abs(idx - turnIndex);
+    }),
+  );
+  assertEquals(closestOffset <= 2, true);
+});
+
+Deno.test("parseWorkout: a workout WITH a route yields a non-empty route array", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "route-outdoor",
+          name: "Outdoor Run",
+          start: "2026-07-08 08:00:00 +0200",
+          end: "2026-07-08 09:00:00 +0200",
+          route: [
+            {
+              latitude: 43.29,
+              longitude: -2.98,
+              altitude: 10,
+              timestamp: "2026-07-08 08:00:01 +0200",
+            },
+            {
+              latitude: 43.291,
+              longitude: -2.981,
+              altitude: 11,
+              timestamp: "2026-07-08 08:00:02 +0200",
+            },
+            {
+              latitude: 43.292,
+              longitude: -2.982,
+              altitude: 12,
+              timestamp: "2026-07-08 08:00:03 +0200",
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const w = result.workouts[0];
+  assertEquals(w.route.length, 3);
+  assertEquals(w.route[0], { seq: 0, lat: 43.29, lon: -2.98, elevation_m: 10 });
+  assertEquals(w.route[2], {
+    seq: 2,
+    lat: 43.292,
+    lon: -2.982,
+    elevation_m: 12,
+  });
+});
+
+Deno.test("parseWorkout: a workout WITHOUT a route (e.g. indoor) yields route: []", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "indoor-strength",
+          name: "Traditional Strength Training",
+          start: "2026-07-08 18:00:00 +0200",
+          end: "2026-07-08 19:00:00 +0200",
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.workouts[0].route, []);
+});
+
+Deno.test("regression: a workout with a route still strips raw.route and keeps _route_start", () => {
+  const payload = {
+    data: {
+      workouts: [
+        {
+          id: "route-regression",
+          name: "Outdoor Walk",
+          start: "2026-07-08 08:52:00 +0200",
+          end: "2026-07-08 09:52:00 +0200",
+          route: [
+            {
+              latitude: 43.2965,
+              longitude: -2.9876,
+              altitude: 12.4,
+              timestamp: "2026-07-08 08:52:48 +0200",
+            },
+            {
+              latitude: 43.2966,
+              longitude: -2.9877,
+              timestamp: "2026-07-08 08:52:49 +0200",
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  const w = result.workouts[0];
+  // raw.route must remain stripped exactly as before this feature.
+  assertEquals(w.raw.route, undefined);
+  const routeStart = w.raw._route_start as Record<string, unknown>;
+  assertEquals(routeStart.latitude, 43.2965);
+  assertEquals(routeStart.longitude, -2.9876);
+  // route (the new normalized field) is populated independently of raw.
+  assertEquals(w.route.length, 2);
 });

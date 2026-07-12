@@ -25,6 +25,13 @@ export interface NormalizedSwimSet {
   rest_after_s: number | null; // null for the last set
 }
 
+export interface NormalizedRoutePoint {
+  seq: number; // 0-based, chronological
+  lat: number;
+  lon: number;
+  elevation_m: number | null;
+}
+
 export interface NormalizedWorkout {
   external_id: string;
   type: string | null;
@@ -40,6 +47,7 @@ export interface NormalizedWorkout {
   hrSamples: NormalizedHrSample[];
   swimSamples: NormalizedSwimSample[];
   swimSets: NormalizedSwimSet[];
+  route: NormalizedRoutePoint[];
 }
 
 export interface NormalizedDailyMetric {
@@ -106,7 +114,12 @@ const FIELD_MAP = {
   // preserved verbatim in raw_payloads, and the HR series is normalized
   // into workout_hr_samples). Route is stripped separately (see
   // routeStartFields) so its first point can be summarized first.
-  workoutRawStripKeys: ["heartRateData", "heartRateRecovery", "swimDistance", "swimStroke"],
+  workoutRawStripKeys: [
+    "heartRateData",
+    "heartRateRecovery",
+    "swimDistance",
+    "swimStroke",
+  ],
   // Fields copied from the first route point into raw._route_start.
   routeStartFields: ["latitude", "longitude", "timestamp"],
   // Per-sample HR value candidates, in preference order.
@@ -200,9 +213,14 @@ function toNumber(v: unknown): number | null {
 }
 
 /** Reads a value that may be a flat number or a {qty, units} object. */
-function readQtyUnits(v: unknown): { qty: number | null; units: string | null } {
+function readQtyUnits(
+  v: unknown,
+): { qty: number | null; units: string | null } {
   if (isPlainObject(v)) {
-    return { qty: toNumber(v.qty), units: typeof v.units === "string" ? v.units : null };
+    return {
+      qty: toNumber(v.qty),
+      units: typeof v.units === "string" ? v.units : null,
+    };
   }
   const qty = toNumber(v);
   return { qty, units: null };
@@ -221,7 +239,9 @@ function toSnakeCase(name: string): string {
 function metersFromDistance(v: unknown): number | null {
   const { qty, units } = readQtyUnits(v);
   if (qty === null) return null;
-  const factor = units ? FIELD_MAP.distanceUnitToMeters[units.toLowerCase()] ?? 1 : 1;
+  const factor = units
+    ? FIELD_MAP.distanceUnitToMeters[units.toLowerCase()] ?? 1
+    : 1;
   return qty * factor;
 }
 
@@ -243,9 +263,15 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
 
   const external_id = typeof idRaw === "string" && idRaw.trim() !== ""
     ? idRaw
-    : `${type ?? "unknown"}-${startDate ? startDate.toISOString() : "no-start"}`;
+    : `${type ?? "unknown"}-${
+      startDate ? startDate.toISOString() : "no-start"
+    }`;
 
-  const duration_s = inferDurationSeconds(w[FIELD_MAP.workout.duration], startDate, endDate);
+  const duration_s = inferDurationSeconds(
+    w[FIELD_MAP.workout.duration],
+    startDate,
+    endDate,
+  );
   const distance_m = metersFromDistance(w[FIELD_MAP.workout.distance]);
   const energyReading = readQtyUnits(w[FIELD_MAP.workout.energy]);
   const energy_kcal = energyReading.qty;
@@ -255,12 +281,12 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
   // types (e.g. strength) carry summary HR with a sparse or absent series.
   const summaryAvgHr = readQtyUnits(w[FIELD_MAP.workout.avgHr]).qty;
   const summaryMaxHr = readQtyUnits(w[FIELD_MAP.workout.maxHr]).qty;
-  const avg_hr = summaryAvgHr ?? (hrSamples.length > 0
-    ? hrSamples.reduce((sum, s) => sum + s.bpm, 0) / hrSamples.length
-    : null);
-  const max_hr = summaryMaxHr ?? (hrSamples.length > 0
-    ? Math.max(...hrSamples.map((s) => s.bpm))
-    : null);
+  const avg_hr = summaryAvgHr ??
+    (hrSamples.length > 0
+      ? hrSamples.reduce((sum, s) => sum + s.bpm, 0) / hrSamples.length
+      : null);
+  const max_hr = summaryMaxHr ??
+    (hrSamples.length > 0 ? Math.max(...hrSamples.map((s) => s.bpm)) : null);
 
   const swimSamples = parseSwimSamples(
     w[FIELD_MAP.workout.swimDistanceSeries],
@@ -268,6 +294,8 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     startDate,
   );
   const swimSets = detectSwimSets(swimSamples);
+
+  const route = downsampleRoute(w[FIELD_MAP.workout.route]);
 
   const raw = buildWorkoutRaw(w);
 
@@ -286,6 +314,7 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     hrSamples,
     swimSamples,
     swimSets,
+    route,
   };
 }
 
@@ -360,14 +389,19 @@ function inferDurationSeconds(
   return Math.round(n * 60);
 }
 
-function parseHrSamples(raw: unknown, start: Date | null): NormalizedHrSample[] {
+function parseHrSamples(
+  raw: unknown,
+  start: Date | null,
+): NormalizedHrSample[] {
   if (!Array.isArray(raw) || !start) return [];
   const byOffset = new Map<number, number>();
   for (const entry of raw) {
     if (!isPlainObject(entry)) continue;
     const sampleDate = parseHaeDate(entry[FIELD_MAP.hrSampleDateKey]);
     if (!sampleDate) continue;
-    const offset_s = Math.round((sampleDate.getTime() - start.getTime()) / 1000);
+    const offset_s = Math.round(
+      (sampleDate.getTime() - start.getTime()) / 1000,
+    );
     if (offset_s < 0) continue;
 
     let value: number | null = null;
@@ -397,7 +431,9 @@ function parseSwimSamples(
   strokeRaw: unknown,
   start: Date | null,
 ): NormalizedSwimSample[] {
-  if (!Array.isArray(distanceRaw) || distanceRaw.length === 0 || !start) return [];
+  if (!Array.isArray(distanceRaw) || distanceRaw.length === 0 || !start) {
+    return [];
+  }
 
   const readSeries = (raw: unknown): Map<number, number> => {
     const byOffset = new Map<number, number>();
@@ -406,7 +442,9 @@ function parseSwimSamples(
       if (!isPlainObject(entry)) continue;
       const sampleDate = parseHaeDate(entry[FIELD_MAP.hrSampleDateKey]);
       if (!sampleDate) continue;
-      const offset_s = Math.round((sampleDate.getTime() - start.getTime()) / 1000);
+      const offset_s = Math.round(
+        (sampleDate.getTime() - start.getTime()) / 1000,
+      );
       if (offset_s < 0) continue;
       const qty = toNumber(entry.qty);
       if (qty === null) continue;
@@ -432,7 +470,9 @@ function parseSwimSamples(
  * dropped as artifacts (their span melts into the surrounding rest), and
  * rest_after_s measures to the next kept set (null for the last).
  */
-export function detectSwimSets(samples: NormalizedSwimSample[]): NormalizedSwimSet[] {
+export function detectSwimSets(
+  samples: NormalizedSwimSample[],
+): NormalizedSwimSet[] {
   const blocks: NormalizedSwimSample[][] = [];
   let current: NormalizedSwimSample[] = [];
   for (const sample of samples) {
@@ -445,10 +485,14 @@ export function detectSwimSets(samples: NormalizedSwimSample[]): NormalizedSwimS
   }
   if (current.length > 0) blocks.push(current);
 
-  const sum = (block: NormalizedSwimSample[], key: "distance_m" | "strokes"): number =>
-    block.reduce((total, s) => total + s[key], 0);
+  const sum = (
+    block: NormalizedSwimSample[],
+    key: "distance_m" | "strokes",
+  ): number => block.reduce((total, s) => total + s[key], 0);
 
-  const kept = blocks.filter((b) => sum(b, "distance_m") >= SWIM_MIN_SET_DISTANCE_M);
+  const kept = blocks.filter((b) =>
+    sum(b, "distance_m") >= SWIM_MIN_SET_DISTANCE_M
+  );
   return kept.map((block, i) => {
     const first = block[0];
     const last = block[block.length - 1];
@@ -462,6 +506,159 @@ export function detectSwimSets(samples: NormalizedSwimSample[]): NormalizedSwimS
       rest_after_s: next ? next[0].offset_s - (last.offset_s + 1) : null,
     };
   });
+}
+
+// ===========================================================================
+// GPS route downsampling — Ramer–Douglas–Peucker, pure/self-contained.
+// ===========================================================================
+
+// Routes can carry up to ~4100 points; capping keeps workout_route_points
+// rows bounded while RDP preserves the shape of the track (turns) rather
+// than a naive every-Nth stride.
+const ROUTE_POINT_CAP = 300;
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/**
+ * Perpendicular distance from point `p` to the line through `a`/`b`, in a
+ * planar approximation: longitude is scaled by cos(mean latitude) so degrees
+ * of lat/lon are comparable regardless of where on the globe the route is.
+ */
+function perpendicularDistance(
+  p: { x: number; y: number },
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) {
+    return Math.hypot(p.x - a.x, p.y - a.y);
+  }
+  // Distance from p to the infinite line through a/b (not the segment).
+  const numerator = Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x);
+  return numerator / Math.sqrt(lengthSq);
+}
+
+/** Standard recursive RDP over planar {x, y} points; keeps endpoints always. */
+function rdp(points: { x: number; y: number }[], epsilon: number): boolean[] {
+  const keep = new Array<boolean>(points.length).fill(false);
+  if (points.length < 3) {
+    keep.fill(true);
+    return keep;
+  }
+  keep[0] = true;
+  keep[points.length - 1] = true;
+
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [start, end] = stack.pop()!;
+    if (end <= start + 1) continue;
+    let maxDist = -1;
+    let maxIndex = -1;
+    for (let i = start + 1; i < end; i++) {
+      const dist = perpendicularDistance(points[i], points[start], points[end]);
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIndex = i;
+      }
+    }
+    if (maxDist > epsilon) {
+      keep[maxIndex] = true;
+      stack.push([start, maxIndex]);
+      stack.push([maxIndex, end]);
+    }
+  }
+  return keep;
+}
+
+function rdpPointCount(
+  points: { x: number; y: number }[],
+  epsilon: number,
+): number {
+  return rdp(points, epsilon).filter(Boolean).length;
+}
+
+/**
+ * Downsamples a raw HAE `route` array to at most `cap` points using RDP,
+ * preserving the first/last point and the route's turns rather than an
+ * every-Nth stride. Pure and self-contained: no I/O, unit-testable in
+ * isolation.
+ */
+export function downsampleRoute(
+  points: unknown,
+  cap = ROUTE_POINT_CAP,
+): NormalizedRoutePoint[] {
+  if (!Array.isArray(points) || points.length === 0) return [];
+
+  const mapped: { lat: number; lon: number; elevation_m: number | null }[] = [];
+  for (const entry of points) {
+    if (!isPlainObject(entry)) continue;
+    const lat = toNumber(entry.latitude);
+    const lon = toNumber(entry.longitude);
+    if (
+      lat === null || lon === null || !isFiniteNumber(lat) ||
+      !isFiniteNumber(lon)
+    ) continue;
+    const elevation_m = toNumber(entry.altitude);
+    mapped.push({ lat, lon, elevation_m });
+  }
+  if (mapped.length === 0) return [];
+  if (mapped.length <= cap) {
+    return mapped.map((p, seq) => ({
+      seq,
+      lat: p.lat,
+      lon: p.lon,
+      elevation_m: p.elevation_m,
+    }));
+  }
+
+  // Planar projection: scale longitude by cos(mean latitude) so RDP's
+  // Euclidean distance is meaningful across latitudes.
+  const meanLatRad =
+    (mapped.reduce((sum, p) => sum + p.lat, 0) / mapped.length) *
+    (Math.PI / 180);
+  const lonScale = Math.cos(meanLatRad);
+  const planar = mapped.map((p) => ({ x: p.lon * lonScale, y: p.lat }));
+
+  // Binary search for the smallest epsilon that yields <= cap points. RDP
+  // always keeps both endpoints, so epsilon=0 is the floor (max points) and
+  // increasing epsilon monotonically thins the result.
+  let lo = 0;
+  let hi = 1; // degrees in planar-projected units; route spans are always << 1
+  while (rdpPointCount(planar, hi) > cap) {
+    hi *= 2;
+    if (hi > 1e6) break; // pathological input guard
+  }
+  let bestKeep = rdp(planar, hi);
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    const keep = rdp(planar, mid);
+    const count = keep.filter(Boolean).length;
+    if (count <= cap) {
+      hi = mid;
+      bestKeep = keep;
+    } else {
+      lo = mid;
+    }
+  }
+
+  const result: NormalizedRoutePoint[] = [];
+  let seq = 0;
+  for (let i = 0; i < mapped.length; i++) {
+    if (bestKeep[i]) {
+      const p = mapped[i];
+      result.push({
+        seq: seq++,
+        lat: p.lat,
+        lon: p.lon,
+        elevation_m: p.elevation_m,
+      });
+    }
+  }
+  return result;
 }
 
 // ===========================================================================
@@ -539,7 +736,9 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
     const isWeight = column === "weight_kg";
     // The metric-level `units` field applies to every entry in `data`
     // (Health Auto Export doesn't vary units per-entry within one metric).
-    const metricUnits = typeof metric.units === "string" ? metric.units.toLowerCase() : null;
+    const metricUnits = typeof metric.units === "string"
+      ? metric.units.toLowerCase()
+      : null;
 
     for (const entry of data) {
       if (!isPlainObject(entry)) continue;
@@ -549,7 +748,9 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
       if (qty === null) continue;
 
       if (isWeight) {
-        const entryUnits = typeof entry.units === "string" ? entry.units.toLowerCase() : metricUnits;
+        const entryUnits = typeof entry.units === "string"
+          ? entry.units.toLowerCase()
+          : metricUnits;
         const factor = entryUnits ? FIELD_MAP.massUnitToKg[entryUnits] ?? 1 : 1;
         qty = qty * factor;
       }
@@ -668,12 +869,14 @@ const SLEEP_COLUMNS = [
   "sleep_stages",
 ] as const;
 
-export type DailyMetricRow = { date: string } & Partial<
-  Record<
-    (typeof MERGEABLE_COLUMNS)[number] | (typeof SLEEP_COLUMNS)[number],
-    unknown
-  >
->;
+export type DailyMetricRow =
+  & { date: string }
+  & Partial<
+    Record<
+      (typeof MERGEABLE_COLUMNS)[number] | (typeof SLEEP_COLUMNS)[number],
+      unknown
+    >
+  >;
 
 /**
  * Merges an incoming daily_metrics row onto an existing one. Non-sleep

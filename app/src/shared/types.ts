@@ -48,11 +48,30 @@ export interface ComputedWorkout {
   computed_at: string | null
 }
 
+// One downsampled GPS point on a workout's route polyline, ordered by `seq`.
+export interface RoutePoint {
+  seq: number
+  lat: number
+  lon: number
+  elevation_m: number | null
+}
+
+// Reverse-geocoded location for a workout (workout_geo table).
+export interface WorkoutGeo {
+  city: string | null
+  country: string | null
+  admin: string | null
+  lat: number
+  lon: number
+}
+
 export interface WorkoutDetail {
   workout: Omit<Workout, 'computed'>
   hrSamples: WorkoutHrSample[]
   swimSets: SwimSet[]
   computed: ComputedWorkout | null
+  route: RoutePoint[]
+  geo: WorkoutGeo | null
 }
 
 export interface DailyMetric {

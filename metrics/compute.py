@@ -240,6 +240,9 @@ def run(full: bool) -> None:
     # ---- goal progress (AI-authored metric_sql, evaluated read-only) ----
     run_goals(sb)
 
+    # ---- reverse-geocode workout start coordinates (offline, idempotent) ----
+    run_geocoding(sb)
+
 
 def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, list[float]]]:
     """Per-day performance readings: EF / decoupling / HRR60 collected over that
@@ -908,6 +911,37 @@ def run_goals(sb) -> None:
         except Exception as e:  # noqa: BLE001 — one bad goal must not fail the job
             print(f"goal {goal['id']}: skipped ({e})")
     print(f"goal_progress: {len(goals)} goals evaluated, {points_written} points written")
+
+
+def run_geocoding(sb) -> None:
+    """Reverse-geocode workout start coordinates offline (City/Admin/Country)
+    into workout_geo. Idempotent: fetch_workouts_needing_geo already excludes
+    workouts with an existing row, so re-runs cost ~0. DEFENSIVE by design —
+    a geocoding failure (bad coord, library hiccup, etc.) must never fail the
+    nightly job, matching how run_goals isolates a single bad goal."""
+    from metrics import geo
+
+    try:
+        rows = db.fetch_workouts_needing_geo(sb)
+        if not rows:
+            print("workout_geo: 0 workouts need geocoding")
+            return
+        results = geo.reverse_geocode([(r["lat"], r["lon"]) for r in rows])
+        geo_rows = [
+            {
+                "workout_id": r["workout_id"],
+                "lat": r["lat"],
+                "lon": r["lon"],
+                "city": res["city"],
+                "admin": res["admin"],
+                "country": res["country"],
+            }
+            for r, res in zip(rows, results)
+        ]
+        db.upsert_workout_geo(sb, geo_rows)
+        print(f"workout_geo: {len(geo_rows)} rows geocoded")
+    except Exception as e:  # noqa: BLE001 — geocoding must never fail the nightly job
+        print(f"workout_geo: skipped ({e})")
 
 
 def main() -> None:

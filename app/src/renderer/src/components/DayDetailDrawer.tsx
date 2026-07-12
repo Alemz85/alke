@@ -6,6 +6,7 @@ import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { ModalityIcon } from './ModalityIcon'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
+import { RouteMap } from './RouteMap'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
@@ -175,6 +176,8 @@ function SessionCard({
           </div>
         )}
       </div>
+
+      <RouteMap route={detailQuery.data?.route ?? []} geo={detailQuery.data?.geo ?? null} />
 
       <div className="day-drawer-hr-chart">
         <div className="day-drawer-section-label">Heart rate</div>

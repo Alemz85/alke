@@ -35,6 +35,10 @@ import {
 } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
+import { registerTileScheme, setupTileProtocol } from './tiles'
+
+// Privileged-scheme registration must happen before app.whenReady().
+registerTileScheme()
 
 // HEALTH_APP_DISPLAY=external places the window on a non-primary display
 // (used by automated test launches so they stay off the main monitor).
@@ -194,6 +198,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  setupTileProtocol()
   registerIpcHandlers()
   createWindow()
 

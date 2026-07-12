@@ -1,0 +1,33 @@
+.route-map {
+  margin-bottom: var(--space-md);
+}
+
+.route-map-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: var(--space-xs);
+}
+
+.route-map-container {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  height: 220px;
+  width: 100%;
+}
+
+.route-map-leaflet {
+  height: 100%;
+  width: 100%;
+  background: var(--color-surface);
+}
+
+/* Route polyline uses the sessions accent token, not a hardcoded hex. */
+.route-line {
+  stroke: var(--color-sessions);
+  stroke-width: 3;
+  fill: none;
+}
