@@ -4,7 +4,8 @@
       "Bash(python3 db.py:*)",
       "Bash(python db.py:*)",
       "Bash(python3 injuries.py:*)",
-      "Bash(python3 goals.py:*)"
+      "Bash(python3 goals.py:*)",
+      "Bash(python3 agent_log.py:*)"
     ]
   }
 }

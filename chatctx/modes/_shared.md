@@ -29,3 +29,25 @@ Loaded by every data-touching mode.
 - `goals` / `goal_progress` — see `modes/goals.md`.
 
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
+
+## Agent issue log — self-report problems you hit
+
+Observations about broken or misleading things die with the session unless you log them. The `agent_log` table is the bug tracker for that; write to it via the scoped helper (`db.py` stays read-only):
+
+```
+python3 agent_log.py log --category knowledge|schema|tool|data|instructions|other --subject ".." --detail ".." [--severity info|issue|blocker] [--session-hint ".."]
+python3 agent_log.py list [--category ..] [--unresolved]
+python3 agent_log.py counts
+python3 agent_log.py resolve <id>
+```
+
+`--subject` is the join key for counting repeated flags — use one canonical string per thing: a file path for knowledge entries, the table/column name for schema issues, the tool/helper name for tool issues.
+
+Log, without being asked, when:
+
+- A query or tool invocation fails in a way that suggests a bug or wrong documentation (not a one-off typo you then fixed).
+- A schema or metric assumption from your instruction files turns out wrong.
+- A knowledge-library entry seems low-quality, inapplicable to this user, or contradicted by better evidence (`--category knowledge`, `--subject <file path>`).
+- Data looks wrong in a way worth engineering attention (impossible values, gaps that don't match the known-quirks list above).
+
+Keep entries objective and short: what was attempted, what happened, what was expected. No editorializing — this is a bug tracker, not a diary. Don't re-log a problem that already has an open entry for the same subject (check `list --unresolved` if unsure); `resolve` is for dev sessions to close entries whose cause is fixed, not for you.
