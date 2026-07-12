@@ -39,3 +39,9 @@ metrics/.venv/
 
 # Knowledge library — separate private repo (github.com/owner/health-knowledge)
 knowledge/
+
+# Personal RunKeeper export dumps (raw GPS traces — imported via
+# scripts/import_runkeeper.py, never committed). Matches the export folder's
+# name and any copy placed under data/.
+*runkeeper-data-export*/
+/data/runkeeper/
