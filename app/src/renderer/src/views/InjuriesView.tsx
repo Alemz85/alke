@@ -27,6 +27,8 @@ import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 import {
   adherencePct,
   adherenceRating,
+  doseTarget,
+  itemAdherenceRating,
   dailyPainSeries,
   dayScore,
   flareStats,
@@ -588,7 +590,8 @@ function ThisWeekTable({
     weeklyProgress(item, checks, todayYMD)
   const isMet = (item: RecoveryPlanItem): boolean => {
     const p = progressFor(item)
-    return p != null && p.done >= p.target
+    const dose = doseTarget(item)
+    return p != null && dose != null && p.done >= dose
   }
 
   const toggle = (itemId: string, dateYMD: string, done: boolean): void => {
@@ -708,8 +711,9 @@ function ThisWeekTable({
 
 // ── past-weeks history table ──────────────────────────────────────────────────
 
-function RatingChip({ done, target }: { done: number; target: number | null }): ReactElement {
-  const rating = adherenceRating(done, target)
+function RatingChip({ done, item }: { done: number; item: RecoveryPlanItem }): ReactElement {
+  const rating = itemAdherenceRating(done, item)
+  const target = item.weekly_target
   return (
     <span className={`injury-rate-chip injury-rate--${rating} tabular-nums`}>
       {target != null && target > 0 ? `${done}/${target}` : `${done}`}
@@ -810,7 +814,7 @@ function PastWeeksTable({
                   return (
                     <td key={item.id} className={tdCls}>
                       {existedIn(item, row.weekEnd) ? (
-                        <RatingChip done={cell.done} target={cell.target} />
+                        <RatingChip done={cell.done} item={item} />
                       ) : (
                         <span className="injury-adh-score-empty">—</span>
                       )}

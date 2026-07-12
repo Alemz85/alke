@@ -185,23 +185,38 @@ def resolve_exercise(name: str) -> str:
     )
 
 
+def parse_threshold(value: str, label: str) -> int | None:
+    """--green-min/--yellow-min value: 1-14, or 'none' to clear."""
+    if value == "none":
+        return None
+    try:
+        n = int(value)
+    except ValueError:
+        n = -1
+    if not 1 <= n <= 14:
+        sys.exit(f"invalid --{label} {value!r} — must be 1-14 or 'none'")
+    return n
+
+
 def cmd_plan_list(args) -> None:
     rows = _request("GET", "recovery_plan_items", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "id,name,kind,weekly_target,note,active,exercise:exercises(name)",
+        "select": "id,name,kind,weekly_target,green_min,yellow_min,note,active,exercise:exercises(name)",
         "order": "active.desc,kind,name",
     })
     if not rows:
         print("_no recovery plan items_")
         return
-    print("| id | name | kind | weekly_target | note | active | gym exercise |")
-    print("| --- | --- | --- | --- | --- | --- | --- |")
+    print("| id | name | kind | weekly_target | green_min | yellow_min | note | active | gym exercise |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in rows:
         target = "" if r.get("weekly_target") is None else r["weekly_target"]
+        green = "" if r.get("green_min") is None else r["green_min"]
+        yellow = "" if r.get("yellow_min") is None else r["yellow_min"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
         exercise = (r.get("exercise") or {}).get("name") or ""
         print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | {target} | "
-              f"{note} | {r.get('active')} | {exercise} |")
+              f"{green} | {yellow} | {note} | {r.get('active')} | {exercise} |")
 
 
 def cmd_plan_add(args) -> None:
@@ -211,6 +226,10 @@ def cmd_plan_add(args) -> None:
             body[field] = value
     if args.exercise is not None:
         body["exercise_id"] = resolve_exercise(args.exercise)
+    if args.green_min is not None:
+        body["green_min"] = parse_threshold(args.green_min, "green-min")
+    if args.yellow_min is not None:
+        body["yellow_min"] = parse_threshold(args.yellow_min, "yellow-min")
     rows = _request("POST", "recovery_plan_items", body=body, prefer="return=representation")
     print(f"created plan item {rows[0]['id']}")
 
@@ -222,6 +241,10 @@ def cmd_plan_update(args) -> None:
             body[field] = value
     if args.exercise is not None:
         body["exercise_id"] = None if args.exercise == "none" else resolve_exercise(args.exercise)
+    if args.green_min is not None:
+        body["green_min"] = parse_threshold(args.green_min, "green-min")
+    if args.yellow_min is not None:
+        body["yellow_min"] = parse_threshold(args.yellow_min, "yellow-min")
     if args.target is not None:
         if args.target == "none":
             body["weekly_target"] = None
@@ -311,6 +334,10 @@ def main() -> None:
     p_plan_add.add_argument("--note")
     p_plan_add.add_argument("--exercise",
                             help="gym exercises-catalog name to link (gym logs then auto-check this item)")
+    p_plan_add.add_argument("--green-min", dest="green_min",
+                            help="weekly count that is an acceptable therapeutic dose (1-14)")
+    p_plan_add.add_argument("--yellow-min", dest="yellow_min",
+                            help="weekly count that is the minimum-effective dose (1-14)")
     p_plan_add.set_defaults(func=cmd_plan_add)
 
     p_plan_upd = sub.add_parser("plan-update", help="Update an existing recovery plan item")
@@ -322,6 +349,10 @@ def main() -> None:
     p_plan_upd.add_argument("--active", choices=["true", "false"])
     p_plan_upd.add_argument("--exercise",
                             help="gym exercises-catalog name to link, or 'none' to unlink")
+    p_plan_upd.add_argument("--green-min", dest="green_min",
+                            help="acceptable therapeutic dose per week (1-14), or 'none' to clear")
+    p_plan_upd.add_argument("--yellow-min", dest="yellow_min",
+                            help="minimum-effective dose per week (1-14), or 'none' to clear")
     p_plan_upd.set_defaults(func=cmd_plan_update)
 
     p_plan_rm = sub.add_parser("plan-remove", help="Hard-delete a recovery plan item")

@@ -292,7 +292,8 @@ export function dayScore(
 export type AdherenceRating = 'none' | 'low' | 'met' | 'untargeted'
 
 /**
- * Rate a week's done-count against a weekly target:
+ * The PROVISIONAL blanket rating — used for items without their own efficacy
+ * thresholds (see itemAdherenceRating) and for aggregate percentages:
  * - null (or non-positive) target → 'untargeted' — informational count only
  * - done 0 → 'none'
  * - done/target >= 0.75 → 'met'
@@ -302,6 +303,38 @@ export function adherenceRating(done: number, target: number | null): AdherenceR
   if (target == null || target <= 0) return 'untargeted'
   if (done === 0) return 'none'
   return done / target >= 0.75 ? 'met' : 'low'
+}
+
+/**
+ * Rate a week's done-count for a specific item. When the item carries agent-
+ * assigned efficacy thresholds, the colors are EFFICACY claims, not effort:
+ * - done >= green_min  → 'met'  (acceptable therapeutic dose)
+ * - done >= yellow_min → 'low'  (minimum-effective dose — maintenance)
+ * - otherwise          → 'none' (below meaningful effect — even when non-zero:
+ *   1/7 of a daily mobility routine is red, not yellow)
+ * Items without both thresholds fall back to the blanket adherenceRating.
+ */
+export function itemAdherenceRating(
+  done: number,
+  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min' | 'yellow_min'>
+): AdherenceRating {
+  if (item.green_min == null || item.yellow_min == null) {
+    return adherenceRating(done, item.weekly_target)
+  }
+  if (done >= item.green_min) return 'met'
+  if (done >= item.yellow_min) return 'low'
+  return 'none'
+}
+
+/**
+ * The weekly count at which an item's column mutes as "dose reached" in the
+ * current-week table: the acceptable therapeutic dose when assigned, else the
+ * full weekly target.
+ */
+export function doseTarget(
+  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min'>
+): number | null {
+  return item.green_min ?? item.weekly_target
 }
 
 // ── weekly matrix (past-weeks history table) ─────────────────────────────────

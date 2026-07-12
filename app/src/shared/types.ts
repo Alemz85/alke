@@ -192,6 +192,12 @@ export interface RecoveryPlanItem {
   // behavior; 'constraint' = standing rule (no checks).
   kind: 'exercise' | 'habit' | 'constraint' | 'activity'
   weekly_target: number | null
+  // Per-item efficacy thresholds (agent-assigned, nullable): green_min = the
+  // weekly count that is an acceptable therapeutic dose, yellow_min = the true
+  // minimum-effective dose. Below yellow_min rates red even when non-zero.
+  // Both null → the app's provisional blanket rating applies.
+  green_min: number | null
+  yellow_min: number | null
   note: string | null
   active: boolean
   // Linked exercises-catalog entry (agent-maintained via injuries.py): gym

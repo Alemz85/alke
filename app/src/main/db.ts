@@ -485,9 +485,13 @@ const INJURY_LOG_COLUMNS =
 const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
 
 const RECOVERY_PLAN_ITEM_COLUMNS =
-  'id, injury_id, name, kind, weekly_target, note, active, exercise_id, created_at, updated_at'
+  'id, injury_id, name, kind, weekly_target, green_min, yellow_min, note, active, exercise_id, created_at, updated_at'
 
-const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = ['weekly_target']
+const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = [
+  'weekly_target',
+  'green_min',
+  'yellow_min'
+]
 
 const PLAN_ITEM_CHECK_COLUMNS = 'id, item_id, done_date, source'
 

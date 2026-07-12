@@ -3,6 +3,8 @@ import type { InjuryLogEntry, PlanItemCheck, RecoveryPlanItem } from '@shared/ty
 import {
   adherencePct,
   adherenceRating,
+  doseTarget,
+  itemAdherenceRating,
   buildTimeline,
   dailyPainSeries,
   dayScore,
@@ -42,6 +44,8 @@ function item(partial: Partial<RecoveryPlanItem> & { id: string }): RecoveryPlan
     weekly_target: null,
     note: null,
     active: true,
+    green_min: null,
+    yellow_min: null,
     exercise_id: null,
     created_at: null,
     updated_at: null,
@@ -420,6 +424,41 @@ describe('adherenceRating', () => {
     expect(adherenceRating(75, 100)).toBe('met')
     expect(adherenceRating(3, 3)).toBe('met')
     expect(adherenceRating(5, 3)).toBe('met')
+  })
+})
+
+// ── itemAdherenceRating / doseTarget (per-item efficacy thresholds) ──────────
+
+describe('itemAdherenceRating', () => {
+  const daily = item({ id: 'i1', weekly_target: 7, green_min: 5, yellow_min: 3 })
+
+  it('rates by the item thresholds when both are assigned', () => {
+    expect(itemAdherenceRating(7, daily)).toBe('met')
+    expect(itemAdherenceRating(5, daily)).toBe('met') // exactly green_min
+    expect(itemAdherenceRating(4, daily)).toBe('low')
+    expect(itemAdherenceRating(3, daily)).toBe('low') // exactly yellow_min
+  })
+
+  it('rates non-zero counts below yellow_min as none — efficacy, not effort', () => {
+    expect(itemAdherenceRating(2, daily)).toBe('none')
+    expect(itemAdherenceRating(1, daily)).toBe('none')
+    expect(itemAdherenceRating(0, daily)).toBe('none')
+  })
+
+  it('falls back to the blanket rule when either threshold is missing', () => {
+    const untagged = item({ id: 'i2', weekly_target: 3, green_min: null, yellow_min: null })
+    expect(itemAdherenceRating(1, untagged)).toBe('low') // blanket: non-zero below 75%
+    expect(itemAdherenceRating(3, untagged)).toBe('met')
+    const half = item({ id: 'i3', weekly_target: 3, green_min: 2, yellow_min: null })
+    expect(itemAdherenceRating(1, half)).toBe('low') // blanket applies, not thresholds
+  })
+})
+
+describe('doseTarget', () => {
+  it('prefers green_min over the full weekly target', () => {
+    expect(doseTarget(item({ id: 'i1', weekly_target: 7, green_min: 5 }))).toBe(5)
+    expect(doseTarget(item({ id: 'i2', weekly_target: 3, green_min: null }))).toBe(3)
+    expect(doseTarget(item({ id: 'i3', weekly_target: null, green_min: null }))).toBeNull()
   })
 })
 
