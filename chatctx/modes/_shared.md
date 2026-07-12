@@ -27,7 +27,19 @@ Loaded by every data-touching mode.
 - `user_config(hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, weekly_min_sessions, zone2_weekly_target_min, timezone)` — single row.
 - `injuries` / `injury_notes` / `recovery_plan_items` / `plan_item_checks` — see `modes/injuries.md`.
 - `goals` / `goal_progress` — see `modes/goals.md`.
-- `gym_sessions(workout_id, template_id, performed_at, title, notes, body_parts)` / `gym_sets(session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup)` / `exercises(name, aliases, body_part, primary_muscles, secondary_muscles, equipment, mechanics, movement_pattern, source)` / `gym_templates` + `gym_template_exercises` — user-logged lifting content, attached to synced strength workouts via `workout_id`. Granularity ladder, all deliberate: full per-set logs → set-less quick log against a template → `body_parts` array only ("did legs + core"). Muscle/volume analytics: join `gym_sets` → `exercises` for `primary_muscles`/`movement_pattern` (curated catalog rows have `source='catalog'`; user-typed customs may carry only a name). The user logs in the app's Gym tab; read-only for you.
+- `gym_sessions(workout_id, template_id, performed_at, title, notes, body_parts)` / `gym_sets(session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup)` / `exercises(name, aliases, body_part, primary_muscles, secondary_muscles, equipment, mechanics, movement_pattern, source)` / `gym_templates` + `gym_template_exercises` — user-logged lifting content, attached to synced strength workouts via `workout_id`. Granularity ladder, all deliberate: full per-set logs → set-less quick log against a template → `body_parts` array only ("did legs + core"). Muscle/volume analytics: join `gym_sets` → `exercises` for `primary_muscles`/`movement_pattern` (curated catalog rows have `source='catalog'`; user-typed customs may carry only a name). The user normally logs in the app's Gym tab; you can log on request via `gym.py` (below).
+
+## Logging gym sessions on request
+
+When the user tells you what they lifted ("did legs today — 3×8×80 squats, some lunges"), log it with the scoped helper (`db.py` stays read-only):
+
+```
+python3 gym.py list [--days 30]
+python3 gym.py log --json '{"date": "2026-07-12", "title": "Legs", "body_parts": ["legs"], "sets": [{"exercise": "back squat", "sets": 3, "reps": 8, "kg": 80}]}'
+python3 gym.py delete <session_id>
+```
+
+Rules: log only what the user actually states — never invent reps/weights; leave fields they didn't give as null (a `body_parts`-only log is valid and better than fabricated sets). Check `gym.py list` first so you don't double-log a session the user already entered in the app; if a synced strength workout exists for that day (`workouts`, type ~ strength/core), pass its id as `workout_id` so the log attaches to it. Exercise names resolve against the `exercises` catalog including aliases; on a no-match the command aborts with suggestions — only add `"create": true` when it's genuinely a new exercise, not a near-miss of an existing one. Sets of exercises linked to recovery-plan items auto-check the day's rehab item (`source='gym'`) — mention it when it happens. `delete` is for correcting your own mis-logs, not for removing the user's app-entered sessions.
 
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
 

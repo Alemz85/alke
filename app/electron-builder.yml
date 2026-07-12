@@ -35,6 +35,8 @@ extraResources:
     to: chatctx/goals.py
   - from: ../chatctx/agent_log.py
     to: chatctx/agent_log.py
+  - from: ../chatctx/gym.py
+    to: chatctx/gym.py
   - from: ../chatctx/modes
     to: chatctx/modes
   - from: ../chatctx/.claude
