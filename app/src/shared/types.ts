@@ -194,6 +194,9 @@ export interface RecoveryPlanItem {
   weekly_target: number | null
   note: string | null
   active: boolean
+  // Linked exercises-catalog entry (agent-maintained via injuries.py): gym
+  // sessions logging this exercise auto-check the item (source='gym').
+  exercise_id: string | null
   created_at: string | null
   updated_at: string | null
 }

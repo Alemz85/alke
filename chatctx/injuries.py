@@ -161,22 +161,47 @@ def cmd_notes(args) -> None:
         print(f"| {r.get('entry_date') or ''} | {r.get('source') or ''} | {pain} | {note} |")
 
 
+def resolve_exercise(name: str) -> str:
+    """Resolve an exercise name (case-insensitive, matches aliases too) to its
+    exercises.id. Exits with candidates on no/ambiguous match — linking must be
+    exact, a wrong link would auto-check the wrong rehab item."""
+    key = name.strip().lower()
+    rows = _request("GET", "exercises", params={
+        "name_key": f"eq.{key}", "select": "id,name", "limit": "1",
+    })
+    if not rows:
+        rows = _request("GET", "exercises", params={
+            "aliases": f"cs.{{{key}}}", "select": "id,name", "limit": "2",
+        })
+    if len(rows) == 1:
+        return rows[0]["id"]
+    near = _request("GET", "exercises", params={
+        "name": f"ilike.*{name.strip()}*", "select": "name", "limit": "6",
+    })
+    hint = ", ".join(r["name"] for r in near) if near else "none"
+    sys.exit(
+        f"no exact exercise match for {name!r} (near matches: {hint}) — "
+        "use the exact catalog name, or have the user create it in the Gym tab first"
+    )
+
+
 def cmd_plan_list(args) -> None:
     rows = _request("GET", "recovery_plan_items", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "id,name,kind,weekly_target,note,active",
+        "select": "id,name,kind,weekly_target,note,active,exercise:exercises(name)",
         "order": "active.desc,kind,name",
     })
     if not rows:
         print("_no recovery plan items_")
         return
-    print("| id | name | kind | weekly_target | note | active |")
-    print("| --- | --- | --- | --- | --- | --- |")
+    print("| id | name | kind | weekly_target | note | active | gym exercise |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
     for r in rows:
         target = "" if r.get("weekly_target") is None else r["weekly_target"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
+        exercise = (r.get("exercise") or {}).get("name") or ""
         print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | {target} | "
-              f"{note} | {r.get('active')} |")
+              f"{note} | {r.get('active')} | {exercise} |")
 
 
 def cmd_plan_add(args) -> None:
@@ -184,6 +209,8 @@ def cmd_plan_add(args) -> None:
     for field, value in (("kind", args.kind), ("weekly_target", args.target), ("note", args.note)):
         if value is not None:
             body[field] = value
+    if args.exercise is not None:
+        body["exercise_id"] = resolve_exercise(args.exercise)
     rows = _request("POST", "recovery_plan_items", body=body, prefer="return=representation")
     print(f"created plan item {rows[0]['id']}")
 
@@ -193,6 +220,8 @@ def cmd_plan_update(args) -> None:
     for field, value in (("name", args.name), ("kind", args.kind), ("note", args.note)):
         if value is not None:
             body[field] = value
+    if args.exercise is not None:
+        body["exercise_id"] = None if args.exercise == "none" else resolve_exercise(args.exercise)
     if args.target is not None:
         if args.target == "none":
             body["weekly_target"] = None
@@ -280,6 +309,8 @@ def main() -> None:
     p_plan_add.add_argument("--kind", choices=["exercise", "habit", "constraint", "activity"])
     p_plan_add.add_argument("--target", type=int, choices=range(1, 15), metavar="1-14")
     p_plan_add.add_argument("--note")
+    p_plan_add.add_argument("--exercise",
+                            help="gym exercises-catalog name to link (gym logs then auto-check this item)")
     p_plan_add.set_defaults(func=cmd_plan_add)
 
     p_plan_upd = sub.add_parser("plan-update", help="Update an existing recovery plan item")
@@ -289,6 +320,8 @@ def main() -> None:
     p_plan_upd.add_argument("--target", help="1-14, or 'none' to clear")
     p_plan_upd.add_argument("--note")
     p_plan_upd.add_argument("--active", choices=["true", "false"])
+    p_plan_upd.add_argument("--exercise",
+                            help="gym exercises-catalog name to link, or 'none' to unlink")
     p_plan_upd.set_defaults(func=cmd_plan_update)
 
     p_plan_rm = sub.add_parser("plan-remove", help="Hard-delete a recovery plan item")

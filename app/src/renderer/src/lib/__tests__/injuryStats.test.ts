@@ -42,6 +42,7 @@ function item(partial: Partial<RecoveryPlanItem> & { id: string }): RecoveryPlan
     weekly_target: null,
     note: null,
     active: true,
+    exercise_id: null,
     created_at: null,
     updated_at: null,
     ...partial

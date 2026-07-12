@@ -485,7 +485,7 @@ const INJURY_LOG_COLUMNS =
 const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
 
 const RECOVERY_PLAN_ITEM_COLUMNS =
-  'id, injury_id, name, kind, weekly_target, note, active, created_at, updated_at'
+  'id, injury_id, name, kind, weekly_target, note, active, exercise_id, created_at, updated_at'
 
 const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = ['weekly_target']
 
@@ -1008,6 +1008,62 @@ export async function getGymSessions(fromIso: string, toIso: string): Promise<Gy
   }))
 }
 
+/** "2026-07-12" for an ISO instant in the user's timezone (falls back to the instant's UTC date). */
+function localDateInTz(iso: string, timezone: string | null): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone ?? undefined,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(iso))
+  } catch {
+    return iso.slice(0, 10)
+  }
+}
+
+/**
+ * Recovery-plan compliance from gym logs: any active plan item (of a
+ * non-resolved injury) linked to an exercise this session just logged gets its
+ * plan_item_check upserted for the session's local date, source='gym'. An
+ * existing manual check for the day wins (ignoreDuplicates). Additive only —
+ * editing sets away or deleting the session leaves past checks standing; the
+ * user can untick in the Injuries tab. Never fails the session save: the log
+ * is the primary artifact, the check is derived convenience.
+ */
+async function syncPlanChecksFromGymSets(
+  sets: NewGymSet[],
+  performedAtIso: string
+): Promise<void> {
+  try {
+    const exerciseIds = [...new Set(sets.map((s) => s.exercise_id))]
+    if (exerciseIds.length === 0) return
+    const supabase = getClient()
+
+    const { data: items, error } = await supabase
+      .from('recovery_plan_items')
+      .select('id, exercise_id, injuries!inner(status)')
+      .eq('active', true)
+      .neq('injuries.status', 'resolved')
+      .in('exercise_id', exerciseIds)
+    if (error) throw new Error(error.message)
+    if (!items || items.length === 0) return
+
+    const timezone = (await getUserConfig()).timezone
+    const doneDate = localDateInTz(performedAtIso, timezone)
+    const { error: upsertError } = await supabase.from('plan_item_checks').upsert(
+      items.map((item) => ({ item_id: item.id, done_date: doneDate, source: 'gym' })),
+      { onConflict: 'item_id,done_date', ignoreDuplicates: true }
+    )
+    if (upsertError) throw new Error(upsertError.message)
+  } catch (err) {
+    console.error(
+      '[gym] plan-check sync failed (session saved fine):',
+      err instanceof Error ? err.message : err
+    )
+  }
+}
+
 async function insertGymSets(sessionId: string, sets: NewGymSet[]): Promise<void> {
   if (sets.length === 0) return
   const rows = sets.map((set, index) => ({
@@ -1077,6 +1133,7 @@ export async function addGymSession(session: NewGymSession): Promise<GymSession>
     await supabase.from('gym_sessions').delete().eq('id', data.id)
     throw err
   }
+  await syncPlanChecksFromGymSets(session.sets, data.performed_at as string)
   return getGymSessionById(data.id)
 }
 
@@ -1110,6 +1167,9 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
     const { error: deleteError } = await supabase.from('gym_sets').delete().eq('session_id', id)
     if (deleteError) throw new Error(`updateGymSession (clear sets): ${deleteError.message}`)
     await insertGymSets(id, patch.sets)
+    const session = await getGymSessionById(id)
+    await syncPlanChecksFromGymSets(patch.sets, session.performed_at)
+    return session
   }
   return getGymSessionById(id)
 }
