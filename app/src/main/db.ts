@@ -28,6 +28,7 @@ import {
   type NewInjuryLog,
   type PlanItemCheck,
   type RecoveryPlanItem,
+  type SwimSet,
   type UserConfig,
   type UserConfigPatch,
   type Workout,
@@ -167,6 +168,18 @@ const ZONE2_FITNESS_COLUMNS =
 const USER_CONFIG_COLUMNS =
   'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, weekly_min_sessions, timezone'
 
+const SWIM_SET_COLUMNS =
+  'workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s'
+
+const SWIM_SET_NUMERIC_KEYS: (keyof SwimSet)[] = [
+  'set_index',
+  'start_offset_s',
+  'duration_s',
+  'distance_m',
+  'strokes',
+  'rest_after_s'
+]
+
 export async function getWorkouts(fromIso: string, toIso: string): Promise<Workout[]> {
   const supabase = getClient()
 
@@ -214,26 +227,60 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
 
   if (error) throw new Error(`getWorkoutDetail: ${error.message}`)
 
-  const [{ data: hrSamples, error: hrError }, { data: computed, error: computedError }] =
-    await Promise.all([
-      supabase
-        .from('workout_hr_samples')
-        .select('workout_id, offset_s, bpm')
-        .eq('workout_id', id)
-        .order('offset_s', { ascending: true }),
-      supabase.from('computed_workout').select(COMPUTED_WORKOUT_COLUMNS).eq('workout_id', id).maybeSingle()
-    ])
+  const [
+    { data: hrSamples, error: hrError },
+    { data: computed, error: computedError },
+    { data: swimSets, error: swimSetsError }
+  ] = await Promise.all([
+    supabase
+      .from('workout_hr_samples')
+      .select('workout_id, offset_s, bpm')
+      .eq('workout_id', id)
+      .order('offset_s', { ascending: true }),
+    supabase.from('computed_workout').select(COMPUTED_WORKOUT_COLUMNS).eq('workout_id', id).maybeSingle(),
+    supabase
+      .from('swim_sets')
+      .select(SWIM_SET_COLUMNS)
+      .eq('workout_id', id)
+      .order('set_index', { ascending: true })
+  ])
 
   if (hrError) throw new Error(`getWorkoutDetail (hr samples): ${hrError.message}`)
   if (computedError) throw new Error(`getWorkoutDetail (computed): ${computedError.message}`)
+  if (swimSetsError) throw new Error(`getWorkoutDetail (swim sets): ${swimSetsError.message}`)
 
   return {
     workout: normalizeNumeric(workout as Workout, WORKOUT_NUMERIC_KEYS),
     hrSamples: (hrSamples ?? []) as WorkoutHrSample[],
+    swimSets: (swimSets ?? []).map((row) => normalizeNumeric(row as SwimSet, SWIM_SET_NUMERIC_KEYS)),
     computed: computed
       ? normalizeNumeric(computed as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
       : null
   }
+}
+
+/** Swim sets for all swim workouts starting in [fromIso, toIso], for trend views. */
+export async function getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]> {
+  const supabase = getClient()
+
+  const { data: swims, error: swimsError } = await supabase
+    .from('workouts')
+    .select('id')
+    .ilike('type', '%swim%')
+    .gte('start_at', fromIso)
+    .lte('start_at', toIso)
+  if (swimsError) throw new Error(`getSwimSets (workouts): ${swimsError.message}`)
+  if (!swims || swims.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('swim_sets')
+    .select(SWIM_SET_COLUMNS)
+    .in('workout_id', swims.map((w) => w.id))
+    .order('workout_id', { ascending: true })
+    .order('set_index', { ascending: true })
+  if (error) throw new Error(`getSwimSets: ${error.message}`)
+
+  return (data ?? []).map((row) => normalizeNumeric(row as SwimSet, SWIM_SET_NUMERIC_KEYS))
 }
 
 export async function getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]> {
@@ -707,6 +754,23 @@ export async function getDbStatus(): Promise<DbStatus> {
   } catch (err) {
     return { connected: false, error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/**
+ * Most recent raw_payloads.received_at — the last moment Health Auto Export
+ * POSTed anything. Doubles as a lightweight connectivity probe: it throws if
+ * the DB is unreachable, so the Refresh button can distinguish "no new data"
+ * from "couldn't reach the database". Null when the table is empty.
+ */
+export async function getLastIngestAt(): Promise<string | null> {
+  const { data, error } = await getClient()
+    .from('raw_payloads')
+    .select('received_at')
+    .order('received_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`getLastIngestAt: ${error.message}`)
+  return data?.received_at ?? null
 }
 
 export async function getInsightCorrelations(): Promise<InsightCorrelation[]> {

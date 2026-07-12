@@ -104,6 +104,9 @@ function registerIpcHandlers(): void {
     db.getWorkouts(fromIso, toIso)
   )
   ipcMain.handle(IPC_CHANNELS.getWorkoutDetail, (_event, id: string) => db.getWorkoutDetail(id))
+  ipcMain.handle(IPC_CHANNELS.getSwimSets, (_event, fromIso: string, toIso: string) =>
+    db.getSwimSets(fromIso, toIso)
+  )
   ipcMain.handle(IPC_CHANNELS.getDailyMetrics, (_event, fromDate: string, toDate: string) =>
     db.getDailyMetrics(fromDate, toDate)
   )
@@ -146,6 +149,7 @@ function registerIpcHandlers(): void {
     chat.buildGoalMetric(goalId)
   )
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
+  ipcMain.handle(IPC_CHANNELS.getLastIngestAt, () => db.getLastIngestAt())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
   ipcMain.handle(IPC_CHANNELS.chatStatus, () => chat.checkClaude())

@@ -26,6 +26,18 @@ export interface WorkoutHrSample {
   bpm: number
 }
 
+// One detected swim set (ingest-derived from HAE per-second swim series).
+// Pace/SWOLF are intentionally NOT stored — derive via renderer lib/swimSets.ts.
+export interface SwimSet {
+  workout_id: string
+  set_index: number
+  start_offset_s: number
+  duration_s: number
+  distance_m: number
+  strokes: number
+  rest_after_s: number | null
+}
+
 export interface ComputedWorkout {
   workout_id: string
   time_in_zones: Record<string, unknown> | null
@@ -39,6 +51,7 @@ export interface ComputedWorkout {
 export interface WorkoutDetail {
   workout: Omit<Workout, 'computed'>
   hrSamples: WorkoutHrSample[]
+  swimSets: SwimSet[]
   computed: ComputedWorkout | null
 }
 
@@ -265,6 +278,7 @@ export interface Zone2Fitness {
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
   getWorkoutDetail(id: string): Promise<WorkoutDetail>
+  getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]>
   getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
   getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
   getUserConfig(): Promise<UserConfig>
@@ -285,6 +299,8 @@ export interface HealthApi {
   buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
   getZone2Fitness(fromDate: string, toDate: string): Promise<Zone2Fitness[]>
   getDbStatus(): Promise<DbStatus>
+  /** Most recent raw_payloads.received_at (ISO string), or null if no payloads. Used as the data-freshness probe behind the Refresh button. */
+  getLastIngestAt(): Promise<string | null>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
   chatStatus(): Promise<ChatStatus>
@@ -300,6 +316,7 @@ export interface HealthApi {
 export const IPC_CHANNELS = {
   getWorkouts: 'db:getWorkouts',
   getWorkoutDetail: 'db:getWorkoutDetail',
+  getSwimSets: 'db:getSwimSets',
   getDailyMetrics: 'db:getDailyMetrics',
   getComputedDaily: 'db:getComputedDaily',
   getUserConfig: 'db:getUserConfig',
@@ -319,6 +336,7 @@ export const IPC_CHANNELS = {
   // Handler in index.ts delegates to chat.ts, which owns CLI process spawning.
   buildGoalMetric: 'goals:buildMetric',
   getDbStatus: 'db:getDbStatus',
+  getLastIngestAt: 'db:getLastIngestAt',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',
   chatStatus: 'chat:status',

@@ -5,6 +5,7 @@ import { IPC_CHANNELS, type HealthApi } from '@shared/types'
 const api: HealthApi = {
   getWorkouts: (fromIso, toIso) => ipcRenderer.invoke(IPC_CHANNELS.getWorkouts, fromIso, toIso),
   getWorkoutDetail: (id) => ipcRenderer.invoke(IPC_CHANNELS.getWorkoutDetail, id),
+  getSwimSets: (fromIso, toIso) => ipcRenderer.invoke(IPC_CHANNELS.getSwimSets, fromIso, toIso),
   getDailyMetrics: (fromDate, toDate) =>
     ipcRenderer.invoke(IPC_CHANNELS.getDailyMetrics, fromDate, toDate),
   getComputedDaily: (fromDate, toDate) =>
@@ -28,6 +29,7 @@ const api: HealthApi = {
   updateGoal: (id, patch) => ipcRenderer.invoke(IPC_CHANNELS.updateGoal, id, patch),
   buildGoalMetric: (goalId) => ipcRenderer.invoke(IPC_CHANNELS.buildGoalMetric, goalId),
   getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus),
+  getLastIngestAt: () => ipcRenderer.invoke(IPC_CHANNELS.getLastIngestAt),
   getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),
   getInsightModels: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightModels),
   chatStatus: () => ipcRenderer.invoke(IPC_CHANNELS.chatStatus),

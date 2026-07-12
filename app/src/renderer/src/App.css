@@ -56,6 +56,29 @@
   color: var(--color-text);
 }
 
+.content-area-toolbar button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Refresh spinner — a functional progress indicator, so it keeps spinning even
+   under reduced-motion (just slower, to soften it). */
+.icon-spin {
+  animation: icon-spin 800ms linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-spin {
+    animation-duration: 1600ms;
+  }
+}
+
 .view {
   display: flex;
   flex-direction: column;
