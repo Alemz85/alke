@@ -36,3 +36,6 @@ metrics/.venv/
 # agents; regenerable, so it stays local). AGENTS.md itself is a symlink to
 # CLAUDE.md and IS tracked, so any agent gets the same canonical instructions.
 .agents/
+
+# Knowledge library — separate private repo (github.com/owner/health-knowledge)
+knowledge/
