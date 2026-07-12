@@ -37,6 +37,9 @@ metrics/.venv/
 # CLAUDE.md and IS tracked, so any agent gets the same canonical instructions.
 .agents/
 
+# Local brainstorming mockups and browser interaction state
+.superpowers/
+
 # Knowledge library — separate private repo (github.com/owner/health-knowledge)
 knowledge/
 
