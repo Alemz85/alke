@@ -6,6 +6,7 @@ import {
   groupSetsIntoBlocks,
   isStrengthWorkout,
   lastPerformance,
+  muscleSetVolume,
   prefillFromTemplate,
   sessionBodyParts,
   sessionVolumeKg,
@@ -419,5 +420,63 @@ describe('exerciseUsage', () => {
 
   it('is empty for set-less sessions', () => {
     expect(exerciseUsage([session({ body_parts: ['legs'] })]).size).toBe(0)
+  })
+})
+
+// ── muscleSetVolume ────────────────────────────────────────────────────────────
+
+describe('muscleSetVolume', () => {
+  const catalog = new Map([
+    [
+      'bench',
+      exercise({
+        id: 'bench',
+        primary_muscles: ['chest'],
+        secondary_muscles: ['triceps', 'front delts']
+      })
+    ],
+    ['curl', exercise({ id: 'curl', primary_muscles: ['biceps'], secondary_muscles: ['forearms'] })],
+    ['mystery', exercise({ id: 'mystery' })] // custom without muscle metadata
+  ])
+
+  it('credits primaries 1.0 and secondaries 0.5 per working set', () => {
+    const s = session({
+      sets: [
+        set({ exercise_id: 'bench', position: 0, reps: 8 }),
+        set({ exercise_id: 'bench', position: 1, reps: 8 })
+      ]
+    })
+    expect(muscleSetVolume([s], catalog)).toEqual([
+      { muscle: 'chest', sets: 2 },
+      { muscle: 'front delts', sets: 1 },
+      { muscle: 'triceps', sets: 1 }
+    ])
+  })
+
+  it('excludes warmups and unknown/metadata-less exercises', () => {
+    const s = session({
+      sets: [
+        set({ exercise_id: 'bench', position: 0, is_warmup: true }),
+        set({ exercise_id: 'mystery', position: 1, reps: 10 }),
+        set({ exercise_id: 'not-in-catalog', position: 2, reps: 10 }),
+        set({ exercise_id: 'curl', position: 3, reps: 10 })
+      ]
+    })
+    expect(muscleSetVolume([s], catalog)).toEqual([
+      { muscle: 'biceps', sets: 1 },
+      { muscle: 'forearms', sets: 0.5 }
+    ])
+  })
+
+  it('sorts by volume desc then name, aggregating across sessions', () => {
+    const a = session({ id: 'a', sets: [set({ exercise_id: 'curl', position: 0 })] })
+    const b = session({ id: 'b', sets: [set({ exercise_id: 'curl', position: 0 })] })
+    const rows = muscleSetVolume([a, b], catalog)
+    expect(rows[0]).toEqual({ muscle: 'biceps', sets: 2 })
+    expect(rows[1]).toEqual({ muscle: 'forearms', sets: 1 })
+  })
+
+  it('returns empty for no sessions', () => {
+    expect(muscleSetVolume([], catalog)).toEqual([])
   })
 })

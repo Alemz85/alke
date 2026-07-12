@@ -183,6 +183,43 @@ export function exerciseUsage(sessions: GymSession[]): Map<string, ExerciseUsage
   return usage
 }
 
+/** One muscle's weekly training volume in sets (fractional — see muscleSetVolume). */
+export interface MuscleVolume {
+  muscle: string
+  sets: number
+}
+
+/**
+ * Training volume per muscle across the given sessions, in working sets
+ * (warmups excluded): a set credits its exercise's primary muscles 1.0 each
+ * and secondary muscles 0.5 each — the common fractional-set convention for
+ * weekly volume counting. Sorted by volume desc; muscles with zero volume are
+ * omitted. Customs without muscle metadata contribute nothing (honest gap,
+ * not a guess).
+ */
+export function muscleSetVolume(
+  sessions: GymSession[],
+  exercisesById: Map<string, Exercise>
+): MuscleVolume[] {
+  const volume = new Map<string, number>()
+  for (const session of sessions) {
+    for (const set of session.sets) {
+      if (set.is_warmup) continue
+      const exercise = exercisesById.get(set.exercise_id)
+      if (!exercise) continue
+      for (const muscle of exercise.primary_muscles) {
+        volume.set(muscle, (volume.get(muscle) ?? 0) + 1)
+      }
+      for (const muscle of exercise.secondary_muscles) {
+        volume.set(muscle, (volume.get(muscle) ?? 0) + 0.5)
+      }
+    }
+  }
+  return [...volume.entries()]
+    .map(([muscle, sets]) => ({ muscle, sets }))
+    .sort((a, b) => b.sets - a.sets || a.muscle.localeCompare(b.muscle))
+}
+
 /** /strength|core/i test against a workout type — single source for the Gym tab. */
 export function isStrengthWorkout(type: string | null): boolean {
   if (!type) return false

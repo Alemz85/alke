@@ -192,6 +192,71 @@
   opacity: 0.55;
 }
 
+/* ── muscle volume (weekly sets per muscle) ─────────────────────────────── */
+.gym-muscle-card {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gym-muscle-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gym-muscle-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 150px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gym-muscle-name {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gym-muscle-bar-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.gym-muscle-bar {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-load);
+  transition: width var(--motion-hover);
+}
+
+.gym-muscle-sets {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+  text-align: right;
+}
+
+.gym-muscle-prev {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.gym-muscle-footnote {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 .gym-template-card {
   position: relative;
   background: var(--color-surface-elevated);

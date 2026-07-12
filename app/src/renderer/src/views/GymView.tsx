@@ -7,7 +7,13 @@ import { HeroMetric } from '../components/HeroMetric'
 import { useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import { useExercises, useGymSessions, useGymTemplates, useUpdateGymTemplate } from '../hooks/useGymData'
 import { isoWeekKey, toZonedYMD } from '../hooks/sessionsDate'
-import { displayBodyPart, isStrengthWorkout, sessionBodyParts, summarizeSession } from '../lib/gymLog'
+import {
+  displayBodyPart,
+  isStrengthWorkout,
+  muscleSetVolume,
+  sessionBodyParts,
+  summarizeSession
+} from '../lib/gymLog'
 import { EM_DASH, formatDurationHM } from '../lib/format'
 import { SessionEditorModal, type EditorTarget } from './gym/SessionEditorModal'
 import { TemplateEditorModal } from './gym/TemplateEditorModal'
@@ -205,6 +211,71 @@ function HistorySection({
   )
 }
 
+// ── muscle volume section ────────────────────────────────────────────────────
+
+/** "12" / "7.5" — fractional set counts only show the half. */
+function fmtSets(sets: number): string {
+  return Number.isInteger(sets) ? String(sets) : sets.toFixed(1)
+}
+
+function MuscleVolumeSection({
+  weekSessions,
+  prevWeekSessions,
+  exercisesById
+}: {
+  weekSessions: GymSession[]
+  prevWeekSessions: GymSession[]
+  exercisesById: Map<string, Exercise>
+}): ReactElement {
+  const rows = useMemo(
+    () => muscleSetVolume(weekSessions, exercisesById),
+    [weekSessions, exercisesById]
+  )
+  const prevByMuscle = useMemo(
+    () => new Map(muscleSetVolume(prevWeekSessions, exercisesById).map((r) => [r.muscle, r.sets])),
+    [prevWeekSessions, exercisesById]
+  )
+  const maxSets = rows.length > 0 ? Math.max(rows[0].sets, 10) : 10
+
+  return (
+    <section className="gym-section">
+      <h2 className="gym-section-title">Muscle volume</h2>
+      {rows.length === 0 ? (
+        <EmptyState message="No working sets this week yet — muscle volume builds from the primary and secondary muscles of the exercises you log." />
+      ) : (
+        <div className="gym-muscle-card">
+          <div className="gym-muscle-rows">
+            {rows.map((row) => {
+              const prev = prevByMuscle.get(row.muscle)
+              return (
+                <div key={row.muscle} className="gym-muscle-row">
+                  <span className="gym-muscle-name">{displayBodyPart(row.muscle)}</span>
+                  <div className="gym-muscle-bar-track">
+                    <div
+                      className="gym-muscle-bar"
+                      style={{ width: `${Math.min(100, (row.sets / maxSets) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="gym-muscle-sets tabular-nums">
+                    {fmtSets(row.sets)}
+                    {prev !== undefined && (
+                      <span className="gym-muscle-prev"> · last wk {fmtSets(prev)}</span>
+                    )}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <p className="gym-muscle-footnote">
+            Working sets this ISO week — a set counts 1 for each primary muscle, ½ for each
+            secondary.
+          </p>
+        </div>
+      )}
+    </section>
+  )
+}
+
 // ── templates section ────────────────────────────────────────────────────────
 
 function templateItemsSummary(template: GymTemplate): string {
@@ -373,6 +444,27 @@ export function GymView(): ReactElement {
     [gymSessions]
   )
 
+  // Muscle volume: this ISO week's logged sessions vs the previous week's.
+  const exercisesQuery = useExercises()
+  const exercisesById = useMemo(
+    () => new Map((exercisesQuery.data ?? []).map((e) => [e.id, e])),
+    [exercisesQuery.data]
+  )
+  const prevWeekKey = useMemo(
+    () => isoWeekKey(toZonedYMD(new Date(Date.parse(nowIso) - 7 * 86_400_000).toISOString(), timezone)),
+    [nowIso, timezone]
+  )
+  const sessionsByWeek = useMemo(() => {
+    const grouped = new Map<string, GymSession[]>()
+    for (const session of gymSessions) {
+      const key = isoWeekKey(toZonedYMD(session.performed_at, timezone))
+      const list = grouped.get(key)
+      if (list) list.push(session)
+      else grouped.set(key, [session])
+    }
+    return grouped
+  }, [gymSessions, timezone])
+
   return (
     <div className="view">
       <TabHeader eyebrow="Strength training" title="Gym" />
@@ -392,6 +484,12 @@ export function GymView(): ReactElement {
         templates={templates}
         timezone={timezone}
         onOpen={(session) => setEditorTarget({ kind: 'edit', session })}
+      />
+
+      <MuscleVolumeSection
+        weekSessions={sessionsByWeek.get(thisWeekKey) ?? []}
+        prevWeekSessions={sessionsByWeek.get(prevWeekKey) ?? []}
+        exercisesById={exercisesById}
       />
 
       <TemplatesSection
