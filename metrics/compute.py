@@ -98,7 +98,7 @@ def rhr_recent_for(day: date, rhr_by_date: dict[date, float]) -> float:
 def run(full: bool) -> None:
     sb = db.client()
     config = db.fetch_user_config(sb)
-    tz = ZoneInfo(config.get("timezone") or "Europe/Berlin")
+    tz = ZoneInfo(config.get("timezone") or "UTC")
     now = datetime.now(timezone.utc)
 
     daily_metrics = db.fetch_daily_metrics(sb)

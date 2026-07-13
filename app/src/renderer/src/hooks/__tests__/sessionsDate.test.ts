@@ -70,14 +70,14 @@ describe('localDateKey', () => {
     expect(localDateKey('2026-01-15T09:00:00Z', 'UTC')).toBe('2026-01-15')
   })
 
-  it('rolls a late-evening UTC timestamp to the next local date in Europe/Berlin (UTC+1 in January)', () => {
+  it('rolls a late-evening UTC timestamp to the next local date in Europe/Paris (UTC+1 in January)', () => {
     // 23:30 UTC on Jan 15 is 00:30 local time on Jan 16 in Berlin (winter, UTC+1).
-    expect(localDateKey('2026-01-15T23:30:00Z', 'Europe/Berlin')).toBe('2026-01-16')
+    expect(localDateKey('2026-01-15T23:30:00Z', 'Europe/Paris')).toBe('2026-01-16')
   })
 
-  it('keeps an early-evening UTC timestamp on the same local date in Europe/Berlin', () => {
+  it('keeps an early-evening UTC timestamp on the same local date in Europe/Paris', () => {
     // 20:00 UTC on Jan 15 is 21:00 local time on Jan 15 in Berlin.
-    expect(localDateKey('2026-01-15T20:00:00Z', 'Europe/Berlin')).toBe('2026-01-15')
+    expect(localDateKey('2026-01-15T20:00:00Z', 'Europe/Paris')).toBe('2026-01-15')
   })
 
   it('falls back to UTC when timezone is null', () => {

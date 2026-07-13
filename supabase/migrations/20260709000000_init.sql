@@ -62,7 +62,7 @@ create table user_config (
   zone2_low_frac      numeric default 0.60,
   zone2_high_frac     numeric default 0.70,
   weekly_min_sessions jsonb default '{"swim":2,"lift":2}',
-  timezone            text default 'Europe/Berlin'
+  timezone            text default 'UTC'
 );
 
 insert into user_config (id) values (1);

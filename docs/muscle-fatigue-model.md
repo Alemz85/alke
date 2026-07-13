@@ -3,8 +3,8 @@
 Provenance: designed 2026-07-12 with the user, grounded by (1) a codebase pass over the
 existing load machinery (`metrics/models.py` TRIMP/CTL/ATL/ACWR, `lib/zone2Fitness.ts`),
 (2) the muscle/exercise catalog, and (3) a targeted literature pass on cross-modal fatigue
-+ concurrent-training interference (seeded into `knowledge/topics/cardio-strength-interference.md`).
-This is the sibling of `zone2-fitness-model.md` and obeys the same laws: **DYNAMIC, not
++ concurrent-training interference (seeded into the private knowledge library).
+It obeys the same laws as the Zone-2 fitness model: **DYNAMIC, not
 hardcoded** (every state/timing constant is a continuous function of the user's own data;
 only irreducible physiological priors stay literature constants, clearly marked and
 personalizing as history grows), **confidence-banded**, and **honest** (thin-data muscles

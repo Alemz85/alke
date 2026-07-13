@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Personal health analytics desktop app",
   "main": "./out/main/index.js",
-  "author": "owner@example.com",
+  "author": "Health Analytics",
   "private": true,
   "type": "module",
   "scripts": {

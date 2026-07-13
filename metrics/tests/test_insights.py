@@ -223,7 +223,7 @@ def test_perf_series_by_date_ef_is_swim_only():
 
     from metrics.compute import perf_series_by_date
 
-    tz = ZoneInfo("Europe/Berlin")
+    tz = ZoneInfo("Europe/Paris")
     workouts = [
         {"id": "w-swim", "type": "pool_swim", "start_at": "2026-07-01T10:00:00Z"},
         {"id": "w-bike", "type": "indoor_cycling", "start_at": "2026-07-01T18:00:00Z"},

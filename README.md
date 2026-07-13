@@ -24,17 +24,6 @@ is standard endurance-training literature applied to the owner's own numbers.
 | `/app` | Electron + React + Vite desktop app |
 | `/chatctx` | Working directory given to Claude Code chat sessions |
 
-## Screenshots
-
-The desktop app ships both a dark theme (the default) and a light theme, toggled from the top-bar Sun/Moon button and persisted across launches. All chrome stays neutral in both — only the data carries color, one accent per metric domain.
-
-| | |
-| --- | --- |
-| ![Dashboard, dark theme](docs/screenshots/dashboard-dark.png) | ![Zone 2, dark theme](docs/screenshots/zone2-dark.png) |
-| **Dashboard** — CTL hero, load/adherence cards, and the last three workouts. | **Zone 2** — weekly aerobic-base minutes against target, in the aerobic teal. |
-| ![Sessions day drawer](docs/screenshots/sessions-drawer-dark.png) | ![Dashboard, light theme](docs/screenshots/dashboard-light.png) |
-| **Sessions** — a day drawer with the HR trace, TRIMP/EF/decoupling, and time-in-zones. | **Dashboard (light)** — the same surface inverted for bright rooms. |
-
 ## Running each component
 
 **Ingestion** — deployed to Supabase: `supabase functions deploy ingest`. Local tests: `deno test supabase/functions/ingest/`. The Health Auto Export payload format the endpoint parses is documented under `docs/vendor/hae-wiki/`.

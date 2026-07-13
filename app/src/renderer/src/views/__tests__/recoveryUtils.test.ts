@@ -114,7 +114,7 @@ describe('fmtHoursAsHm', () => {
 
 describe('fmtLocalDate', () => {
   it('formats a YYYY-MM-DD string as "Ddd, Mon D", UTC-anchored', () => {
-    expect(fmtLocalDate('2026-07-08', 'Europe/Berlin')).toBe('Wed, Jul 8')
+    expect(fmtLocalDate('2026-07-08', 'Europe/Paris')).toBe('Wed, Jul 8')
   })
 
   it('ignores the timezone argument (UTC-anchored by design)', () => {
@@ -273,13 +273,13 @@ describe('weeklyMedianByDate', () => {
 describe('fmtClockTime', () => {
   it('formats an ISO instant as 24h clock time in the given timezone', () => {
     // 22:42 UTC on the given day → 23:42 in Berlin (UTC+1 in January).
-    expect(fmtClockTime('2026-01-05T22:42:00Z', 'Europe/Berlin')).toBe('23:42')
+    expect(fmtClockTime('2026-01-05T22:42:00Z', 'Europe/Paris')).toBe('23:42')
   })
 
   it('returns the em-dash for null / undefined / unparseable input', () => {
-    expect(fmtClockTime(null, 'Europe/Berlin')).toBe(EM_DASH)
-    expect(fmtClockTime(undefined, 'Europe/Berlin')).toBe(EM_DASH)
-    expect(fmtClockTime('not-a-date', 'Europe/Berlin')).toBe(EM_DASH)
+    expect(fmtClockTime(null, 'Europe/Paris')).toBe(EM_DASH)
+    expect(fmtClockTime(undefined, 'Europe/Paris')).toBe(EM_DASH)
+    expect(fmtClockTime('not-a-date', 'Europe/Paris')).toBe(EM_DASH)
   })
 
   it('falls back to UTC when no timezone is supplied', () => {
@@ -344,12 +344,12 @@ describe('bucketAggregate', () => {
 
 describe('fmtBucketLabel', () => {
   it('labels days, weeks, and months distinctly', () => {
-    expect(fmtBucketLabel('2026-01-05', 'daily', 'Europe/Berlin')).toBe(
-      fmtLocalDate('2026-01-05', 'Europe/Berlin')
+    expect(fmtBucketLabel('2026-01-05', 'daily', 'Europe/Paris')).toBe(
+      fmtLocalDate('2026-01-05', 'Europe/Paris')
     )
-    expect(fmtBucketLabel('2026-01-05', 'weekly', 'Europe/Berlin')).toBe(
-      `wk ${fmtLocalDate('2026-01-05', 'Europe/Berlin')}`
+    expect(fmtBucketLabel('2026-01-05', 'weekly', 'Europe/Paris')).toBe(
+      `wk ${fmtLocalDate('2026-01-05', 'Europe/Paris')}`
     )
-    expect(fmtBucketLabel('2026-01-01', 'monthly', 'Europe/Berlin')).toBe('Jan 2026')
+    expect(fmtBucketLabel('2026-01-01', 'monthly', 'Europe/Paris')).toBe('Jan 2026')
   })
 })

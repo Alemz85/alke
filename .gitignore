@@ -40,7 +40,15 @@ metrics/.venv/
 # Local brainstorming mockups and browser interaction state
 .superpowers/
 
-# Knowledge library — separate private repo (github.com/owner/health-knowledge)
+# Internal working files — kept local, not part of the public repo
+/CLAUDE.md
+/AGENTS.md
+/TODO.md
+/docs/superpowers/
+/docs/zone2-fitness-model.md
+/docs/zone2-model-explained.md
+
+# Knowledge library — a separate private repo, cloned in locally
 knowledge/
 
 # Personal RunKeeper export dumps (raw GPS traces — imported via

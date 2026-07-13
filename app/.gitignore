@@ -4,3 +4,8 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example

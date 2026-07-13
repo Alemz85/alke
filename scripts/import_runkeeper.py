@@ -22,7 +22,7 @@ Run:
 Options:
     --tz TZ                      Local tz the CSV's naive Date is in for
                                   non-GPX (aggregate) rows only — GPX times
-                                  are already UTC. Default: Europe/Berlin.
+                                  are already UTC. Default: UTC.
     --include-non-gps / --no-include-non-gps
                                   Import rows with no GPX file as aggregate
                                   (no-route) workouts. Default: on.
@@ -248,7 +248,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("export_dir", help="Path to the RunKeeper export directory")
     parser.add_argument("--dry-run", action="store_true", help="Parse and summarize only; no DB writes")
-    parser.add_argument("--tz", default="Europe/Berlin", help="Local tz for non-GPX rows' naive Date (default: Europe/Berlin)")
+    parser.add_argument("--tz", default="UTC", help="Local tz for non-GPX rows' naive Date (default: UTC)")
     non_gps = parser.add_mutually_exclusive_group()
     non_gps.add_argument("--include-non-gps", dest="include_non_gps", action="store_true", default=True)
     non_gps.add_argument("--no-include-non-gps", dest="include_non_gps", action="store_false")
