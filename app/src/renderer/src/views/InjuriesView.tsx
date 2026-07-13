@@ -834,6 +834,84 @@ function StatusControl({ injury }: { injury: Injury }): ReactElement {
   )
 }
 
+// ── delete control (permanent — distinct from Mark as healed / resolve) ───────
+
+/**
+ * Permanently deletes an injury (logs/plan/checks cascade server-side).
+ * Two-step inline confirm — never browser confirm()/alert() — mirrors
+ * StatusControl/LogRowDelete above. deleteInjury may queue offline, so this
+ * refetches the list rather than trusting the return value, then navigates
+ * back to the list either way (the item is gone from the user's perspective).
+ */
+function InjuryDeleteControl({ injuryId, onDeleted }: { injuryId: string; onDeleted: () => void }): ReactElement {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  const mutation = useMutation({
+    mutationFn: () => window.api.deleteInjury(injuryId),
+    meta: { errorMessage: 'Couldn’t delete the injury. It has not been removed.' },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['injuries'] })
+      onDeleted()
+    }
+  })
+
+  const handleClick = (): void => {
+    if (!confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 4000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    mutation.mutate()
+  }
+
+  return (
+    <div className="injury-delete-control">
+      {confirming ? (
+        <>
+          <span className="injury-confirm-label">Delete permanently?</span>
+          <button
+            type="button"
+            className="injury-btn injury-action-btn injury-action-btn--danger"
+            disabled={mutation.isPending}
+            onClick={handleClick}
+          >
+            {mutation.isPending ? 'Deleting…' : 'Confirm'}
+          </button>
+          <button
+            type="button"
+            className="injury-btn injury-action-btn"
+            disabled={mutation.isPending}
+            onClick={() => {
+              if (confirmTimer.current) clearTimeout(confirmTimer.current)
+              setConfirming(false)
+            }}
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="injury-btn injury-action-btn injury-action-btn--danger-ghost"
+          onClick={handleClick}
+        >
+          Delete injury
+        </button>
+      )}
+      {mutation.isError && <span className="injury-plan-date-error">Could not delete</span>}
+    </div>
+  )
+}
+
 // ── this-week daily table ─────────────────────────────────────────────────────
 
 /** Active checkable columns: exercises first, then activities. */
@@ -1531,6 +1609,15 @@ function InjuryFullView({
       )}
 
       {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
+
+      <section className="injury-section injury-danger-zone">
+        <h4 className="injury-section-title">Danger zone</h4>
+        <p className="injury-danger-hint">
+          Permanently deletes this injury and all of its logs, recovery plan and checks. This
+          cannot be undone — use “Mark as healed” instead if you just want to close it out.
+        </p>
+        <InjuryDeleteControl injuryId={injury.id} onDeleted={onBack} />
+      </section>
 
       {planOpen && (
         <RecoveryPlanModal

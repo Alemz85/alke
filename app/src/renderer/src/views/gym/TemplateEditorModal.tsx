@@ -140,7 +140,7 @@ function TemplateItemEditor({
         onChange={(e) => onChange({ targetWeightKg: e.target.value })}
       />
       <input
-        className="gym-input gym-template-target-input gym-template-rest-input"
+        className="gym-input gym-template-target-input"
         type="number"
         min={0}
         max={3600}
@@ -282,11 +282,10 @@ export function TemplateEditorModal({
             />
           </label>
 
-          <h4 className="gym-modal-section-title">Rest</h4>
-          <label className="gym-field gym-template-rest-field">
+          <label className="gym-field gym-template-rest-default-field">
             <span className="gym-field-label">Default rest between sets (seconds)</span>
             <input
-              className="gym-input gym-template-rest-default-input"
+              className="gym-input"
               type="number"
               min={0}
               max={3600}

@@ -12,6 +12,7 @@ export type OfflineWriteType =
   | 'addInjuryLog'
   | 'deleteInjuryLog'
   | 'updateInjuryStatus'
+  | 'deleteInjury'
   | 'updateInjuryPlanStart'
   | 'updateInjuryStartedAt'
   | 'setPlanItemCheck'
@@ -31,6 +32,7 @@ export interface OfflineWriteDatabase {
   addInjuryLog(entry: NewInjuryLog, mutationId: string): Promise<unknown>
   deleteInjuryLog(id: number): Promise<unknown>
   updateInjuryStatus(injuryId: string, status: Injury['status']): Promise<unknown>
+  deleteInjury(id: string): Promise<unknown>
   updateInjuryPlanStart(injuryId: string, planStartedAt: string): Promise<unknown>
   updateInjuryStartedAt(injuryId: string, startedAt: string): Promise<unknown>
   setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<unknown>
@@ -64,6 +66,8 @@ export async function executeOfflineWrite(
       return db.deleteInjuryLog(first as number)
     case 'updateInjuryStatus':
       return db.updateInjuryStatus(first as string, second as Injury['status'])
+    case 'deleteInjury':
+      return db.deleteInjury(first as string)
     case 'updateInjuryPlanStart':
       return db.updateInjuryPlanStart(first as string, second as string)
     case 'updateInjuryStartedAt':

@@ -895,16 +895,8 @@ select.gym-input {
   padding: 8px 10px;
 }
 
-.gym-template-rest-input {
-  width: 92px;
-}
-
-.gym-template-rest-field {
+.gym-template-rest-default-field {
   max-width: 220px;
-}
-
-.gym-template-rest-default-input {
-  width: 100%;
 }
 
 .gym-archive-toggle {

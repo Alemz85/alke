@@ -78,6 +78,34 @@ export function DayDetailDrawer({
   )
 }
 
+// One {label, value} cell in the organized stat box (day-drawer-session-stats-block).
+// `icon` renders before the value (e.g. the Heart glyph on HR stats).
+function StatCell({
+  label,
+  value,
+  icon
+}: {
+  label: string
+  value: ReactNode
+  icon?: ReactNode
+}): ReactElement {
+  return (
+    <div className="day-drawer-session-stat">
+      <span
+        className={
+          icon
+            ? 'day-drawer-session-stat-value day-drawer-session-stat-value--hr tabular-nums'
+            : 'day-drawer-session-stat-value tabular-nums'
+        }
+      >
+        {icon}
+        {value}
+      </span>
+      <span className="day-drawer-session-stat-label">{label}</span>
+    </div>
+  )
+}
+
 function SessionCard({
   workout,
   timezone
@@ -131,101 +159,62 @@ function SessionCard({
 
       <div className="day-drawer-session-stats-block">
         <div className="day-drawer-session-stats">
-          <div className="day-drawer-session-stat">
-            <span className="day-drawer-session-stat-value tabular-nums">
-              {formatDuration(workout.duration_s ?? 0)}
-            </span>
-            <span className="day-drawer-session-stat-label">Duration</span>
-          </div>
-          {distanceKm && (
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">{distanceKm} km</span>
-              <span className="day-drawer-session-stat-label">Distance</span>
-            </div>
-          )}
-          <div className="day-drawer-session-stat">
-            <span className="day-drawer-session-stat-value tabular-nums">
-              {trimp != null ? Math.round(trimp) : EM_DASH}
-            </span>
-            <span className="day-drawer-session-stat-label">TRIMP</span>
-          </div>
+          <StatCell label="Duration" value={formatDuration(workout.duration_s ?? 0)} />
+          {distanceKm && <StatCell label="Distance" value={`${distanceKm} km`} />}
+          <StatCell label="TRIMP" value={trimp != null ? Math.round(trimp) : EM_DASH} />
           {!isStrength && (
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {ef != null ? ef.toFixed(2) : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">EF</span>
-            </div>
+            <StatCell label="EF" value={ef != null ? ef.toFixed(2) : EM_DASH} />
           )}
           {!isStrength && (
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Decoupling</span>
-            </div>
+            <StatCell
+              label="Decoupling"
+              value={decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH}
+            />
           )}
           {isStrength && (
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {gymMaxHr != null ? Math.round(gymMaxHr) : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Max HR</span>
-            </div>
+            <StatCell
+              label="Max HR"
+              value={gymMaxHr != null ? Math.round(gymMaxHr) : EM_DASH}
+            />
           )}
           {isStrength && (
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {gymAvgHr != null ? Math.round(gymAvgHr) : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Avg HR</span>
-            </div>
+            <StatCell
+              label="Avg HR"
+              value={gymAvgHr != null ? Math.round(gymAvgHr) : EM_DASH}
+            />
           )}
         </div>
 
         {swimSummary && (
           <div className="day-drawer-session-stats">
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {swimSummary.avgPaceSecPer100m !== null
+            <StatCell
+              label="Avg set pace"
+              value={
+                swimSummary.avgPaceSecPer100m !== null
                   ? `${formatClock(swimSummary.avgPaceSecPer100m)} /100m`
-                  : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Avg set pace</span>
-            </div>
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {swimSummary.medianRestS !== null
-                  ? `~${Math.round(swimSummary.medianRestS)}s`
-                  : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Rest</span>
-            </div>
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {swimSummary.nSets}
-              </span>
-              <span className="day-drawer-session-stat-label">Detected sets</span>
-            </div>
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value tabular-nums">
-                {swimActiveTimePct !== null ? `${Math.round(swimActiveTimePct)}%` : EM_DASH}
-              </span>
-              <span className="day-drawer-session-stat-label">Active time</span>
-            </div>
-            <div className="day-drawer-session-stat">
-              <span className="day-drawer-session-stat-value day-drawer-session-stat-value--hr tabular-nums">
-                {workout.avg_hr !== null ? (
-                  <>
-                    <Heart size={14} strokeWidth={1.75} className="day-drawer-session-stat-hr-icon" />
-                    {Math.round(workout.avg_hr)}
-                  </>
-                ) : (
-                  EM_DASH
-                )}
-              </span>
-              <span className="day-drawer-session-stat-label">Avg HR</span>
-            </div>
+                  : EM_DASH
+              }
+            />
+            <StatCell
+              label="Rest"
+              value={
+                swimSummary.medianRestS !== null ? `~${Math.round(swimSummary.medianRestS)}s` : EM_DASH
+              }
+            />
+            <StatCell label="Detected sets" value={swimSummary.nSets} />
+            <StatCell
+              label="Active time"
+              value={swimActiveTimePct !== null ? `${Math.round(swimActiveTimePct)}%` : EM_DASH}
+            />
+            <StatCell
+              label="Avg HR"
+              value={workout.avg_hr !== null ? Math.round(workout.avg_hr) : EM_DASH}
+              icon={
+                workout.avg_hr !== null ? (
+                  <Heart size={14} strokeWidth={1.75} className="day-drawer-session-stat-hr-icon" />
+                ) : undefined
+              }
+            />
           </div>
         )}
       </div>

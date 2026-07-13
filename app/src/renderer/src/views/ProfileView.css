@@ -489,11 +489,24 @@
 .profile-goal-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-xs);
   padding-top: var(--space-sm);
   border-top: 1px solid var(--color-divider-soft);
   margin-top: auto;
   flex-shrink: 0;
+}
+
+/* Pushes the destructive Delete control to the trailing edge, deliberately
+   separated from the status actions so it isn't fired by accident. */
+.profile-goal-actions-spacer {
+  flex: 1 1 auto;
+}
+
+.profile-confirm-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
 }
 
 /* ── modal (mirrors injury-modal) ───────────────────────────────────────── */
@@ -677,4 +690,33 @@
 .profile-btn--primary:disabled {
   color: var(--color-on-emphasis);
   opacity: 0.4;
+}
+
+/* ── destructive delete (goal) ───────────────────────────────────────────── */
+/* Quiet by default — reads as secondary, not an alarm — until armed. */
+.profile-btn--danger-ghost {
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.profile-btn--danger-ghost:hover:not(:disabled) {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+}
+
+/* Confirm step: full danger tint, only shown once armed. */
+.profile-btn--danger {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+}
+
+.profile-btn--danger:hover:not(:disabled) {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+  opacity: 0.85;
+}
+
+.profile-btn--danger:disabled {
+  color: var(--color-flag-text);
+  opacity: 0.5;
 }

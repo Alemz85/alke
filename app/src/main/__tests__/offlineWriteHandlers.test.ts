@@ -19,6 +19,7 @@ function database(): OfflineWriteDatabase {
     addInjuryLog: vi.fn(async () => ({})),
     deleteInjuryLog: vi.fn(async () => undefined),
     updateInjuryStatus: vi.fn(async () => ({})),
+    deleteInjury: vi.fn(async () => undefined),
     updateInjuryPlanStart: vi.fn(async () => ({})),
     updateInjuryStartedAt: vi.fn(async () => ({})),
     setPlanItemCheck: vi.fn(async () => undefined),
@@ -66,6 +67,7 @@ describe('executeOfflineWrite', () => {
     await executeOfflineWrite(db, operation('updateGymTemplate', ['template', { name: 'B' }]))
     await executeOfflineWrite(db, operation('deleteGymSession', ['session']))
     await executeOfflineWrite(db, operation('deleteInjuryLog', [42]))
+    await executeOfflineWrite(db, operation('deleteInjury', ['injury']))
     await executeOfflineWrite(db, operation('updateInjuryStatus', ['injury', 'resolved']))
     await executeOfflineWrite(db, operation('deleteGymTemplate', ['template']))
     await executeOfflineWrite(db, operation('updateInjuryStartedAt', ['injury', '2026-07-01']))
@@ -76,6 +78,7 @@ describe('executeOfflineWrite', () => {
     expect(db.updateGymTemplate).toHaveBeenCalledWith('template', { name: 'B' })
     expect(db.deleteGymSession).toHaveBeenCalledWith('session')
     expect(db.deleteInjuryLog).toHaveBeenCalledWith(42)
+    expect(db.deleteInjury).toHaveBeenCalledWith('injury')
     expect(db.updateInjuryStatus).toHaveBeenCalledWith('injury', 'resolved')
     expect(db.deleteGymTemplate).toHaveBeenCalledWith('template')
     expect(db.updateInjuryStartedAt).toHaveBeenCalledWith('injury', '2026-07-01')

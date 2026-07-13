@@ -306,6 +306,61 @@
   border-color: var(--color-text);
 }
 
+/* ── destructive delete (injury) ─────────────────────────────────────────── */
+/* Quiet by default — reads as secondary, not an alarm — until armed. */
+.injury-action-btn--danger-ghost {
+  border-color: var(--color-divider-soft);
+  color: var(--color-text-tertiary);
+}
+
+.injury-action-btn--danger-ghost:hover:not(:disabled) {
+  background: var(--color-flag-dim);
+  border-color: var(--color-flag-dim);
+  color: var(--color-flag-text);
+}
+
+/* Confirm step: full danger tint, only shown once armed. */
+.injury-action-btn--danger {
+  background: var(--color-flag-dim);
+  border-color: transparent;
+  color: var(--color-flag-text);
+}
+
+.injury-action-btn--danger:hover:not(:disabled) {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+  opacity: 0.85;
+}
+
+.injury-action-btn--danger:disabled {
+  color: var(--color-flag-text);
+  opacity: 0.5;
+}
+
+.injury-delete-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* Separated section at the very bottom of the full view — deliberately far
+   from routine actions (Mark as healed / Feeling fine / Log flare-up) so it
+   is never fired by accident. */
+.injury-danger-zone {
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.injury-danger-hint {
+  margin: 0 0 var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  color: var(--color-text-tertiary);
+  max-width: 60ch;
+}
+
 /* ── flare form ──────────────────────────────────────────────────────────── */
 .injury-flare-form {
   margin-top: var(--space-md);

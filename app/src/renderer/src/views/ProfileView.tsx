@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
@@ -455,6 +456,79 @@ function useOptimisticGoalUpdate(goalId: string, errorMessage: string) {
   })
 }
 
+/**
+ * Permanently deletes a goal (metric/progress/status-events cascade server-side).
+ * Two-step inline confirm — never browser confirm()/alert() — mirrors
+ * InjuriesView's LogRowDelete/StatusControl pattern: first click arms a
+ * confirm state that auto-disarms after a few seconds, the second commits.
+ */
+function GoalDeleteControl({ goalId }: { goalId: string }): ReactElement {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  const mutation = useMutation({
+    mutationFn: () => window.api.deleteGoal(goalId),
+    meta: { errorMessage: 'Couldn’t delete the goal. It has not been removed.' },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['goals'] })
+    }
+  })
+
+  const handleClick = (): void => {
+    if (!confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 4000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    mutation.mutate()
+  }
+
+  if (confirming) {
+    return (
+      <>
+        <span className="profile-confirm-label">Delete permanently?</span>
+        <button
+          type="button"
+          className="profile-btn profile-btn--danger"
+          disabled={mutation.isPending}
+          onClick={handleClick}
+        >
+          {mutation.isPending ? 'Deleting…' : 'Confirm'}
+        </button>
+        <button
+          type="button"
+          className="profile-btn"
+          disabled={mutation.isPending}
+          onClick={() => {
+            if (confirmTimer.current) clearTimeout(confirmTimer.current)
+            setConfirming(false)
+          }}
+        >
+          Cancel
+        </button>
+      </>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className="profile-btn profile-btn--danger-ghost"
+      onClick={handleClick}
+    >
+      Delete
+    </button>
+  )
+}
+
 function GoalActions({ goal, onEdit }: { goal: Goal; onEdit: () => void }): ReactElement {
   const statusMutation = useOptimisticGoalUpdate(
     goal.id,
@@ -493,6 +567,8 @@ function GoalActions({ goal, onEdit }: { goal: Goal; onEdit: () => void }): Reac
           Reactivate
         </ButtonSoft>
       )}
+      <span className="profile-goal-actions-spacer" />
+      <GoalDeleteControl goalId={goal.id} />
     </div>
   )
 }

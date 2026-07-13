@@ -780,6 +780,13 @@ export async function updateInjuryStatus(
   return data as Injury
 }
 
+export async function deleteInjury(id: string): Promise<void> {
+  assertUuid(id, 'injury_id')
+  // injury_notes, recovery_plan_items (and their checks) all cascade on delete.
+  const { error } = await getClient().from('injuries').delete().eq('id', id)
+  if (error) throw new Error(`deleteInjury: ${error.message}`)
+}
+
 export async function getInjuryPlanChecks(
   injuryId: string,
   fromDate: string
@@ -1937,6 +1944,13 @@ export async function updateGoal(id: string, patch: GoalPatch): Promise<Goal> {
   }
 
   return normalizeNumeric(data as Goal, GOAL_NUMERIC_KEYS)
+}
+
+export async function deleteGoal(id: string): Promise<void> {
+  assertUuid(id, 'goal_id')
+  // goal_progress and goal_status_events cascade on delete.
+  const { error } = await getClient().from('goals').delete().eq('id', id)
+  if (error) throw new Error(`deleteGoal: ${error.message}`)
 }
 
 export async function getDbStatus(): Promise<DbStatus> {

@@ -567,6 +567,9 @@ export interface HealthApi {
     injuryId: string,
     status: Injury['status']
   ): Promise<QueueableWriteResult<Injury>>
+  // Permanently delete an injury and its logs/plan (cascade). Distinct from
+  // resolving, which keeps it archived.
+  deleteInjury(id: string): Promise<QueueableWriteResult<void>>
   getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]>
   updateInjuryPlanStart(injuryId: string, planStartedAt: string): Promise<QueueableWriteResult<Injury>>
   // Edit when the injury itself began (distinct from when the recovery plan started).
@@ -599,6 +602,9 @@ export interface HealthApi {
   getGoalProgress(goalId: string): Promise<GoalProgressPoint[]>
   addGoal(goal: NewGoal): Promise<Goal>
   updateGoal(id: string, patch: GoalPatch): Promise<Goal>
+  // Permanently delete a goal and its metric/progress (cascade). Distinct from
+  // abandoning, which keeps it archived.
+  deleteGoal(id: string): Promise<void>
   // Spawns a headless chat-agent run (cwd chatctx/) that designs the goal's
   // progress metric via goals.py; resolves when the run exits. Long-running.
   buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
@@ -654,6 +660,7 @@ export const IPC_CHANNELS = {
   addInjuryLog: 'db:addInjuryLog',
   deleteInjuryLog: 'db:deleteInjuryLog',
   updateInjuryStatus: 'db:updateInjuryStatus',
+  deleteInjury: 'db:deleteInjury',
   getInjuryPlan: 'db:getInjuryPlan',
   updateInjuryPlanStart: 'db:updateInjuryPlanStart',
   updateInjuryStartedAt: 'db:updateInjuryStartedAt',
@@ -677,6 +684,7 @@ export const IPC_CHANNELS = {
   getGoalProgress: 'db:getGoalProgress',
   addGoal: 'db:addGoal',
   updateGoal: 'db:updateGoal',
+  deleteGoal: 'db:deleteGoal',
   getZone2Fitness: 'db:getZone2Fitness',
   getProteinLog: 'db:getProteinLog',
   addProtein: 'db:addProtein',

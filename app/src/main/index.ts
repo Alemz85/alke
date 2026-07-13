@@ -165,6 +165,9 @@ function registerIpcHandlers(): void {
     (_event, injuryId: string, status: Injury['status']) =>
       offlineWrites.run('updateInjuryStatus', [injuryId, status])
   )
+  ipcMain.handle(IPC_CHANNELS.deleteInjury, (_event, id: string) =>
+    offlineWrites.run('deleteInjury', [id])
+  )
   ipcMain.handle(IPC_CHANNELS.getInjuryPlan, (_event, injuryId: string) =>
     db.getInjuryPlan(injuryId)
   )
@@ -234,6 +237,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.updateGoal, (_event, id: string, patch: GoalPatch) =>
     db.updateGoal(id, patch)
   )
+  ipcMain.handle(IPC_CHANNELS.deleteGoal, (_event, id: string) => db.deleteGoal(id))
   ipcMain.handle(IPC_CHANNELS.buildGoalMetric, (_event, goalId: string) =>
     chat.buildGoalMetric(goalId)
   )
