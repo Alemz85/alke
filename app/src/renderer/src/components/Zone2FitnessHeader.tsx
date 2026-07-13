@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { ReactElement } from 'react'
+import { scaleLinear } from 'd3-scale'
 import type { Workout } from '@shared/types'
 import { ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
@@ -10,7 +11,7 @@ import { SummaryCard } from './SummaryCard'
 import type { StatTableRow } from './StatTable'
 import { useMonthCalendar } from '../hooks/useMonthCalendar'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
-import { addDays, localDateKey, ymdKey } from '../hooks/sessionsDate'
+import { addDays, localDateKey, todayYMD, ymdKey } from '../hooks/sessionsDate'
 import {
   useDailyMetricsRange,
   useMonthWorkouts,
@@ -36,6 +37,7 @@ import {
   zone2IndexValue,
   zone2Meters
 } from '../lib/zone2Fitness'
+import { Zone2Trajectory } from './Zone2Trajectory'
 import './Zone2FitnessHeader.css'
 
 // What each zone is FOR — the label a glance needs, not physiology prose.
@@ -60,7 +62,7 @@ function totalZ2Seconds(workouts: Workout[]): number {
 // with watch VO2max demoted to an occasional calibration check. Trend is trustworthy;
 // absolute level keeps a real band.
 const HONESTY_CAPTION =
-  'Anchored to your own swim and bike signals (pace/HR, RHR, HRV trends); watch VO2max is only an occasional calibration check, never the daily anchor. Trustworthy on trend, banded on absolute level — the ± is real.'
+  'Built from your swim and bike pace/HR plus RHR and HRV trends. Watch VO2max only calibrates it occasionally. Trust the trend; treat the level as a band.'
 
 // Fallback maintenance copy (spec §5c) if the row's flag carries no message.
 const MAINTENANCE_COPY =
@@ -147,24 +149,44 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     () => (monthWorkoutsQuery.data ?? []).filter(isZone2Session),
     [monthWorkoutsQuery.data]
   )
-  const daysByKey = useMemo(() => groupWorkoutsByDay(zone2Workouts, timezone), [zone2Workouts, timezone])
-
-  // Zone-2 session day keys for the cadence math (same filtered workouts as the grid).
-  const zone2SessionDates = useMemo(
-    () => zone2Workouts.map((w) => localDateKey(w.start_at, timezone)),
+  const daysByKey = useMemo(
+    () => groupWorkoutsByDay(zone2Workouts, timezone),
     [zone2Workouts, timezone]
   )
 
+  // Full timestamps from trailing history anchor the literal +24h to +48h
+  // build window. Do not derive this from the viewed month: paging the calendar
+  // must not change what the most recent Zone-2 session was.
+  const zone2SessionStarts = useMemo(() => {
+    const byId = new Map<string, Workout>()
+    for (const workout of yearWorkoutsQuery.data ?? []) byId.set(workout.id, workout)
+    for (const workout of monthWorkoutsQuery.data ?? []) byId.set(workout.id, workout)
+    return [...byId.values()].filter(isZone2Session).map((workout) => workout.start_at)
+  }, [monthWorkoutsQuery.data, yearWorkoutsQuery.data])
+
   const guidance = useMemo(
-    () => zone2CalendarGuidance(latest, zone2SessionDates, todayKey),
-    [latest, zone2SessionDates, todayKey]
+    () =>
+      zone2CalendarGuidance(
+        latest,
+        zone2SessionStarts,
+        todayKey,
+        timezone ?? 'UTC',
+        new Date().toISOString()
+      ),
+    [latest, timezone, todayKey, zone2SessionStarts]
   )
 
-  // Drawer needs a day bucket for the FULL day, independent of the isZone2Session
-  // filter above (a strength day mixed with cardio should still show its cardio
-  // session), so it's built from the raw month-workouts query.
+  // Drawer needs a day bucket that still includes every CARDIO workout of the
+  // day (isZone2Session above additionally requires actual Z2/Z3 seconds, so
+  // a cardio session with no zone time yet would otherwise vanish from the
+  // drawer) — but never gym/strength, so a mixed swim+gym day only shows the
+  // swim here. Built from the raw month-workouts query, cardio-filtered.
   const allDaysByKey = useMemo(
-    () => groupWorkoutsByDay(monthWorkoutsQuery.data ?? [], timezone),
+    () =>
+      groupWorkoutsByDay(
+        (monthWorkoutsQuery.data ?? []).filter((w) => isCardioType(w.type)),
+        timezone
+      ),
     [monthWorkoutsQuery.data, timezone]
   )
 
@@ -185,11 +207,23 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
 
   const cardioSummaryItems: SummaryItem[] = useMemo(
     () =>
-      cardioSummaryWorkouts.map((w) => ({
-        dateKey: localDateKey(w.start_at, timezone),
-        durationS: w.duration_s ?? 0,
-        type: w.type
-      })),
+      cardioSummaryWorkouts.map((w) => {
+        const startMs = Date.parse(w.start_at)
+        // end_at is sometimes null (HAE didn't report it) — derive from duration_s
+        // so back-to-back visit merging still works for those workouts.
+        const endMs = w.end_at
+          ? Date.parse(w.end_at)
+          : w.duration_s !== null
+            ? startMs + w.duration_s * 1000
+            : undefined
+        return {
+          dateKey: localDateKey(w.start_at, timezone),
+          durationS: w.duration_s ?? 0,
+          type: w.type,
+          startMs: Number.isNaN(startMs) ? undefined : startMs,
+          endMs: endMs !== undefined && Number.isNaN(endMs) ? undefined : endMs
+        }
+      }),
     [cardioSummaryWorkouts, timezone]
   )
 
@@ -206,8 +240,11 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const cardioZ2MinViewedMonth = useMemo(
     () =>
       Math.round(
-        totalZ2Seconds(cardioSummaryWorkouts.filter((w) => localDateKey(w.start_at, timezone).slice(0, 7) === viewedYm)) /
-          60
+        totalZ2Seconds(
+          cardioSummaryWorkouts.filter(
+            (w) => localDateKey(w.start_at, timezone).slice(0, 7) === viewedYm
+          )
+        ) / 60
       ),
     [cardioSummaryWorkouts, timezone, viewedYm]
   )
@@ -253,36 +290,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
       })
     : ''
 
-  // HR-zone card data: the same Karvonen inputs the nightly job classifies
-  // with — max HR + Z2 band from user_config, resting HR as the 7-day median.
-  const configQuery = useUserConfig()
-  const rhrWindow = useMemo(() => {
-    const from = addDays(today, -60)
-    const pad = (n: number): string => String(n).padStart(2, '0')
-    return `${from.year}-${pad(from.month)}-${pad(from.day)}`
-  }, [today])
-  const restingQuery = useDailyMetricsRange(rhrWindow, ymdKey(today))
-
-  const hrZones = useMemo(() => {
-    const hrMax = configQuery.data?.hr_max
-    if (hrMax == null) return null
-    const restingByDate = new Map<string, number>()
-    for (const d of restingQuery.data ?? []) {
-      if (d.resting_hr != null) restingByDate.set(d.date, d.resting_hr)
-    }
-    const rhr = rhrRecent(restingByDate, ymdKey(today))
-    return {
-      hrMax,
-      rhr: Math.round(rhr),
-      ranges: zoneRanges(
-        hrMax,
-        rhr,
-        configQuery.data?.zone2_low_frac ?? 0.6,
-        configQuery.data?.zone2_high_frac ?? 0.7
-      )
-    }
-  }, [configQuery.data, restingQuery.data, today])
-
   // Loading: reserve the panel's layout height so the rest of the tab doesn't jump
   // once the query resolves.
   if (fitnessQuery.isLoading) {
@@ -297,7 +304,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
               <div className="z2f-skeleton-line z2f-skeleton-line--meter" />
             </div>
           </div>
-          <div className="z2f-zones z2f-zones--skeleton" />
         </div>
         <div className="z2f-row z2f-row--cal">
           <div className="z2f-calendar-block z2f-calendar-block--skeleton" />
@@ -321,13 +327,11 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const meters = zone2Meters(latest, ZONE2_DURABLE_CEILING, ZONE2_FAST_CEILING)
   const index = zone2IndexValue(latest)
   const indexRounded = index != null ? Math.round(index) : null
-  const indexPct = index != null ? Math.max(0, Math.min(100, index)) : 0
   const halfWidth = indexBandHalfWidth(latest)
-
-  // The two component tracks are drawn on ONE shared scale so their LENGTHS encode
-  // their ceilings (70 vs 30): durable spans the full width, fast is 30/70 of it.
-  const durableTrackPct = 100
-  const fastTrackPct = (ZONE2_FAST_CEILING / ZONE2_DURABLE_CEILING) * 100
+  const indexRangeLabel =
+    indexRounded != null && halfWidth != null
+      ? `${Math.max(0, indexRounded - halfWidth)}–${Math.min(100, indexRounded + halfWidth)}`
+      : 'Unavailable'
 
   const atRisk = hasMaintenanceFlag(latest)
   const reason = evidenceReason(latest.evidence_state)
@@ -346,163 +350,148 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     !markerInMonth(guidance.easesFrom) ||
     !markerInMonth(guidance.holdBy)
 
-  // One plain-language reading of where the model says the user is, next to the
-  // stage pill (the long honesty caption moves to the panel foot).
-  const phaseLine =
-    guidance.phase === 'building'
-      ? 'Building: every quality Zone 2 session still adds level.'
-      : atRisk
-        ? 'Maintaining: sessions defend the base — the fast layer is fading first.'
-        : 'Maintaining: sessions defend the base you have banked.'
-
   return (
     <section className="z2f" aria-label="Cardio fitness">
       <div className="z2f-row z2f-row--top">
-      <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
-        <div className="z2f-title">Cardio fitness</div>
-
-        <div className="z2f-top">
-          {/* ── The score + confidence. ── */}
-          <div className="z2f-hero">
-            <span className={evidenceOk ? 'z2f-index tabular-nums' : 'z2f-index z2f-index--stale tabular-nums'}>
-              {indexRounded ?? '—'}
+        <div className={evidenceOk ? 'z2f-panel' : 'z2f-panel z2f-panel--stale'}>
+          <div className="z2f-panel-head">
+            <h2 className="z2f-title">Cardio fitness index</h2>
+            <span className="z2f-stage">
+              <span className="z2f-stage-dot" aria-hidden="true" />
+              {stageLabel(latest.stage)} stage
             </span>
-            {halfWidth != null && <span className="z2f-index-band tabular-nums">± {halfWidth}</span>}
           </div>
 
-          {/* ── The whole index as a fat iOS-Control-Center-style bar, out of 100. ── */}
-          <div
-            className="z2f-gauge"
-            role="img"
-            aria-label={`Cardio fitness index ${indexRounded ?? '—'} of 100`}
-          >
-            <div className="z2f-gauge-fill" style={{ height: `${indexPct}%` }} />
-          </div>
-
-          {/* ── Description, right of the gauge: stage pill + one-line phase reading.
-              The long honesty caption lives at the panel foot. ── */}
-          <div className="z2f-desc">
-            <span className="z2f-stage-pill">
-              {stageLabel(latest.stage)}
-              <span className="z2f-note-star" aria-hidden="true">*</span>
-            </span>
-            <p className="z2f-phase-line">{phaseLine}</p>
-          </div>
-        </div>
-
-        {/* ── Component breakdown below, the two tracks sized to their ceilings
-            (durable 70 spans full width, fast 30 is 30/70 of it). ──────────── */}
-        <div className="z2f-meters">
-          <div className="z2f-meter" style={{ width: `${durableTrackPct}%` }}>
-            <div className="z2f-meter-head">
-              <span className="z2f-meter-label">Durable base</span>
-              <span className="z2f-meter-value tabular-nums">
-                {meters.durableValue}
-                <span className="z2f-meter-ceil"> / {ZONE2_DURABLE_CEILING}</span>
-              </span>
-            </div>
-            <div
-              className="z2f-meter-track"
-              role="img"
-              aria-label={`Durable base ${meters.durableValue} of ${ZONE2_DURABLE_CEILING}`}
-            >
-              <div className="z2f-meter-fill z2f-meter-fill--durable" style={{ width: `${meters.durablePct}%` }} />
-            </div>
-          </div>
-
-          <div className="z2f-meter" style={{ width: `${fastTrackPct}%` }}>
-            <div className="z2f-meter-head">
-              <span className="z2f-meter-label">
-                Fast · form
-                {atRisk && <span className="z2f-meter-chip">fading</span>}
-              </span>
-              <span className="z2f-meter-value tabular-nums">
-                {meters.fastValue}
-                <span className="z2f-meter-ceil"> / {ZONE2_FAST_CEILING}</span>
-              </span>
-            </div>
-            <div
-              className="z2f-meter-track"
-              role="img"
-              aria-label={`Fast layer ${meters.fastValue} of ${ZONE2_FAST_CEILING}`}
-            >
-              <div className="z2f-meter-fill z2f-meter-fill--fast" style={{ width: `${meters.fastPct}%` }} />
-            </div>
-          </div>
-        </div>
-
-        {!evidenceOk && reason && (
-          <p className="z2f-evidence-note">
-            <span className="z2f-evidence-tag">{latest.evidence_state.replace('_', ' ')}</span> {reason}
-            {' '}Showing last known value.
-          </p>
-        )}
-
-        <p className="z2f-footnote">
-          <span className="z2f-note-star" aria-hidden="true">* </span>
-          {HONESTY_CAPTION}
-        </p>
-      </div>
-
-      {/* ── HR zones: the exact Karvonen ranges the nightly job classifies with,
-          plus each zone's share of the last 90 days of training time. ── */}
-      <div className="z2f-zones" aria-label="Heart-rate zones">
-        <div className="z2f-zones-label">HR zones · Karvonen</div>
-        {hrZones ? (
-          <>
-            <div className="z2f-zones-rows">
-              {hrZones.ranges.map((r) => (
-                <div className="z2f-zone-row" key={r.zone}>
-                  <span
-                    className="z2f-zone-swatch"
-                    style={{ background: `var(--color-zone${r.zone})` }}
-                    aria-hidden="true"
-                  />
-                  <span className="z2f-zone-name">
-                    Z{r.zone}
-                    <span className="z2f-zone-intent">{ZONE_INTENT[r.zone]}</span>
-                  </span>
-                  <span className="z2f-zone-range tabular-nums">
-                    {r.fromBpm}–{r.toBpm ?? hrZones.hrMax} bpm
-                  </span>
+          <div className="z2f-instrument">
+            <div className="z2f-score-block">
+              <span className="z2f-field-label">Current index</span>
+              <div className="z2f-score-line">
+                <span
+                  className={
+                    evidenceOk
+                      ? 'z2f-index tabular-nums'
+                      : 'z2f-index z2f-index--stale tabular-nums'
+                  }
+                >
+                  {indexRounded ?? '—'}
+                </span>
+                <span className="z2f-index-total">/ 100</span>
+              </div>
+              <dl className="z2f-score-meta">
+                <div>
+                  <dt>Estimated range</dt>
+                  <dd className="tabular-nums">{indexRangeLabel}</dd>
                 </div>
-              ))}
+                <div>
+                  <dt>Confidence</dt>
+                  <dd>{latest.evidence_state.replace('_', ' ')}</dd>
+                </div>
+              </dl>
             </div>
-            <p className="z2f-zones-caption">
-              From max HR {hrZones.hrMax} and your 7-day resting median {hrZones.rhr} (Karvonen —
-              the same math the nightly job classifies with). Swim readings are counted ~
-              {Math.abs(configQuery.data?.swim_hr_offset ?? -10)} bpm higher (the wrist reads low
-              in water).
+
+            <div className="z2f-composition">
+              <div className="z2f-composition-head">
+                <span className="z2f-field-label">Index composition</span>
+              </div>
+              <div className="z2f-meters">
+                <div className="z2f-meter z2f-meter--durable">
+                  <div className="z2f-meter-head">
+                    <span className="z2f-meter-label">Durable base</span>
+                  </div>
+                  <div className="z2f-meter-row">
+                    <span className="z2f-meter-value tabular-nums">
+                      {meters.durableValue}
+                      <span className="z2f-meter-ceil"> / {ZONE2_DURABLE_CEILING}</span>
+                    </span>
+                    <div
+                      className="z2f-meter-track"
+                      role="img"
+                      aria-label={`Durable base ${meters.durableValue} of ${ZONE2_DURABLE_CEILING}`}
+                    >
+                      <div
+                        className="z2f-meter-fill z2f-meter-fill--durable"
+                        style={{ width: `${meters.durablePct}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="z2f-meter-note">Slow-moving fitness you keep</span>
+                </div>
+
+                <div className="z2f-meter z2f-meter--fast">
+                  <div className="z2f-meter-head">
+                    <span className="z2f-meter-label">
+                      Fast form
+                      {atRisk && <span className="z2f-meter-chip">fading</span>}
+                    </span>
+                  </div>
+                  <div className="z2f-meter-row">
+                    <span className="z2f-meter-value tabular-nums">
+                      {meters.fastValue}
+                      <span className="z2f-meter-ceil"> / {ZONE2_FAST_CEILING}</span>
+                    </span>
+                    <div
+                      className="z2f-meter-track"
+                      role="img"
+                      aria-label={`Fast layer ${meters.fastValue} of ${ZONE2_FAST_CEILING}`}
+                    >
+                      <div
+                        className="z2f-meter-fill z2f-meter-fill--fast"
+                        style={{ width: `${meters.fastPct}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="z2f-meter-note">Responsive fitness that changes quickly</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="z2f-trend" aria-label="Cardio fitness index trajectory">
+            <div className="z2f-trend-head">
+              <span className="z2f-field-label">150-day trajectory</span>
+              <span className="z2f-trend-key">
+                <i aria-hidden="true" /> Index with confidence band
+              </span>
+            </div>
+            <Zone2Trajectory timezone={timezone} compact />
+          </div>
+
+          {!evidenceOk && reason && (
+            <p className="z2f-evidence-note">
+              <span className="z2f-evidence-tag">{latest.evidence_state.replace('_', ' ')}</span>{' '}
+              {reason} Showing last known value.
             </p>
-          </>
-        ) : (
-          <p className="z2f-zones-empty">
-            Set your max HR in Settings and the personalized zone ranges appear here.
+          )}
+
+          <p className="z2f-footnote">
+            <span className="z2f-note-star" aria-hidden="true">
+              *{' '}
+            </span>
+            {HONESTY_CAPTION}
           </p>
-        )}
-      </div>
+        </div>
       </div>
 
       {/* ── Session calendar + cardio Month/Year stat tables, Sessions-style split ── */}
       <div className="z2f-row z2f-row--cal">
-      <div className="z2f-calendar-block">
-        <CalendarHeatmap
-          year={viewYear}
-          month={viewMonth}
-          today={today}
-          daysByKey={daysByKey}
-          onSelectDay={openDay}
-          onPrevMonth={handlePrevMonth}
-          onNextMonth={handleNextMonth}
-          markers={guidance.markers}
-          showDayLabel
-        />
-      </div>
+        <div className="z2f-calendar-block">
+          <CalendarHeatmap
+            year={viewYear}
+            month={viewMonth}
+            today={today}
+            daysByKey={daysByKey}
+            onSelectDay={openDay}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            markers={guidance.markers}
+            showDayLabel
+          />
+        </div>
 
-      <div className="z2f-summary">
-        <SummaryCard title="Month summary" rows={cardioMonthStatRows} />
-        <SummaryCard title={`${viewYear} · monthly average`} rows={cardioYearStatRows} />
-      </div>
+        <div className="z2f-summary">
+          <SummaryCard title="Month summary" rows={cardioMonthStatRows} />
+          <SummaryCard title={`${viewYear} · monthly average`} rows={cardioYearStatRows} />
+        </div>
       </div>
 
       {/* ── Coach card: guidance summary + legend + maintenance nudge, full width below. ── */}
@@ -531,8 +520,8 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           {guidance.phase === 'building' && (
             <span className="z2f-guidance-legend-item z2f-guidance-legend-note">
               <span>
-                Your base is still thin, so there’s no erosion window to defend yet — sessions
-                build it. Hold/eases markers appear once you’ve banked a base.
+                Your base is still thin, so there’s no erosion window to defend yet — sessions build
+                it. Hold/eases markers appear once you’ve banked a base.
               </span>
             </span>
           )}
@@ -576,5 +565,142 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
         />
       )}
     </section>
+  )
+}
+
+/** Zone fill: Z2 carries the domain accent, the rest use the qualitative zone tokens. */
+const ZONE_FILL: Record<number, string> = {
+  1: 'var(--color-zone1)',
+  2: 'var(--color-aerobic)',
+  3: 'var(--color-zone3)',
+  4: 'var(--color-zone4)',
+  5: 'var(--color-zone5)'
+}
+
+/**
+ * HR-zones card (Karvonen Z1–Z5) — lives in Zone2View's main grid. Self-fetches
+ * independently of Zone2FitnessHeader, same Karvonen inputs the nightly job
+ * classifies with: max HR + Z2 band from user_config, resting HR as the 7-day
+ * median.
+ *
+ * Pure REFERENCE, no time data: the five zones are drawn on one shared
+ * horizontal bpm axis spanning [Z1 lower bound, max HR], each zone a colored
+ * segment positioned at its actual [from, to] bpm — so segment position and
+ * width genuinely encode where each zone sits on the HR scale, not an
+ * arbitrary equal split. A few bpm ticks anchor the scale.
+ */
+export function Zone2HrZonesCard({ timezone }: Props): ReactElement {
+  const today = useMemo(() => todayYMD(timezone), [timezone])
+  const configQuery = useUserConfig()
+  const rhrWindow = useMemo(() => {
+    const from = addDays(today, -60)
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    return `${from.year}-${pad(from.month)}-${pad(from.day)}`
+  }, [today])
+  const restingQuery = useDailyMetricsRange(rhrWindow, ymdKey(today))
+
+  const hrZones = useMemo(() => {
+    const hrMax = configQuery.data?.hr_max
+    if (hrMax == null) return null
+    const restingByDate = new Map<string, number>()
+    for (const d of restingQuery.data ?? []) {
+      if (d.resting_hr != null) restingByDate.set(d.date, d.resting_hr)
+    }
+    const rhr = rhrRecent(restingByDate, ymdKey(today))
+    return {
+      hrMax,
+      rhr: Math.round(rhr),
+      ranges: zoneRanges(
+        hrMax,
+        rhr,
+        configQuery.data?.zone2_low_frac ?? 0.6,
+        configQuery.data?.zone2_high_frac ?? 0.7
+      )
+    }
+  }, [configQuery.data, restingQuery.data, today])
+
+  if (!hrZones) {
+    return (
+      <div className="z2hr" aria-label="Heart-rate zones">
+        <p className="z2hr-empty">
+          Set your max HR in Settings and your personalized Karvonen zone ranges appear here.
+        </p>
+      </div>
+    )
+  }
+
+  const axisMin = hrZones.ranges[0].fromBpm
+  const axisMax = hrZones.hrMax
+  const bpmScale = scaleLinear().domain([axisMin, axisMax]).range([0, 100]).clamp(true)
+
+  // Label the axis with the actual zone thresholds (each zone's upper bound plus
+  // the resting-HR floor) rather than arbitrary round numbers — the ticks line
+  // up exactly with the segment edges instead of scattering across them.
+  const axisTicks = Array.from(
+    new Set<number>([axisMin, ...hrZones.ranges.map((r) => r.toBpm ?? axisMax)])
+  ).sort((a, b) => a - b)
+
+  return (
+    <div className="z2hr" aria-label="Heart-rate zone reference">
+      <div
+        className="z2hr-track"
+        role="img"
+        aria-label={`Heart-rate zones from ${axisMin} to ${axisMax} bpm`}
+      >
+        {hrZones.ranges.map((r) => {
+          const to = r.toBpm ?? axisMax
+          const left = bpmScale(r.fromBpm)
+          const width = Math.max(bpmScale(to) - left, 0.5)
+          return (
+            <div
+              key={r.zone}
+              className="z2hr-segment"
+              style={{ left: `${left}%`, width: `${width}%`, background: ZONE_FILL[r.zone] }}
+              title={`Z${r.zone} ${ZONE_INTENT[r.zone]}: ${r.fromBpm}–${to} bpm`}
+            />
+          )
+        })}
+      </div>
+
+      <div className="z2hr-axis" aria-hidden="true">
+        {axisTicks.map((bpm) => {
+          const pos = bpmScale(bpm)
+          // Keep the endpoint labels inside the track instead of half-clipped.
+          const transform =
+            pos <= 1 ? 'translateX(0)' : pos >= 99 ? 'translateX(-100%)' : 'translateX(-50%)'
+          return (
+            <span key={bpm} className="z2hr-axis-tick" style={{ left: `${pos}%`, transform }}>
+              {bpm}
+            </span>
+          )
+        })}
+      </div>
+
+      <div className="z2hr-rows">
+        {hrZones.ranges.map((r) => (
+          <div className="z2hr-row" key={r.zone}>
+            <span
+              className="z2hr-zone-swatch"
+              style={{ background: ZONE_FILL[r.zone] }}
+              aria-hidden="true"
+            />
+            <span className="z2hr-zone-name">
+              Z{r.zone}
+              <span className="z2hr-zone-intent">{ZONE_INTENT[r.zone]}</span>
+            </span>
+            <span className="z2hr-zone-bpm tabular-nums">
+              {r.fromBpm}–{r.toBpm ?? hrZones.hrMax} bpm
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <p className="z2hr-caption">
+        Karvonen zones from max HR {hrZones.hrMax} and your 7-day resting median {hrZones.rhr} — the
+        same math the nightly job classifies with. Swim readings are counted ~
+        {Math.abs(configQuery.data?.swim_hr_offset ?? -10)} bpm higher (the wrist reads low in
+        water).
+      </p>
+    </div>
   )
 }

@@ -1,3 +1,111 @@
+.z2traj {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+/* Compact variant fills its card (title pinned top, chart stretching below)
+   instead of floating a fixed-height chart in vertical dead space. */
+.z2traj--compact {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.z2traj-snapshot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.z2traj-current {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  color: var(--color-text);
+}
+
+.z2traj-change {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-aerobic-text);
+}
+
+.z2traj-change--down {
+  color: var(--color-text-tertiary);
+}
+
+.z2traj-plot {
+  flex: 1 1 148px;
+  min-height: 132px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-xs) 0;
+}
+
+.z2traj-anchors {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.z2traj-anchor {
+  min-width: 0;
+}
+
+.z2traj-anchor--now {
+  text-align: center;
+}
+
+.z2traj-anchor--band {
+  text-align: right;
+}
+
+.z2traj-anchor dt,
+.z2traj-anchor dd {
+  margin: 0;
+  font-family: var(--font-body);
+}
+
+.z2traj-anchor dt {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.z2traj-anchor dd {
+  margin-top: var(--space-xxs);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  line-height: var(--type-body-sm-line-height);
+  color: var(--color-text);
+}
+
+@media (max-width: 520px) {
+  .z2traj-anchors {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: var(--space-sm);
+  }
+
+  .z2traj-anchor--now {
+    text-align: right;
+  }
+
+  .z2traj-anchor--band {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
 .z2traj-empty {
   margin: var(--space-lg) 0;
   font-family: var(--font-body);

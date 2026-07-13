@@ -113,6 +113,45 @@
   letter-spacing: var(--type-caption-letter-spacing);
 }
 
+.injury-plan-timing {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  max-width: 100%;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding: 6px 10px;
+  border: 1px solid var(--color-divider-soft);
+  border-radius: var(--radius-full);
+  color: var(--color-text-tertiary);
+  background: var(--color-surface);
+}
+
+.injury-plan-date-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+}
+
+.injury-plan-date-button:hover:not(:disabled) { color: var(--color-text); }
+.injury-plan-date-button:disabled { cursor: default; }
+
+.injury-plan-week {
+  padding-left: var(--space-xs);
+  border-left: 1px solid var(--color-divider-soft);
+  color: var(--color-accent);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+}
+
+.injury-plan-date-field { display:flex; align-items:center; gap:var(--space-xs); font-size:var(--type-caption-size); }
+.injury-plan-date-field input { border:0; background:transparent; color:var(--color-text); font:inherit; color-scheme:dark; }
+.injury-plan-date-error { color:var(--color-danger); font-size:var(--type-caption-size); }
+
 /* ── stat row ────────────────────────────────────────────────────────────── */
 .injury-stat-row {
   display: grid;
@@ -236,6 +275,35 @@
 .injury-action-btn--active {
   background: var(--color-surface-hover);
   border-color: var(--color-text-tertiary);
+}
+
+/* ── status control (Mark as healed · Reopen) ─────────────────────────────── */
+.injury-status-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+/* Sits inside injury-actions (readOnly branch) — no duplicate top border. */
+.injury-actions .injury-status-control {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.injury-confirm-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+/* Confirm step reads as committing an action — quietly emphasized, not alarmed. */
+.injury-action-btn--confirm {
+  border-color: var(--color-text);
 }
 
 /* ── flare form ──────────────────────────────────────────────────────────── */
@@ -455,6 +523,13 @@
   overflow: hidden;
 }
 
+/* The comprehensive plan and Gym recovery-template detail share the same
+   structured body; only their surrounding action headers differ. */
+.injury-modal:has(.recovery-detail) {
+  width: min(940px, 92vw);
+  max-width: 940px;
+}
+
 .injury-modal-head {
   display: flex;
   align-items: center;
@@ -471,6 +546,17 @@
   letter-spacing: var(--type-heading-md-letter-spacing);
   color: var(--color-text);
   margin: 0;
+}
+
+.injury-modal-kicker {
+  display: block;
+  margin-bottom: var(--space-xxs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
 }
 
 .injury-modal-close {
@@ -611,15 +697,32 @@
 
 .injury-adh-th-item {
   text-align: center;
+  min-width: 116px;
+}
+
+.injury-adh-th--future,
+.injury-adh-cell--future { opacity: .55; }
+.injury-adh-th-phase {
+  color: var(--color-text-tertiary);
 }
 
 .injury-adh-th-label {
-  display: inline-block;
-  max-width: 84px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: block;
+  max-width: 132px;
+  white-space: normal;
+  line-height: var(--type-label-line-height);
+}
+
+.injury-adh-th-meta {
+  display: block;
+  margin-top: var(--space-xxs);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  font-weight: 400;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  text-transform: none;
   white-space: nowrap;
-  vertical-align: middle;
 }
 
 /* Activity columns read as "allowed training", not scored: lighter + italicised. */
@@ -800,7 +903,15 @@
 }
 
 /* ── notes feed ──────────────────────────────────────────────────────────── */
+.injury-notes-feed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
 .injury-notes {
+  width: 100%;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -824,6 +935,57 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
+}
+
+/* Per-entry delete (x): quiet icon button, hover-revealed, mirrors the chat
+   attachment-remove control. Pinned to the row's trailing edge. */
+.injury-log-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: background var(--motion-hover), color var(--motion-hover), opacity var(--motion-hover);
+}
+
+.injury-note-row:hover .injury-log-remove,
+.injury-log-remove:focus-visible,
+.injury-log-remove--confirm {
+  opacity: 1;
+}
+
+.injury-log-remove:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.injury-log-remove:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.injury-log-remove--confirm {
+  color: var(--color-flag-text);
+  background: var(--color-flag-dim);
+}
+
+.injury-log-remove--confirm:hover:not(:disabled) {
+  background: var(--color-flag-dim);
+  color: var(--color-flag-text);
+}
+
+.injury-log-remove:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--color-text-disabled);
 }
 
 .injury-note-date {
@@ -870,6 +1032,36 @@
   font-size: var(--type-body-sm-size);
   line-height: var(--type-body-sm-line-height);
   color: var(--color-text-secondary);
+}
+
+.injury-notes-toggle {
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  transition:
+    background-color 160ms ease-out,
+    color 160ms ease-out,
+    border-color 160ms ease-out;
+}
+
+.injury-notes-toggle:hover {
+  border-color: var(--color-text-disabled);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.injury-notes-toggle:focus-visible {
+  outline: 1px solid var(--color-text-tertiary);
+  outline-offset: 2px;
 }
 
 .injury-showall {

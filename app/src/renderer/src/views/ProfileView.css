@@ -53,6 +53,91 @@
   margin: 0;
 }
 
+/* ── about me ────────────────────────────────────────────────────────────── */
+.profile-about-hint {
+  margin: calc(-1 * var(--space-xs)) 0 0;
+}
+
+.profile-about-view {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.profile-about-view:hover {
+  background: var(--color-surface-hover);
+}
+
+.profile-about-text {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+}
+
+.profile-about-view-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.profile-about-saved {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.profile-about-saved--visible {
+  opacity: 1;
+}
+
+.profile-about-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.profile-about-textarea {
+  min-height: 140px;
+}
+
+.profile-about-edit-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.profile-about-count {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.profile-about-count--over {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.profile-about-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.profile-about-error {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 /* ── achievements ────────────────────────────────────────────────────────── */
 .profile-badge-grid {
   display: grid;
@@ -138,6 +223,53 @@
 .profile-tab--active:hover {
   background: var(--color-text);
   color: var(--color-text-on-accent);
+}
+
+/* ── goal archive table (compact list, mirrors Injuries' history table) ────── */
+.profile-archive-wrap {
+  overflow-x: auto;
+}
+
+.profile-archive-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.profile-archive-table th {
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-hairline);
+  white-space: nowrap;
+}
+
+.profile-archive-row {
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.profile-archive-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.profile-archive-row td {
+  padding: var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-divider-soft);
+  white-space: nowrap;
+}
+
+.profile-archive-row td:first-child {
+  color: var(--color-text);
+  font-weight: 500;
+  white-space: normal;
 }
 
 /* ── goal grid + card ────────────────────────────────────────────────────── */

@@ -65,6 +65,14 @@ export interface WorkoutGeo {
   lon: number
 }
 
+/** Lightweight batched geography projection for history/summary views. */
+export interface WorkoutPlace {
+  workout_id: string
+  city: string | null
+  country: string | null
+  admin: string | null
+}
+
 export interface WorkoutDetail {
   workout: Omit<Workout, 'computed'>
   hrSamples: WorkoutHrSample[]
@@ -113,8 +121,13 @@ export interface UserConfig {
   zone2_low_frac: number | null
   zone2_high_frac: number | null
   zone2_weekly_target_min: number
+  sleep_goal_min: number
+  bedtime_goal_min: number
   weekly_min_sessions: Record<string, unknown> | null
   timezone: string | null
+  // Free-text personal context the user maintains on the Profile tab; read by
+  // the chat agent so it knows who it's coaching.
+  about_me: string | null
 }
 
 // Editable subset of UserConfig — excludes `id`, which is fixed at 1.
@@ -126,8 +139,11 @@ export type UserConfigPatch = Partial<
     | 'zone2_low_frac'
     | 'zone2_high_frac'
     | 'zone2_weekly_target_min'
+    | 'sleep_goal_min'
+    | 'bedtime_goal_min'
     | 'weekly_min_sessions'
     | 'timezone'
+    | 'about_me'
   >
 >
 
@@ -150,6 +166,8 @@ export interface Injury {
   status: 'active' | 'recovering' | 'resolved'
   severity: 'mild' | 'moderate' | 'severe' | null
   started_at: string | null
+  // Start of the current recovery plan, distinct from injury onset.
+  plan_started_at: string | null
   resolved_at: string | null
   summary: string | null
   recovery_plan: string | null
@@ -183,6 +201,16 @@ export interface NewInjuryLog {
   entry_date?: string // YYYY-MM-DD, defaults to today
 }
 
+export interface RecoveryPlanStep {
+  name: string
+  sets: number | null
+  reps: number | null
+  duration_seconds: number | null
+  distance_m: number | null
+  per_side: boolean | null
+  note: string | null
+}
+
 export interface RecoveryPlanItem {
   id: string
   injury_id: string
@@ -198,6 +226,15 @@ export interface RecoveryPlanItem {
   // Both null → the app's provisional blanket rating applies.
   green_min: number | null
   yellow_min: number | null
+  // Cumulative plan phase: week 1 starts at injury.plan_started_at.
+  start_week: number
+  // Structured exercise dose authored by the recovery-plan agent. When the
+  // item is linked to the exercise catalog these values prefill Gym logging.
+  target_sets: number | null
+  target_reps: number | null
+  // Composite routines that do not map to one catalog exercise remain fully
+  // structured instead of hiding their dose inside prose.
+  steps: RecoveryPlanStep[] | null
   note: string | null
   active: boolean
   // Linked exercises-catalog entry (agent-maintained via injuries.py): gym
@@ -257,7 +294,20 @@ export interface GymTemplateItem {
   target_sets: number | null
   target_reps: number | null
   target_weight_kg: number | null
+  // Per-exercise rest override in seconds. null = fall back to the template's
+  // default_rest_s. The effective rest is `rest_after_s ?? default_rest_s`.
+  rest_after_s: number | null
   note: string | null
+}
+
+// One start→end period a template was in use. A new run opens when a template
+// is activated/resurrected and closes on "mark complete" (or coach archive).
+export interface GymTemplateRun {
+  id: string
+  template_id: string
+  started_at: string
+  ended_at: string | null // null = currently active
+  source: string
 }
 
 export interface GymTemplate {
@@ -265,7 +315,18 @@ export interface GymTemplate {
   name: string
   notes: string | null
   archived: boolean
+  // Default rest between sets (seconds) applied to every exercise unless the
+  // exercise sets its own rest_after_s. null = no default configured.
+  default_rest_s: number | null
+  // Versioning: every version of a template shares family_id; version counts up;
+  // is_current marks the one the app logs against and defaults the dropdown to.
+  family_id: string
+  version: number
+  is_current: boolean
   items: GymTemplateItem[]
+  // This version's run history, most recent first. A trailing run with
+  // ended_at === null means the template is currently active.
+  runs: GymTemplateRun[]
   created_at: string | null
   updated_at: string | null
 }
@@ -290,7 +351,10 @@ export interface GymSet {
 export interface GymSession {
   id: string
   workout_id: string | null
+  /** Legacy primary template, kept for older records and quick summaries. */
   template_id: string | null
+  /** Every template applied to this log, in editor insertion order. */
+  template_ids: string[]
   performed_at: string
   title: string | null
   notes: string | null
@@ -318,7 +382,10 @@ export interface NewGymSet {
 // derived server-side from the linked workout and the field here is ignored.
 export interface NewGymSession {
   workout_id?: string | null
+  /** Legacy primary template. Prefer template_ids for new logs. */
   template_id?: string | null
+  /** Templates whose exercise blocks were added to this log. */
+  template_ids?: string[]
   performed_at?: string // ISO instant; only used when workout_id is null
   title?: string | null
   notes?: string | null
@@ -332,6 +399,8 @@ export interface GymSessionPatch {
   title?: string | null
   notes?: string | null
   template_id?: string | null
+  /** Replaces this session's full applied-template list. */
+  template_ids?: string[]
   body_parts?: GymBodyPart[] | null
   sets?: NewGymSet[]
 }
@@ -341,12 +410,16 @@ export interface NewGymTemplateItem {
   target_sets: number | null
   target_reps: number | null
   target_weight_kg: number | null
+  // Per-exercise rest override in seconds; null/omitted = use the template default.
+  rest_after_s?: number | null
   note?: string | null
 }
 
 export interface NewGymTemplate {
   name: string
   notes: string | null
+  // Default rest between sets (seconds) for the whole template; null = none.
+  default_rest_s?: number | null
   items: NewGymTemplateItem[]
 }
 
@@ -355,7 +428,32 @@ export interface GymTemplatePatch {
   name?: string
   notes?: string | null
   archived?: boolean
+  default_rest_s?: number | null
   items?: NewGymTemplateItem[]
+}
+
+// Manual protein tracker: one daily-total row (protein_log table). grams is
+// additive across the day — addProtein increments the existing row rather
+// than replacing it, so "40g at lunch, +40g at dinner" becomes {grams: 80}.
+// setProtein overwrites instead, for corrections.
+export interface ProteinDay {
+  log_date: string // YYYY-MM-DD
+  grams: number
+}
+
+/** Returned instead of a database row when a supported write is durable locally. */
+export interface QueuedWriteReceipt {
+  queued: true
+  operationId: string
+}
+
+export type QueueableWriteResult<T> = T | QueuedWriteReceipt
+
+export interface OfflineQueueStatus {
+  pending: number
+  failed: number
+  syncing: boolean
+  lastError: string | null
 }
 
 export interface Goal {
@@ -364,6 +462,8 @@ export interface Goal {
   description: string | null
   status: 'active' | 'on_hold' | 'completed' | 'abandoned'
   started_at: string
+  // When the status last changed (drives the card's "active for X since …").
+  status_changed_at: string | null
   duration_days: number | null
   created_by: 'user' | 'chat'
   // AI-built progress metric — all null until the chat agent defines it.
@@ -450,6 +550,7 @@ export interface Zone2Fitness {
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
   getWorkoutDetail(id: string): Promise<WorkoutDetail>
+  getWorkoutPlaces(workoutIds: string[]): Promise<WorkoutPlace[]>
   getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]>
   getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
   getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
@@ -458,19 +559,42 @@ export interface HealthApi {
   getTodayFlags(): Promise<Flag[]>
   getInjuries(): Promise<Injury[]>
   getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]>
-  addInjuryLog(entry: NewInjuryLog): Promise<InjuryLogEntry>
+  addInjuryLog(entry: NewInjuryLog): Promise<QueueableWriteResult<InjuryLogEntry>>
+  deleteInjuryLog(id: number): Promise<QueueableWriteResult<void>>
+  // End/reopen a recovery plan: 'resolved' marks it healed (sets resolved_at
+  // server-side); 'active'/'recovering' reopen it (clears resolved_at).
+  updateInjuryStatus(
+    injuryId: string,
+    status: Injury['status']
+  ): Promise<QueueableWriteResult<Injury>>
   getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[]>
+  updateInjuryPlanStart(injuryId: string, planStartedAt: string): Promise<QueueableWriteResult<Injury>>
+  // Edit when the injury itself began (distinct from when the recovery plan started).
+  updateInjuryStartedAt(injuryId: string, startedAt: string): Promise<QueueableWriteResult<Injury>>
   getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
-  setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<void>
+  setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<QueueableWriteResult<void>>
   getExercises(): Promise<Exercise[]>
   addExercise(name: string, bodyPart: GymBodyPart | null): Promise<Exercise>
   getGymTemplates(): Promise<GymTemplate[]>
-  addGymTemplate(template: NewGymTemplate): Promise<GymTemplate>
-  updateGymTemplate(id: string, patch: GymTemplatePatch): Promise<GymTemplate>
+  addGymTemplate(template: NewGymTemplate): Promise<QueueableWriteResult<GymTemplate>>
+  updateGymTemplate(id: string, patch: GymTemplatePatch): Promise<QueueableWriteResult<GymTemplate>>
+  deleteGymTemplate(id: string): Promise<QueueableWriteResult<void>>
+  // Save an edited template as the next version in its family (previous versions
+  // stay in history; the new one becomes current).
+  createGymTemplateVersion(
+    baseTemplateId: string,
+    template: NewGymTemplate
+  ): Promise<QueueableWriteResult<GymTemplate>>
+  // All versions of a template family, ascending by version — powers the dropdown.
+  getGymTemplateVersions(familyId: string): Promise<GymTemplate[]>
+  // Open a run (activate / resurrect). No-op returning the open run if one exists.
+  startGymTemplateRun(templateId: string): Promise<QueueableWriteResult<GymTemplateRun>>
+  // Close the open run ("mark complete" / coach archive). Returns null if none open.
+  completeGymTemplateRun(templateId: string): Promise<QueueableWriteResult<GymTemplateRun | null>>
   getGymSessions(fromIso: string, toIso: string): Promise<GymSession[]>
-  addGymSession(session: NewGymSession): Promise<GymSession>
-  updateGymSession(id: string, patch: GymSessionPatch): Promise<GymSession>
-  deleteGymSession(id: string): Promise<void>
+  addGymSession(session: NewGymSession): Promise<QueueableWriteResult<GymSession>>
+  updateGymSession(id: string, patch: GymSessionPatch): Promise<QueueableWriteResult<GymSession>>
+  deleteGymSession(id: string): Promise<QueueableWriteResult<void>>
   getGoals(): Promise<Goal[]>
   getGoalProgress(goalId: string): Promise<GoalProgressPoint[]>
   addGoal(goal: NewGoal): Promise<Goal>
@@ -479,6 +603,14 @@ export interface HealthApi {
   // progress metric via goals.py; resolves when the run exits. Long-running.
   buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
   getZone2Fitness(fromDate: string, toDate: string): Promise<Zone2Fitness[]>
+  getProteinLog(fromDate: string, toDate: string): Promise<ProteinDay[]>
+  /** Increments the day's existing total (additive stacking — "+40g at dinner"). */
+  addProtein(date: string, grams: number): Promise<QueueableWriteResult<ProteinDay>>
+  /** Overwrites the day's total outright — for corrections, not stacking. */
+  setProtein(date: string, grams: number): Promise<QueueableWriteResult<ProteinDay>>
+  getOfflineQueueStatus(): Promise<OfflineQueueStatus>
+  retryOfflineQueue(): Promise<OfflineQueueStatus>
+  onOfflineQueueStatus(listener: (status: OfflineQueueStatus) => void): () => void
   getDbStatus(): Promise<DbStatus>
   /** Most recent raw_payloads.received_at (ISO string), or null if no payloads. Used as the data-freshness probe behind the Refresh button. */
   getLastIngestAt(): Promise<string | null>
@@ -487,16 +619,30 @@ export interface HealthApi {
   chatStatus(): Promise<ChatStatus>
   chatListSessions(): Promise<ChatSessionMeta[]>
   chatGetSession(id: string): Promise<ChatSession | null>
-  chatSend(sessionId: string | null, message: string): Promise<{ sessionId: string }>
+  chatPickAttachments(): Promise<ChatAttachment[]>
+  // Validate drag-and-dropped file paths through the same size/type/existence
+  // checks as the picker; returns the accepted attachments or throws.
+  chatValidateAttachments(paths: string[]): Promise<ChatAttachment[]>
+  // Resolve the absolute filesystem path of a dropped File. Runs in the preload
+  // via Electron's webUtils (dropped File objects no longer expose `.path`).
+  getPathForFile(file: File): string
+  chatSend(
+    sessionId: string | null,
+    message: string,
+    attachmentPaths?: string[]
+  ): Promise<{ sessionId: string }>
   chatStop(sessionId: string): Promise<boolean>
   chatRename(id: string, title: string): Promise<void>
   chatDelete(id: string): Promise<void>
-  onChatStream(listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void): () => void
+  onChatStream(
+    listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void
+  ): () => void
 }
 
 export const IPC_CHANNELS = {
   getWorkouts: 'db:getWorkouts',
   getWorkoutDetail: 'db:getWorkoutDetail',
+  getWorkoutPlaces: 'db:getWorkoutPlaces',
   getSwimSets: 'db:getSwimSets',
   getDailyMetrics: 'db:getDailyMetrics',
   getComputedDaily: 'db:getComputedDaily',
@@ -506,7 +652,11 @@ export const IPC_CHANNELS = {
   getInjuries: 'db:getInjuries',
   getInjuryLog: 'db:getInjuryLog',
   addInjuryLog: 'db:addInjuryLog',
+  deleteInjuryLog: 'db:deleteInjuryLog',
+  updateInjuryStatus: 'db:updateInjuryStatus',
   getInjuryPlan: 'db:getInjuryPlan',
+  updateInjuryPlanStart: 'db:updateInjuryPlanStart',
+  updateInjuryStartedAt: 'db:updateInjuryStartedAt',
   getInjuryPlanChecks: 'db:getInjuryPlanChecks',
   setPlanItemCheck: 'db:setPlanItemCheck',
   getExercises: 'db:getExercises',
@@ -514,6 +664,11 @@ export const IPC_CHANNELS = {
   getGymTemplates: 'db:getGymTemplates',
   addGymTemplate: 'db:addGymTemplate',
   updateGymTemplate: 'db:updateGymTemplate',
+  deleteGymTemplate: 'db:deleteGymTemplate',
+  createGymTemplateVersion: 'db:createGymTemplateVersion',
+  getGymTemplateVersions: 'db:getGymTemplateVersions',
+  startGymTemplateRun: 'db:startGymTemplateRun',
+  completeGymTemplateRun: 'db:completeGymTemplateRun',
   getGymSessions: 'db:getGymSessions',
   addGymSession: 'db:addGymSession',
   updateGymSession: 'db:updateGymSession',
@@ -523,6 +678,12 @@ export const IPC_CHANNELS = {
   addGoal: 'db:addGoal',
   updateGoal: 'db:updateGoal',
   getZone2Fitness: 'db:getZone2Fitness',
+  getProteinLog: 'db:getProteinLog',
+  addProtein: 'db:addProtein',
+  setProtein: 'db:setProtein',
+  getOfflineQueueStatus: 'offlineQueue:getStatus',
+  retryOfflineQueue: 'offlineQueue:retry',
+  offlineQueueStatus: 'offlineQueue:status',
   // Handler in index.ts delegates to chat.ts, which owns CLI process spawning.
   buildGoalMetric: 'goals:buildMetric',
   getDbStatus: 'db:getDbStatus',
@@ -532,12 +693,23 @@ export const IPC_CHANNELS = {
   chatStatus: 'chat:status',
   chatListSessions: 'chat:listSessions',
   chatGetSession: 'chat:getSession',
+  chatPickAttachments: 'chat:pickAttachments',
+  chatValidateAttachments: 'chat:validateAttachments',
   chatSend: 'chat:send',
   // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
   chatStop: 'chat:stop',
   chatRename: 'chat:rename',
   chatDelete: 'chat:delete'
 } as const
+
+/** A user-selected local file. Contents never cross into the renderer process. */
+export interface ChatAttachment {
+  path: string
+  name: string
+  sizeBytes: number
+}
+
+export const MAX_CHAT_ATTACHMENTS = 8
 
 export interface InsightCorrelation {
   var_x: string
@@ -552,7 +724,10 @@ export interface InsightModel {
   name: string
   computed_at: string | null
   spec: string | null
-  coefficients: Record<string, { coef: number; ci_low: number; ci_high: number; p_value: number }> | null
+  coefficients: Record<
+    string,
+    { coef: number; ci_low: number; ci_high: number; p_value: number }
+  > | null
   diagnostics: { n?: number; r2?: number; caveat?: string } | null
 }
 

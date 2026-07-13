@@ -41,6 +41,11 @@
   color: var(--color-text-secondary);
 }
 
+.zone2-tab:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
 .zone2-tab--active {
   color: var(--color-text);
   font-weight: 600;
@@ -62,65 +67,122 @@
   }
 }
 
-/* Swim-only stat area: 2 MetricCard columns + a pace table spanning both
-   rows, then a second row of two more MetricCards under the first two.
-   Row gap is tightened relative to .zone2-stat-row's — these four cards
-   read as one dense block, not four independent stats. */
-.zone2-swim-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.4fr;
-  grid-template-rows: auto auto;
-  /* Rows sized to their own content (start-aligned), not stretched to match
-     the pace table's height — otherwise the two shorter MetricCard columns
-     inflate to the taller table's height and read as a block of dead space. */
-  align-items: start;
-  gap: var(--space-md); /* card-to-card contract */
-}
-
-.zone2-swim-pace-table {
-  grid-column: 3;
-  grid-row: 1 / span 2;
+.zone2-swim-overview {
+  overflow: hidden;
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
 }
 
-.zone2-swim-pace-table-title {
-  margin: 0;
+.zone2-swim-overview-top {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.05fr) minmax(0, 2fr);
+}
+
+.zone2-swim-volume {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-xl);
+}
+
+.zone2-swim-eyebrow,
+.zone2-swim-facts span,
+.zone2-swim-pace-history-label,
+.zone2-swim-pace-months span {
+  color: var(--color-text-tertiary);
   font-family: var(--font-body);
   font-size: var(--type-label-size);
   font-weight: var(--type-label-weight);
-  letter-spacing: var(--type-label-letter-spacing);
   line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
   text-transform: uppercase;
+}
+
+.zone2-swim-volume-value {
+  color: var(--color-aerobic-text);
+  font-family: var(--font-display);
+  font-size: clamp(var(--type-heading-lg-size), 3.5vw, 48px);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: 1;
+  letter-spacing: -0.6px;
+}
+
+.zone2-swim-volume-caption,
+.zone2-swim-facts small,
+.zone2-swim-pace-empty {
   color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
 }
 
-@media (max-width: 900px) {
-  .zone2-swim-stats {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto auto;
-  }
-
-  .zone2-swim-pace-table {
-    grid-column: 1 / span 2;
-    grid-row: 3;
-  }
+.zone2-swim-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-left: 1px solid var(--color-divider-soft);
 }
 
-@media (max-width: 560px) {
-  .zone2-swim-stats {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto;
-  }
+.zone2-swim-facts > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-lg);
+  border-left: 1px solid var(--color-divider-soft);
+}
 
-  .zone2-swim-pace-table {
-    grid-column: 1;
-    grid-row: auto;
-  }
+.zone2-swim-facts > div:first-child {
+  border-left: 0;
+}
+
+.zone2-swim-facts strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zone2-swim-pace-history {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.65fr) minmax(0, 2fr);
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-lg) var(--space-xl);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.zone2-swim-pace-history-label {
+  color: var(--color-text-secondary);
+}
+
+.zone2-swim-pace-months {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.zone2-swim-pace-months div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.zone2-swim-pace-months strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  line-height: var(--type-body-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .zone2-ef-explainer {
@@ -138,6 +200,65 @@
   gap: var(--space-md);
 }
 
+.zone2-section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xl);
+}
+
+.zone2-section-heading h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+}
+
+.zone2-section-heading p {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+}
+
+.zone2-chart-key,
+.zone2-chart-key span {
+  display: flex;
+  align-items: center;
+}
+
+.zone2-chart-key {
+  gap: var(--space-md);
+}
+
+.zone2-chart-key span,
+.zone2-chart-unit {
+  gap: var(--space-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.zone2-chart-key-swatch {
+  display: block;
+  width: 16px;
+  border-top: 2px solid var(--color-aerobic);
+}
+
+.zone2-chart-key-swatch--neutral {
+  border-top-color: var(--color-text-tertiary);
+}
+
+.zone2-chart-key-swatch--dashed {
+  border-top-style: dashed;
+}
 
 .zone2-grid .chart-card--span-12 {
   grid-column: span 12;
@@ -160,4 +281,40 @@
   line-height: 1.4;
   letter-spacing: 0.24px;
   color: var(--color-text-tertiary);
+}
+
+@media (max-width: 1100px) {
+  .zone2-swim-overview-top,
+  .zone2-swim-pace-history {
+    grid-template-columns: 1fr;
+  }
+
+  .zone2-swim-facts {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .zone2-swim-pace-months {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .zone2-swim-facts,
+  .zone2-swim-pace-months {
+    grid-template-columns: 1fr;
+  }
+
+  .zone2-swim-facts > div {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .zone2-swim-facts > div:first-child {
+    border-top: 0;
+  }
+
+  .zone2-chart-key {
+    display: none;
+  }
 }

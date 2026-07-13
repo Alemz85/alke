@@ -1,7 +1,52 @@
 // Formatting, date, and small-stats helpers scoped to the Recovery view.
 import type { DailyMetric } from '@shared/types'
+import { scaleLinear } from 'd3-scale'
 
 const EM_DASH = '—'
+
+export function chartAxis(
+  values: number[],
+  { padding = 0, tickCount = 4 }: { padding?: number; tickCount?: number } = {}
+): { domain: [number, number]; ticks: number[] } {
+  const finite = values.filter(Number.isFinite)
+  if (finite.length === 0) return { domain: [0, 1], ticks: [0, 0.5, 1] }
+  const low = Math.min(...finite)
+  const high = Math.max(...finite)
+  const spread = high - low || Math.max(Math.abs(low) * 0.1, 1)
+  const scale = scaleLinear()
+    .domain([low - Math.max(padding, spread * 0.08), high + Math.max(padding, spread * 0.08)])
+    .nice(tickCount)
+  return { domain: scale.domain() as [number, number], ticks: scale.ticks(tickCount) }
+}
+
+/** Local clock minutes shifted after noon, so 23:30 and 00:30 stay adjacent. */
+export function clockMinutesOnSleepAxis(
+  iso: string | null | undefined,
+  timezone: string | null | undefined
+): number | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone ?? 'UTC', hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(date)
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value)
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  const minutes = (hour % 24) * 60 + minute
+  return minutes < 12 * 60 ? minutes + 24 * 60 : minutes
+}
+
+/** Maps a local clock target onto the same continuous overnight axis as sleep starts. */
+export function clockGoalMinutesOnSleepAxis(minutesAfterMidnight: number): number {
+  const normalized = ((Math.round(minutesAfterMidnight) % (24 * 60)) + 24 * 60) % (24 * 60)
+  return normalized < 12 * 60 ? normalized + 24 * 60 : normalized
+}
+
+export function fmtSleepAxisTime(minutes: number): string {
+  const normalized = ((Math.round(minutes) % (24 * 60)) + 24 * 60) % (24 * 60)
+  return `${Math.floor(normalized / 60).toString().padStart(2, '0')}:${(normalized % 60).toString().padStart(2, '0')}`
+}
 
 /** Formats a number with fixed decimals, or an em-dash if null/undefined/NaN. */
 export function fmtNum(value: number | null | undefined, decimals = 1): string {

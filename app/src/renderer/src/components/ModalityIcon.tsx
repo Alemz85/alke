@@ -8,8 +8,8 @@ const ICON_RULES: [RegExp, LucideIcon][] = [
   [/swim/, Waves],
   [/cycl|bik/, Bike],
   [/row/, Sailboat],
-  [/walk|hik/, Footprints],
-  [/strength|weight|core|functional/, Dumbbell]
+  [/run|walk|hik/, Footprints],
+  [/strength|weight|core|functional|gym|lift/, Dumbbell]
 ]
 
 export function modalityIcon(type: string | null): LucideIcon {

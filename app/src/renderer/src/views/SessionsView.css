@@ -1,8 +1,26 @@
-.sessions-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: var(--space-md);
-  align-items: stretch;
+/* Back-to-Dashboard affordance above the tab header (the calendar + summaries
+   now live on the Dashboard; this view is the full filterable session list). */
+.sessions-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: flex-start;
+  padding: 6px 14px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.sessions-back:hover {
+  background: var(--color-surface-hover);
 }
 
 .sessions-list-section {
@@ -11,32 +29,12 @@
   gap: var(--space-sm);
 }
 
-.sessions-grid-calendar {
+.sessions-list-header {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-md);
-  min-height: 0;
-}
-
-/* Equal heights, calendar-driven: the calendar keeps its natural width-driven
-   height (square-ish cells at every window size), and the summary column
-   stretches to match — the two cards share the height and their table rows
-   space out into it. When the tables' own minimum exceeds the calendar, the
-   calendar CARD fills the row instead (slack inside the card, cells never
-   morph) so the card bottoms always align. */
-.sessions-grid-calendar > .calendar-heatmap {
-  flex: 1;
-}
-
-.sessions-grid-summary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.sessions-empty-note {
-  background: var(--color-surface-elevated);
-  border-radius: var(--radius-lg);
+  flex-wrap: wrap;
 }
 
 .sessions-list-title {
@@ -46,10 +44,4 @@
   line-height: var(--type-heading-md-line-height);
   letter-spacing: var(--type-heading-md-letter-spacing);
   color: var(--color-text);
-}
-
-@media (max-width: 1099px) {
-  .sessions-grid {
-    grid-template-columns: 1fr;
-  }
 }

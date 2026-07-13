@@ -1,0 +1,188 @@
+/* Protein tracker card (Gym > Main). The day total and compact entry control
+   form one row so logging a meal is immediate rather than a form field below
+   the metric. Chrome remains neutral; the selected day carries the data cue. */
+
+.protein-card {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.protein-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.protein-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* ── day navigator ───────────────────────────────────────────────────────── */
+.protein-daynav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.protein-daynav-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.protein-daynav-arrow:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.protein-daynav-arrow:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.protein-daynav-label {
+  min-width: 52px;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── daily total + add entry ─────────────────────────────────────────────── */
+.protein-total-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.protein-total {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.protein-eyebrow {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.protein-total-value {
+  color: var(--color-load-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  line-height: var(--type-heading-lg-line-height);
+}
+
+.protein-total-unit {
+  margin-left: 3px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 400;
+}
+
+.protein-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 0 0 auto;
+}
+
+.protein-input {
+  width: 108px;
+  min-width: 0;
+  height: 40px;
+  padding: 8px 12px;
+}
+
+/* ── weekly table ─────────────────────────────────────────────────────────── */
+.protein-week {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.protein-week-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) auto;
+  gap: var(--space-xs);
+}
+
+.protein-week-cell {
+  text-align: center;
+}
+
+.protein-week-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.protein-week-value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.protein-week-value--selected {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.protein-week-avg {
+  color: var(--color-text);
+  font-weight: 600;
+  padding-left: var(--space-sm);
+  border-left: 1px solid var(--color-hairline);
+}
+
+@media (max-width: 480px) {
+  .protein-total-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .protein-entry {
+    width: 100%;
+  }
+  .protein-input {
+    flex: 1;
+  }
+  .protein-week-row {
+    grid-template-columns: repeat(4, 1fr);
+    row-gap: var(--space-xs);
+  }
+}

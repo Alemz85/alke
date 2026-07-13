@@ -15,11 +15,21 @@ import {
   Tooltip,
   XAxis
 } from 'recharts'
-import type { Goal, GoalPatch, GoalProgressPoint, NewGoal, Workout } from '@shared/types'
+import type { Goal, GoalPatch, GoalProgressPoint, NewGoal, UserConfigPatch, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ButtonSoft, EmptyState, MetricCard } from '../components'
-import { achievements, metricProgress, profileStats, timeProgress, type Achievement } from '../lib/profileStats'
+import {
+  achievements,
+  metricProgress,
+  profileStats,
+  sinceLabel,
+  timeProgress,
+  type Achievement
+} from '../lib/profileStats'
+import { applyGoalPatch, replaceById } from '../lib/optimisticEntities'
 import './ProfileView.css'
+
+const ABOUT_ME_MAX = 5000
 
 const tooltipStyle = {
   backgroundColor: 'var(--color-surface-hover)',
@@ -88,6 +98,138 @@ function AchievementsSection({ workouts, now }: { workouts: Workout[]; now: Date
   )
 }
 
+// ── about me ─────────────────────────────────────────────────────────────────
+
+function AboutMeSection(): ReactElement {
+  const queryClient = useQueryClient()
+  const configQuery = useQuery({
+    queryKey: ['userConfig'],
+    queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
+
+  const loaded = configQuery.data
+  const [draft, setDraft] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [savedVisible, setSavedVisible] = useState(false)
+
+  // Hydrate the draft once loaded, and re-hydrate whenever a fresh value
+  // arrives while not actively editing (mirrors SettingsView's draft pattern).
+  useEffect(() => {
+    if (loaded !== undefined && !editing) {
+      setDraft(loaded?.about_me ?? '')
+    }
+  }, [loaded, editing])
+
+  const mutation = useMutation({
+    mutationFn: (patch: UserConfigPatch) => window.api.updateUserConfig(patch),
+    meta: { errorMessage: 'Couldn’t save About me. Your edit is still in the box — try again.' },
+    onSuccess: (fresh) => {
+      queryClient.setQueryData(['userConfig'], fresh)
+      setEditing(false)
+      setSavedVisible(true)
+    }
+  })
+
+  useEffect(() => {
+    if (!savedVisible) return
+    const t = setTimeout(() => setSavedVisible(false), 2000)
+    return () => clearTimeout(t)
+  }, [savedVisible])
+
+  const savedValue = loaded?.about_me ?? ''
+  const isDirty = draft != null && draft !== savedValue
+  const overLimit = (draft?.length ?? 0) > ABOUT_ME_MAX
+
+  const handleSave = (): void => {
+    if (draft == null || !isDirty || overLimit) return
+    mutation.mutate({ about_me: draft.trim() === '' ? null : draft })
+  }
+
+  const handleCancel = (): void => {
+    setDraft(savedValue)
+    setEditing(false)
+  }
+
+  if (configQuery.isLoading || draft === null) {
+    return (
+      <section className="profile-section">
+        <h2 className="profile-section-title">About me</h2>
+        <p className="profile-loading">Loading…</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="profile-section">
+      <h2 className="profile-section-title">About me</h2>
+      <p className="profile-field-hint profile-about-hint">
+        Free text the AI reads for context — training background, constraints, preferences,
+        anything worth knowing while it coaches you.
+      </p>
+
+      {!editing && savedValue.trim() === '' ? (
+        <EmptyState
+          message="Nothing here yet. Add a few notes about yourself so the AI has context."
+          action={<ButtonSoft onClick={() => setEditing(true)}>Add about me</ButtonSoft>}
+        />
+      ) : editing ? (
+        <div className="profile-about-edit">
+          <textarea
+            className="profile-textarea profile-about-textarea"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={6}
+            maxLength={ABOUT_ME_MAX}
+            autoFocus
+            placeholder="Training background, constraints, preferences…"
+          />
+          <div className="profile-about-edit-foot">
+            <span
+              className={`profile-about-count tabular-nums${overLimit ? ' profile-about-count--over' : ''}`}
+            >
+              {draft.length} / {ABOUT_ME_MAX}
+            </span>
+            <div className="profile-about-actions">
+              <button
+                type="button"
+                className="profile-btn"
+                onClick={handleCancel}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="profile-btn profile-btn--primary"
+                onClick={handleSave}
+                disabled={!isDirty || overLimit || mutation.isPending}
+              >
+                {mutation.isPending ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+          {mutation.isError && <p className="profile-about-error">Couldn’t save. Try again.</p>}
+        </div>
+      ) : (
+        <div className="profile-about-view" onClick={() => setEditing(true)}>
+          <p className="profile-about-text">{savedValue}</p>
+          <div className="profile-about-view-foot">
+            <ButtonSoft onClick={() => setEditing(true)}>Edit</ButtonSoft>
+            <span
+              className={savedVisible ? 'profile-about-saved profile-about-saved--visible' : 'profile-about-saved'}
+              role="status"
+              aria-live="polite"
+            >
+              Saved
+            </span>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 // ── goal progress chart ──────────────────────────────────────────────────────
 
 function GoalProgressChart({
@@ -150,6 +292,7 @@ function GoalMetricBlock({
 
   const buildMutation = useMutation({
     mutationFn: () => window.api.buildGoalMetric(goal.id),
+    meta: { errorMessage: 'Couldn’t generate the goal metric. You can retry from the goal card.' },
     onSuccess: (res) => {
       if (res.ok) {
         void queryClient.invalidateQueries({ queryKey: ['goals'] })
@@ -261,17 +404,20 @@ function GoalHead({ goal }: { goal: Goal }): ReactElement {
 
 function GoalMeta({ goal, now }: { goal: Goal; now: Date }): ReactElement {
   const tp = timeProgress(goal, now)
+  const since = sinceLabel(goal, now)
   return (
     <>
       <div className="profile-goal-meta">
-        <span>Started {formatDate(goal.started_at)}</span>
+        <span className="tabular-nums">
+          {since.text} {formatDate(since.anchorYMD)}
+        </span>
         {goal.duration_days != null ? (
           <span className="tabular-nums">
             day {Math.min(tp.elapsedDays + 1, goal.duration_days)} of {goal.duration_days}
           </span>
-        ) : (
+        ) : goal.status === 'active' || goal.status === 'on_hold' ? (
           <span>Open-ended</span>
-        )}
+        ) : null}
       </div>
 
       {goal.duration_days != null && tp.pct != null && (
@@ -283,13 +429,37 @@ function GoalMeta({ goal, now }: { goal: Goal; now: Date }): ReactElement {
   )
 }
 
-function GoalActions({ goal, onEdit }: { goal: Goal; onEdit: () => void }): ReactElement {
+function useOptimisticGoalUpdate(goalId: string, errorMessage: string) {
   const queryClient = useQueryClient()
-
-  const statusMutation = useMutation({
-    mutationFn: (patch: GoalPatch) => window.api.updateGoal(goal.id, patch),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['goals'] })
+  return useMutation({
+    mutationFn: (patch: GoalPatch) => window.api.updateGoal(goalId, patch),
+    scope: { id: 'goals' },
+    meta: { errorMessage },
+    onMutate: async (patch) => {
+      const queryKey = ['goals'] as const
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueryData<Goal[]>(queryKey)
+      queryClient.setQueryData<Goal[]>(queryKey, (goals = []) =>
+        applyGoalPatch(goals, goalId, patch)
+      )
+      return { previous }
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Goal[]>(['goals'], (goals = []) =>
+        replaceById(goals, goalId, saved)
+      )
+    },
+    onError: (_error, _patch, context) => {
+      queryClient.setQueryData(['goals'], context?.previous)
+    }
   })
+}
+
+function GoalActions({ goal, onEdit }: { goal: Goal; onEdit: () => void }): ReactElement {
+  const statusMutation = useOptimisticGoalUpdate(
+    goal.id,
+    'Couldn’t update the goal status. The previous status was restored.'
+  )
 
   const set = (status: Goal['status']): void => statusMutation.mutate({ status })
   const pending = statusMutation.isPending
@@ -437,6 +607,7 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
   const buildMutation = useMutation({
     mutationFn: (goalId: string) => window.api.buildGoalMetric(goalId),
+    meta: { errorMessage: 'The goal was saved, but its progress metric could not be generated.' },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['goals'] })
     }
@@ -444,6 +615,7 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
   const createMutation = useMutation({
     mutationFn: (newGoal: NewGoal) => window.api.addGoal(newGoal),
+    meta: { errorMessage: 'Couldn’t create the goal. Your draft is still open.' },
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ['goals'] })
       // The agent activates once the card is done being compiled: fire the
@@ -453,13 +625,10 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
     }
   })
 
-  const updateMutation = useMutation({
-    mutationFn: (patch: GoalPatch) => window.api.updateGoal((goal as Goal).id, patch),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['goals'] })
-      onClose()
-    }
-  })
+  const updateMutation = useOptimisticGoalUpdate(
+    (goal as Goal | null)?.id ?? 'new',
+    'Couldn’t update the goal. Your previous version was restored.'
+  )
 
   const pending = createMutation.isPending || updateMutation.isPending
 
@@ -475,6 +644,7 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
         description: description.trim() || null,
         duration_days
       })
+      onClose()
     } else {
       createMutation.mutate({
         title: title.trim(),
@@ -553,7 +723,7 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
           <div className="profile-modal-actions">
             <button type="submit" className="profile-btn profile-btn--primary" disabled={pending || !title.trim()}>
-              {pending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+              {pending ? (isEdit ? 'Saving…' : 'Creating…') : isEdit ? 'Save' : 'Create'}
             </button>
             <button type="button" className="profile-btn" onClick={onClose} disabled={pending}>
               Cancel
@@ -567,9 +737,34 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
 // ── goals section ────────────────────────────────────────────────────────────
 
+type GoalTabKey = 'active' | 'archive'
+
+/** Compact archive row — mirrors InjuriesView's history table. */
+function GoalArchiveRow({ goal, now, onOpen }: { goal: Goal; now: Date; onOpen: () => void }): ReactElement {
+  const since = sinceLabel(goal, now)
+  return (
+    <tr className="profile-archive-row" onClick={onOpen}>
+      <td>{goal.title}</td>
+      <td>
+        <span className={`badge profile-goal-status profile-goal-status--${goal.status}`}>
+          {STATUS_LABEL[goal.status]}
+        </span>
+      </td>
+      <td className="tabular-nums">
+        {since.text} {formatDate(since.anchorYMD)}
+      </td>
+      <td className="tabular-nums">{formatDate(goal.started_at)}</td>
+    </tr>
+  )
+}
+
 function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElement {
+  const [tab, setTab] = useState<GoalTabKey>('active')
   const [modalGoal, setModalGoal] = useState<Goal | null | 'new'>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+
+  const active = goals.filter((g) => g.status === 'active' || g.status === 'on_hold')
+  const archive = goals.filter((g) => g.status === 'completed' || g.status === 'abandoned')
 
   // Resolve from the live list so mutations inside the peek stay fresh.
   const detailGoal = detailId != null ? (goals.find((g) => g.id === detailId) ?? null) : null
@@ -592,17 +787,64 @@ function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElemen
           action={<ButtonSoft onClick={() => setModalGoal('new')}>New goal</ButtonSoft>}
         />
       ) : (
-        <div className="profile-goal-grid">
-          {goals.map((g) => (
-            <GoalCard
-              key={g.id}
-              goal={g}
-              now={now}
-              onEdit={() => openEdit(g)}
-              onOpen={() => setDetailId(g.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="profile-tabs" role="tablist" aria-label="Goal status">
+            <button
+              role="tab"
+              aria-selected={tab === 'active'}
+              className={tab === 'active' ? 'chip chip--active' : 'chip'}
+              onClick={() => setTab('active')}
+            >
+              Active
+            </button>
+            <button
+              role="tab"
+              aria-selected={tab === 'archive'}
+              className={tab === 'archive' ? 'chip chip--active' : 'chip'}
+              onClick={() => setTab('archive')}
+            >
+              Archive
+            </button>
+          </div>
+
+          {tab === 'active' ? (
+            active.length === 0 ? (
+              <EmptyState message="No active goals. Reactivate one from the archive, or start a new one." />
+            ) : (
+              <div className="profile-goal-grid">
+                {active.map((g) => (
+                  <GoalCard
+                    key={g.id}
+                    goal={g}
+                    now={now}
+                    onEdit={() => openEdit(g)}
+                    onOpen={() => setDetailId(g.id)}
+                  />
+                ))}
+              </div>
+            )
+          ) : archive.length === 0 ? (
+            <EmptyState message="No completed or abandoned goals yet." />
+          ) : (
+            <div className="profile-archive-wrap">
+              <table className="profile-archive-table">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Since</th>
+                    <th>Started</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archive.map((g) => (
+                    <GoalArchiveRow key={g.id} goal={g} now={now} onOpen={() => setDetailId(g.id)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {detailGoal != null && (
@@ -677,7 +919,10 @@ export function ProfileView(): ReactElement {
       ) : loading ? (
         <p className="profile-loading">Loading…</p>
       ) : section === 'goals' ? (
-        <GoalsSection goals={goals} now={now} />
+        <>
+          <AboutMeSection />
+          <GoalsSection goals={goals} now={now} />
+        </>
       ) : (
         <>
           <StatsRow workouts={workouts} now={now} />

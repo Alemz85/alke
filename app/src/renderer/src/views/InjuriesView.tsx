@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactElement } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowUpRight, ArrowDownRight, Check, Minus, X } from 'lucide-react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query'
+import { ArrowLeft, ArrowUpRight, ArrowDownRight, CalendarDays, Check, Minus, X } from 'lucide-react'
 import {
   ComposedChart,
   Bar,
@@ -18,28 +16,42 @@ import {
   type Injury,
   type InjuryLogEntry,
   type InjuryNoteContext,
+  type NewInjuryLog,
   type PlanItemCheck,
   type RecoveryPlanItem
 } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { EmptyState } from '../components'
+import { RecoveryPlanDetail } from '../components/RecoveryPlanDetail'
 import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 import {
   adherencePct,
   adherenceRating,
+  currentPlanWeek,
   doseTarget,
   itemAdherenceRating,
+  isPlanItemAccountable,
+  phaseStartYMD,
   dailyPainSeries,
   dayScore,
   flareStats,
   humanizeDuration,
   isoWeekStart,
+  maxWeeksAvailable,
   shiftYMD,
   weeklyAdherence,
   weeklyMatrix,
   weeklyProgress,
+  weeklyProgressStatus,
   type FlareStats
 } from '../lib/injuryStats'
+import {
+  applyPlanCheckOptimistic,
+  makeOptimisticInjuryLog,
+  patchInjuryPlanStart,
+  patchInjuryStatus
+} from '../lib/offlineOptimistic'
+import { isQueuedWriteReceipt, replaceById } from '../lib/optimisticEntities'
 import './InjuriesView.css'
 
 const STATUS_LABEL: Record<Injury['status'], string> = {
@@ -55,13 +67,21 @@ const CONTEXT_LABEL: Record<InjuryNoteContext, string> = {
   on_waking: 'On waking'
 }
 
-// Plan-item kind → modal group label. Order below drives section order.
-const KIND_GROUPS: Array<{ kind: RecoveryPlanItem['kind']; label: string }> = [
-  { kind: 'exercise', label: 'Rehab work' },
-  { kind: 'activity', label: 'Allowed activity' },
-  { kind: 'habit', label: 'Habits' },
-  { kind: 'constraint', label: 'Constraints' }
-]
+type InjuryQuerySnapshot = [QueryKey, unknown]
+
+function restoreInjurySnapshots(
+  queryClient: ReturnType<typeof useQueryClient>,
+  snapshots: InjuryQuerySnapshot[] | undefined
+): void {
+  for (const [queryKey, data] of snapshots ?? []) queryClient.setQueryData(queryKey, data)
+}
+
+function isInjuryListQuery(queryKey: readonly unknown[]): boolean {
+  return (
+    (queryKey[0] === 'injuries' && queryKey[1] === 'list') ||
+    (queryKey[0] === 'health' && queryKey[1] === 'injuries')
+  )
+}
 
 type TabKey = 'active' | 'history'
 
@@ -184,12 +204,13 @@ function usePainSeries(
   log: InjuryLogEntry[],
   plan: RecoveryPlanItem[],
   checks: PlanItemCheck[],
-  todayYMD: string
+  todayYMD: string,
+  planStartedAt: string | null
 ): PainPoint[] {
   return useMemo(() => {
     const start = shiftYMD(todayYMD, -90)
     // 13 ISO weeks ≈ 90 days of underlay bars.
-    const weekly = weeklyAdherence(plan, checks, todayYMD, 13)
+    const weekly = weeklyAdherence(plan, checks, todayYMD, 13, planStartedAt)
 
     const points: PainPoint[] = []
     // One point per day carrying that day's MAX pain.
@@ -204,7 +225,7 @@ function usePainSeries(
     }
     points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     return points
-  }, [log, plan, checks, todayYMD])
+  }, [log, plan, checks, todayYMD, planStartedAt])
 }
 
 const CHART_TERTIARY = 'var(--color-text-tertiary)'
@@ -307,10 +328,31 @@ function FlareForm({
         workout_id: workoutId
       })
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['injuries'] })
-      onDone()
-    }
+    scope: { id: `injury-log:${injuryId}` },
+    meta: { errorMessage: 'Couldn’t save the injury note. It was removed from the log.' },
+    onMutate: async () => {
+      const queryKey = ['injuries', 'log', injuryId] as const
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueriesData<InjuryLogEntry[]>({ queryKey }) as InjuryQuerySnapshot[]
+      const temporaryId = -Date.now()
+      const input: NewInjuryLog = {
+        injury_id: injuryId,
+        note: note.trim() || 'Flare-up',
+        pain_level: pain,
+        context: contexts
+      }
+      const temporary = makeOptimisticInjuryLog(input, temporaryId, todayYMD)
+      queryClient.setQueryData<InjuryLogEntry[]>(queryKey, (rows = []) => [temporary, ...rows])
+      return { previous, temporaryId }
+    },
+    onSuccess: (result, _variables, context) => {
+      if (isQueuedWriteReceipt(result)) return
+      queryClient.setQueryData<InjuryLogEntry[]>(['injuries', 'log', injuryId], (rows = []) =>
+        rows.map((row) => (row.id === context.temporaryId ? result : row))
+      )
+    },
+    onError: (_error, _variables, context) =>
+      restoreInjurySnapshots(queryClient, context?.previous)
   })
 
   return (
@@ -365,7 +407,10 @@ function FlareForm({
           type="button"
           className="injury-btn injury-btn--primary"
           disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
+          onClick={() => {
+            mutation.mutate()
+            onDone()
+          }}
         >
           {mutation.isPending ? 'Saving…' : 'Save'}
         </button>
@@ -381,11 +426,13 @@ function FlareForm({
 
 function ActionRow({
   injury,
+  todayYMD,
   flareOpen,
   onToggleFlare,
   onOpenPlan
 }: {
   injury: Injury
+  todayYMD: string
   flareOpen: boolean
   onToggleFlare: () => void
   onOpenPlan: () => void
@@ -396,12 +443,38 @@ function ActionRow({
   const fineMutation = useMutation({
     mutationFn: () =>
       window.api.addInjuryLog({ injury_id: injury.id, note: 'Feeling fine', pain_level: 0, context: [] }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['injuries'] })
-      setJustLogged(true)
-      window.setTimeout(() => setJustLogged(false), 2000)
+    scope: { id: `injury-log:${injury.id}` },
+    meta: { errorMessage: 'Couldn’t save the recovery note. It was removed from the log.' },
+    onMutate: async () => {
+      const queryKey = ['injuries', 'log', injury.id] as const
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueriesData<InjuryLogEntry[]>({ queryKey }) as InjuryQuerySnapshot[]
+      const temporaryId = -Date.now()
+      const temporary = makeOptimisticInjuryLog(
+        { injury_id: injury.id, note: 'Feeling fine', pain_level: 0, context: [] },
+        temporaryId,
+        todayYMD
+      )
+      queryClient.setQueryData<InjuryLogEntry[]>(queryKey, (rows = []) => [temporary, ...rows])
+      return { previous, temporaryId }
+    },
+    onSuccess: (result, _variables, context) => {
+      if (isQueuedWriteReceipt(result)) return
+      queryClient.setQueryData<InjuryLogEntry[]>(['injuries', 'log', injury.id], (rows = []) =>
+        rows.map((row) => (row.id === context.temporaryId ? result : row))
+      )
+    },
+    onError: (_error, _variables, context) => {
+      setJustLogged(false)
+      restoreInjurySnapshots(queryClient, context?.previous)
     }
   })
+
+  const logFeelingFine = (): void => {
+    setJustLogged(true)
+    fineMutation.mutate()
+    window.setTimeout(() => setJustLogged(false), 2000)
+  }
 
   // Buttons stop propagation so they never trigger the card's navigation.
   const stop = (fn: () => void) => (e: MouseEvent) => {
@@ -415,7 +488,7 @@ function ActionRow({
         type="button"
         className="injury-btn injury-action-btn"
         disabled={fineMutation.isPending}
-        onClick={stop(() => fineMutation.mutate())}
+        onClick={stop(logFeelingFine)}
       >
         {justLogged ? '✓ Logged' : 'Feeling fine'}
       </button>
@@ -457,8 +530,6 @@ function RecoveryPlanModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const activeItems = plan.filter((i) => i.active)
-
   return (
     <div className="injury-modal-overlay" onClick={onClose}>
       <div
@@ -469,52 +540,296 @@ function RecoveryPlanModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="injury-modal-head">
-          <h3 className="injury-modal-title">Recovery plan</h3>
+          <div>
+            <span className="injury-modal-kicker">Recovery plan</span>
+            <h3 className="injury-modal-title">{injury.name}</h3>
+          </div>
           <button type="button" className="injury-modal-close" aria-label="Close" onClick={onClose}>
             <X size={18} strokeWidth={1.75} />
           </button>
         </div>
 
         <div className="injury-modal-body">
-          {injury.recovery_plan && (
-            <div className="injury-markdown injury-modal-approach">
-              <Markdown remarkPlugins={[remarkGfm]}>{injury.recovery_plan}</Markdown>
-            </div>
-          )}
-
-          {activeItems.length === 0 ? (
-            <p className="injury-log-empty">No plan items yet.</p>
-          ) : (
-            KIND_GROUPS.map(({ kind, label }) => {
-              const items = activeItems.filter((i) => i.kind === kind)
-              if (items.length === 0) return null
-              return (
-                <section key={kind} className="injury-modal-group">
-                  <h4 className="injury-modal-group-title">{label}</h4>
-                  <ul className="injury-plan-list">
-                    {items.map((item) => {
-                      const progress = weeklyProgress(item, checks, todayYMD)
-                      return (
-                        <li key={item.id} className="injury-plan-item">
-                          <div className="injury-plan-item-head">
-                            <span className="injury-plan-name">{item.name}</span>
-                            {progress && (
-                              <span className="injury-plan-progress tabular-nums">
-                                {progress.done}/{progress.target} this wk
-                              </span>
-                            )}
-                          </div>
-                          {item.note && <p className="injury-plan-note">{item.note}</p>}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </section>
+          <RecoveryPlanDetail
+            overview={injury.recovery_plan}
+            items={plan}
+            currentWeek={currentPlanWeek(injury.plan_started_at, todayYMD)}
+            emptyText="No plan items yet."
+            statusFor={(item) => {
+              return weeklyProgressStatus(
+                item,
+                checks,
+                todayYMD,
+                injury.plan_started_at
               )
-            })
-          )}
+            }}
+          />
         </div>
       </div>
+    </div>
+  )
+}
+
+function PlanStartControl({
+  injury,
+  todayYMD,
+  readOnly = false
+}: {
+  injury: Injury
+  todayYMD: string
+  readOnly?: boolean
+}): ReactElement {
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const mutation = useMutation({
+    mutationFn: (planStartedAt: string) =>
+      window.api.updateInjuryPlanStart(injury.id, planStartedAt),
+    scope: { id: `injury-plan-start:${injury.id}` },
+    meta: { errorMessage: 'Couldn’t update the plan start. The previous date was restored.' },
+    onMutate: async (planStartedAt) => {
+      await queryClient.cancelQueries({ predicate: (query) => isInjuryListQuery(query.queryKey) })
+      const previous = queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      }) as InjuryQuerySnapshot[]
+      for (const [queryKey, rows] of previous as Array<[QueryKey, Injury[] | undefined]>) {
+        queryClient.setQueryData(queryKey, patchInjuryPlanStart(rows ?? [], injury.id, planStartedAt))
+      }
+      setEditing(false)
+      return { previous }
+    },
+    onSuccess: (result) => {
+      if (isQueuedWriteReceipt(result)) return
+      for (const [queryKey, rows] of queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      })) {
+        queryClient.setQueryData(queryKey, replaceById(rows ?? [], injury.id, result))
+      }
+    },
+    onError: (_error, _date, context) => restoreInjurySnapshots(queryClient, context?.previous)
+  })
+  const planWeek = currentPlanWeek(injury.plan_started_at, todayYMD)
+
+  return (
+    <div className="injury-plan-timing">
+      <CalendarDays size={15} strokeWidth={1.75} aria-hidden="true" />
+      {editing && !readOnly ? (
+        <label className="injury-plan-date-field">
+          <span>Plan start</span>
+          <input
+            type="date"
+            value={injury.plan_started_at ?? todayYMD}
+            max={todayYMD}
+            disabled={mutation.isPending}
+            autoFocus
+            onChange={(event) => {
+              if (event.target.value) mutation.mutate(event.target.value)
+            }}
+            onBlur={() => {
+              if (!mutation.isPending) setEditing(false)
+            }}
+          />
+        </label>
+      ) : (
+        <button
+          type="button"
+          className="injury-plan-date-button"
+          disabled={readOnly}
+          onClick={() => setEditing(true)}
+        >
+          {injury.plan_started_at ? `Plan started ${formatDateShort(injury.plan_started_at)}` : 'Set plan start'}
+        </button>
+      )}
+      {planWeek != null && planWeek > 0 && (
+        <span className="injury-plan-week tabular-nums">Week {planWeek}</span>
+      )}
+      {mutation.isError && <span className="injury-plan-date-error">Could not update date</span>}
+    </div>
+  )
+}
+
+function StartedAtControl({
+  injury,
+  todayYMD,
+  readOnly = false
+}: {
+  injury: Injury
+  todayYMD: string
+  readOnly?: boolean
+}): ReactElement {
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const mutation = useMutation({
+    mutationFn: (startedAt: string) => window.api.updateInjuryStartedAt(injury.id, startedAt),
+    scope: { id: `injury-started-at:${injury.id}` },
+    meta: { errorMessage: 'Couldn’t update the injury start. The previous date was restored.' },
+    onMutate: async (startedAt) => {
+      await queryClient.cancelQueries({ predicate: (query) => isInjuryListQuery(query.queryKey) })
+      const previous = queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      }) as InjuryQuerySnapshot[]
+      for (const [queryKey, rows] of previous as Array<[QueryKey, Injury[] | undefined]>) {
+        queryClient.setQueryData(
+          queryKey,
+          (rows ?? []).map((row) =>
+            row.id === injury.id
+              ? { ...row, started_at: startedAt, updated_at: new Date().toISOString() }
+              : row
+          )
+        )
+      }
+      setEditing(false)
+      return { previous }
+    },
+    onSuccess: (result) => {
+      if (isQueuedWriteReceipt(result)) return
+      for (const [queryKey, rows] of queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      })) {
+        queryClient.setQueryData(queryKey, replaceById(rows ?? [], injury.id, result))
+      }
+    },
+    onError: (_error, _date, context) => restoreInjurySnapshots(queryClient, context?.previous)
+  })
+
+  return (
+    <div className="injury-plan-timing">
+      <CalendarDays size={15} strokeWidth={1.75} aria-hidden="true" />
+      {editing && !readOnly ? (
+        <label className="injury-plan-date-field">
+          <span>Injury started</span>
+          <input
+            type="date"
+            value={injury.started_at ?? todayYMD}
+            max={todayYMD}
+            disabled={mutation.isPending}
+            autoFocus
+            onChange={(event) => {
+              if (event.target.value) mutation.mutate(event.target.value)
+            }}
+            onBlur={() => {
+              if (!mutation.isPending) setEditing(false)
+            }}
+          />
+        </label>
+      ) : (
+        <button
+          type="button"
+          className="injury-plan-date-button"
+          disabled={readOnly}
+          onClick={() => setEditing(true)}
+        >
+          {injury.started_at ? `Injury started ${formatDateShort(injury.started_at)}` : 'Set injury start'}
+        </button>
+      )}
+      {mutation.isError && <span className="injury-plan-date-error">Could not update date</span>}
+    </div>
+  )
+}
+
+// ── status control (Mark as healed / Reopen) ──────────────────────────────────
+
+/**
+ * Ends or reopens an injury's recovery. A two-step inline confirm (never the
+ * renderer-freezing browser confirm()): the first click arms a confirm state
+ * that auto-disarms after a few seconds, the second click commits.
+ */
+function StatusControl({ injury }: { injury: Injury }): ReactElement {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  const mutation = useMutation({
+    mutationFn: (status: Injury['status']) => window.api.updateInjuryStatus(injury.id, status),
+    scope: { id: `injury-status:${injury.id}` },
+    meta: { errorMessage: 'Couldn’t update the injury status. The previous status was restored.' },
+    onMutate: async (status) => {
+      await queryClient.cancelQueries({ predicate: (query) => isInjuryListQuery(query.queryKey) })
+      const previous = queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      }) as InjuryQuerySnapshot[]
+      for (const [queryKey, rows] of previous as Array<[QueryKey, Injury[] | undefined]>) {
+        queryClient.setQueryData(queryKey, patchInjuryStatus(rows ?? [], injury.id, status))
+      }
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+      setConfirming(false)
+      return { previous }
+    },
+    onSuccess: (result) => {
+      if (isQueuedWriteReceipt(result)) return
+      for (const [queryKey, rows] of queryClient.getQueriesData<Injury[]>({
+        predicate: (query) => isInjuryListQuery(query.queryKey)
+      })) {
+        queryClient.setQueryData(queryKey, replaceById(rows ?? [], injury.id, result))
+      }
+    },
+    onError: (_error, _status, context) => {
+      restoreInjurySnapshots(queryClient, context?.previous)
+    }
+  })
+
+  if (injury.status === 'resolved') {
+    return (
+      <div className="injury-status-control">
+        <button
+          type="button"
+          className="injury-btn injury-action-btn"
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate('active')}
+        >
+          {mutation.isPending ? 'Reopening…' : 'Reopen'}
+        </button>
+        {mutation.isError && <span className="injury-plan-date-error">Could not reopen</span>}
+      </div>
+    )
+  }
+
+  const handleClick = (): void => {
+    if (!confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 4000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    mutation.mutate('resolved')
+  }
+
+  return (
+    <div className="injury-status-control">
+      {confirming ? (
+        <>
+          <span className="injury-confirm-label">Mark healed?</span>
+          <button
+            type="button"
+            className="injury-btn injury-action-btn injury-action-btn--confirm"
+            disabled={mutation.isPending}
+            onClick={handleClick}
+          >
+            {mutation.isPending ? 'Saving…' : 'Confirm'}
+          </button>
+          <button
+            type="button"
+            className="injury-btn injury-action-btn"
+            disabled={mutation.isPending}
+            onClick={() => {
+              if (confirmTimer.current) clearTimeout(confirmTimer.current)
+              setConfirming(false)
+            }}
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button type="button" className="injury-btn injury-action-btn" onClick={handleClick}>
+          Mark as healed
+        </button>
+      )}
+      {mutation.isError && <span className="injury-plan-date-error">Could not update status</span>}
     </div>
   )
 }
@@ -537,20 +852,45 @@ function ThisWeekTable({
   checks,
   todayYMD,
   log,
-  readOnly
+  readOnly,
+  planStartedAt
 }: {
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
   todayYMD: string
   log: InjuryLogEntry[]
   readOnly: boolean
+  planStartedAt: string | null
 }): ReactElement | null {
   const queryClient = useQueryClient()
 
   const checkMutation = useMutation({
     mutationFn: ({ itemId, dateYMD, done }: { itemId: string; dateYMD: string; done: boolean }) =>
       window.api.setPlanItemCheck(itemId, dateYMD, done),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['injuries'] })
+    scope: { id: 'injury-plan-checks' },
+    meta: { errorMessage: 'Couldn’t update the recovery check. The checkbox was restored.' },
+    onMutate: async ({ itemId, dateYMD, done }) => {
+      await queryClient.cancelQueries({ queryKey: ['injuries', 'checks'] })
+      const previous = queryClient.getQueriesData<PlanItemCheck[]>({
+        queryKey: ['injuries', 'checks']
+      })
+      queryClient.setQueriesData<PlanItemCheck[]>(
+        { queryKey: ['injuries', 'checks'] },
+        (current) =>
+          current ? applyPlanCheckOptimistic(current, itemId, dateYMD, done) : current
+      )
+      return { previous }
+    },
+    onError: (_error, _variables, context) => {
+      for (const [queryKey, data] of context?.previous ?? []) {
+        queryClient.setQueryData(queryKey, data)
+      }
+    },
+    onSuccess: (result) => {
+      if (!isQueuedWriteReceipt(result)) {
+        void queryClient.invalidateQueries({ queryKey: ['injuries'] })
+      }
+    }
   })
 
   const { exercises, activities } = checkableColumns(plan)
@@ -589,6 +929,7 @@ function ThisWeekTable({
   const progressFor = (item: RecoveryPlanItem): { done: number; target: number } | null =>
     weeklyProgress(item, checks, todayYMD)
   const isMet = (item: RecoveryPlanItem): boolean => {
+    if (!isPlanItemAccountable(item, planStartedAt, todayYMD)) return false
     const p = progressFor(item)
     const dose = doseTarget(item)
     return p != null && dose != null && p.done >= dose
@@ -600,23 +941,33 @@ function ThisWeekTable({
   }
 
   const renderHeader = (item: RecoveryPlanItem, isActivity: boolean, i: number): ReactElement => {
-    const p = progressFor(item)
+    const progressStatus = weeklyProgressStatus(item, checks, todayYMD, planStartedAt)
     const met = isMet(item)
+    const accountable = isPlanItemAccountable(item, planStartedAt, todayYMD)
+    const phaseStart = accountable ? null : phaseStartYMD(item, planStartedAt)
     const cls = [
       'injury-adh-th-item',
       isActivity ? 'injury-adh-th-activity' : '',
       isActivity && i === 0 ? 'injury-adh-th-divider' : '',
-      met ? 'injury-adh-th--met' : ''
+      met ? 'injury-adh-th--met' : '',
+      !accountable ? 'injury-adh-th--future' : ''
     ]
       .filter(Boolean)
       .join(' ')
     return (
       <th key={item.id} className={cls} title={item.name}>
         <span className="injury-adh-th-label">{item.name}</span>
-        {p && (
-          <span className="injury-adh-th-progress tabular-nums">
-            {' · '}
-            {p.done}/{p.target}
+        {(phaseStart || progressStatus) && (
+          <span className="injury-adh-th-meta">
+            {phaseStart && (
+              <span className="injury-adh-th-phase tabular-nums">
+                Starts {formatDateShort(phaseStart)}
+              </span>
+            )}
+            {phaseStart && progressStatus && <span aria-hidden="true"> · </span>}
+            {progressStatus && (
+              <span className="injury-adh-th-progress tabular-nums">{progressStatus}</span>
+            )}
           </span>
         )}
       </th>
@@ -631,11 +982,13 @@ function ThisWeekTable({
   ): ReactElement => {
     const on = (checkedByDay.get(ymd) ?? new Set<string>()).has(item.id)
     const met = isMet(item)
+    const accountable = isPlanItemAccountable(item, planStartedAt, ymd)
     const tdCls = [
       'injury-adh-cell',
       isActivity ? 'injury-adh-cell-activity' : '',
       isActivity && i === 0 ? 'injury-adh-cell-divider' : '',
-      met ? 'injury-adh-cell--met' : ''
+      met ? 'injury-adh-cell--met' : '',
+      !accountable ? 'injury-adh-cell--future' : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -675,7 +1028,7 @@ function ThisWeekTable({
         </thead>
         <tbody>
           {rows.map((ymd) => {
-            const score = dayScore(plan, checks, ymd)
+            const score = dayScore(plan, checks, ymd, planStartedAt)
             const pain = painByDay.get(ymd)
             const intensity = score.total > 0 ? score.done / score.total : 0
             return (
@@ -724,22 +1077,31 @@ function RatingChip({ done, item }: { done: number; item: RecoveryPlanItem }): R
 function PastWeeksTable({
   plan,
   checks,
-  todayYMD
+  todayYMD,
+  planStartedAt
 }: {
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
   todayYMD: string
+  planStartedAt: string | null
 }): ReactElement | null {
   const [weeksShown, setWeeksShown] = useState(8)
 
   const { exercises, activities } = checkableColumns(plan)
   const columns = [...exercises, ...activities]
 
+  // Bound paging to the plan's lifetime: there is nothing to show before the
+  // week the plan started. Without a plan-start date (legacy plans), there is
+  // no floor — keep the unbounded page-by-8 behavior.
+  const maxWeeks = maxWeeksAvailable(todayYMD, planStartedAt)
+  const clampedWeeksShown = maxWeeks != null ? Math.min(weeksShown, maxWeeks) : weeksShown
+  const canShowMore = maxWeeks == null || clampedWeeksShown < maxWeeks
+
   const rows = useMemo(
-    () => weeklyMatrix(columns, checks, todayYMD, weeksShown),
+    () => weeklyMatrix(columns, checks, todayYMD, clampedWeeksShown, planStartedAt),
     // columns derives from plan; the memo key is the source data
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plan, checks, todayYMD, weeksShown]
+    [plan, checks, todayYMD, clampedWeeksShown, planStartedAt]
   )
 
   if (columns.length === 0) return null
@@ -813,7 +1175,7 @@ function PastWeeksTable({
                     .join(' ')
                   return (
                     <td key={item.id} className={tdCls}>
-                      {existedIn(item, row.weekEnd) ? (
+                      {existedIn(item, row.weekEnd) && cell.accountable ? (
                         <RatingChip done={cell.done} item={item} />
                       ) : (
                         <span className="injury-adh-score-empty">—</span>
@@ -826,17 +1188,75 @@ function PastWeeksTable({
           })}
         </tbody>
       </table>
-      <button type="button" className="injury-showall" onClick={() => setWeeksShown((w) => w + 8)}>
-        Show more
-      </button>
+      {canShowMore && (
+        <button type="button" className="injury-showall" onClick={() => setWeeksShown((w) => w + 8)}>
+          Show more
+        </button>
+      )}
     </div>
   )
 }
 
-// ── notes feed ────────────────────────────────────────────────────────────────
+// ── logs feed ─────────────────────────────────────────────────────────────────
+
+/** Per-entry delete (x): hover-revealed, two-step inline confirm before commit. */
+function LogRowDelete({ entryId }: { entryId: number }): ReactElement {
+  const queryClient = useQueryClient()
+  const [confirming, setConfirming] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  const mutation = useMutation({
+    mutationFn: () => window.api.deleteInjuryLog(entryId),
+    scope: { id: 'injury-log-deletes' },
+    meta: { errorMessage: 'Couldn’t delete the injury note. It has been put back.' },
+    onMutate: async () => {
+      const prefix = ['injuries', 'log'] as const
+      await queryClient.cancelQueries({ queryKey: prefix })
+      const previous = queryClient.getQueriesData<InjuryLogEntry[]>({ queryKey: prefix }) as InjuryQuerySnapshot[]
+      for (const [queryKey, rows] of previous as Array<[QueryKey, InjuryLogEntry[] | undefined]>) {
+        queryClient.setQueryData(queryKey, (rows ?? []).filter((entry) => entry.id !== entryId))
+      }
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+      setConfirming(false)
+      return { previous }
+    },
+    onError: (_error, _variables, context) =>
+      restoreInjurySnapshots(queryClient, context?.previous)
+  })
+
+  const handleClick = (): void => {
+    if (!confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 4000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    mutation.mutate()
+  }
+
+  return (
+    <button
+      type="button"
+      className={`injury-log-remove${confirming ? ' injury-log-remove--confirm' : ''}`}
+      disabled={mutation.isPending}
+      title={confirming ? 'Click again to delete' : 'Delete entry'}
+      aria-label={confirming ? 'Click again to delete this log entry' : 'Delete this log entry'}
+      onClick={handleClick}
+    >
+      <X size={12} strokeWidth={2} />
+    </button>
+  )
+}
 
 function NotesFeed({ log }: { log: InjuryLogEntry[] }): ReactElement | null {
   const [showAll, setShowAll] = useState(false)
+  const listId = useId()
   const sorted = useMemo(
     () =>
       [...log].sort((a, b) => {
@@ -847,40 +1267,56 @@ function NotesFeed({ log }: { log: InjuryLogEntry[] }): ReactElement | null {
     [log]
   )
   if (sorted.length === 0) return null
-  const visible = showAll ? sorted : sorted.slice(0, 30)
-  const hasMore = sorted.length > visible.length
+  const previewCount = 3
+  const visible = showAll ? sorted : sorted.slice(0, previewCount)
+  const hasOlder = sorted.length > previewCount
 
   return (
-    <ol className="injury-notes">
-      {visible.map((n) => (
-        <li key={n.id} className="injury-note-row">
-          <div className="injury-note-meta">
-            <span className="injury-log-source">{sourceLabel(n.source)}</span>
-            <span className="injury-note-date tabular-nums">{formatDateShort(n.entry_date)}</span>
-            {n.pain_level != null && n.pain_level >= 1 && (
-              <span className="injury-log-pain tabular-nums">{n.pain_level}/10</span>
-            )}
-            {n.context?.map((c) => (
-              <span key={c} className="injury-tag">
-                {CONTEXT_LABEL[c as InjuryNoteContext] ?? c}
-              </span>
-            ))}
-          </div>
-          {n.note && <p className="injury-log-note">{n.note}</p>}
-        </li>
-      ))}
-      {hasMore && (
-        <button type="button" className="injury-showall" onClick={() => setShowAll(true)}>
-          Show all
+    <div className="injury-notes-feed">
+      <ol id={listId} className="injury-notes">
+        {visible.map((n) => (
+          <li key={n.id} className="injury-note-row">
+            <div className="injury-note-meta">
+              <span className="injury-log-source">{sourceLabel(n.source)}</span>
+              <span className="injury-note-date tabular-nums">{formatDateShort(n.entry_date)}</span>
+              {n.pain_level != null && n.pain_level >= 1 && (
+                <span className="injury-log-pain tabular-nums">{n.pain_level}/10</span>
+              )}
+              {n.context?.map((c) => (
+                <span key={c} className="injury-tag">
+                  {CONTEXT_LABEL[c as InjuryNoteContext] ?? c}
+                </span>
+              ))}
+              <LogRowDelete entryId={n.id} />
+            </div>
+            {n.note && <p className="injury-log-note">{n.note}</p>}
+          </li>
+        ))}
+      </ol>
+      {hasOlder && (
+        <button
+          type="button"
+          className="injury-notes-toggle"
+          aria-expanded={showAll}
+          aria-controls={listId}
+          onClick={() => setShowAll((open) => !open)}
+        >
+          {showAll ? 'Show recent only' : `Show ${sorted.length - previewCount} older logs`}
         </button>
       )}
-    </ol>
+    </div>
   )
 }
 
 // ── injury header (name, badges, body area, since) ────────────────────────────
 
-function InjuryHeader({ injury }: { injury: Injury }): ReactElement {
+function InjuryHeader({
+  injury,
+  showSince = true
+}: {
+  injury: Injury
+  showSince?: boolean
+}): ReactElement {
   return (
     <div className="injury-card-header">
       <h3 className="injury-name">{injury.name}</h3>
@@ -889,7 +1325,7 @@ function InjuryHeader({ injury }: { injury: Injury }): ReactElement {
         {injury.severity && <span className="badge injury-badge-severity">{injury.severity}</span>}
         {injury.body_area && <span className="injury-body-area">{injury.body_area}</span>}
       </div>
-      <span className="injury-since">since {formatDate(injury.started_at)}</span>
+      {showSince && <span className="injury-since">since {formatDate(injury.started_at)}</span>}
     </div>
   )
 }
@@ -909,8 +1345,8 @@ function ActiveInjuryCard({
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
 
   const stats = useMemo(() => flareStats(log, now), [log, now])
-  const adherence = adherencePct(plan, checks, todayYMD, 7)
-  const series = usePainSeries(log, plan, checks, todayYMD)
+  const adherence = adherencePct(plan, checks, todayYMD, 7, injury.plan_started_at)
+  const series = usePainSeries(log, plan, checks, todayYMD, injury.plan_started_at)
 
   const [flareOpen, setFlareOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
@@ -949,6 +1385,7 @@ function ActiveInjuryCard({
 
         <ActionRow
           injury={injury}
+          todayYMD={todayYMD}
           flareOpen={flareOpen}
           onToggleFlare={() => setFlareOpen((v) => !v)}
           onOpenPlan={() => setPlanOpen(true)}
@@ -995,8 +1432,8 @@ function InjuryFullView({
   const { log, plan, checks } = useInjuryData(injury.id, true, todayYMD)
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
   const stats = useMemo(() => flareStats(log, now), [log, now])
-  const adherence = adherencePct(plan, checks, todayYMD, 7)
-  const series = usePainSeries(log, plan, checks, todayYMD)
+  const adherence = adherencePct(plan, checks, todayYMD, 7, injury.plan_started_at)
+  const series = usePainSeries(log, plan, checks, todayYMD, injury.plan_started_at)
 
   const [flareOpen, setFlareOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
@@ -1014,12 +1451,19 @@ function InjuryFullView({
         Injuries
       </button>
 
-      <InjuryHeader injury={injury} />
+      <InjuryHeader injury={injury} showSince={false} />
+
+      <StartedAtControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
+
+      {plan.some((item) => item.active) && (
+        <PlanStartControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
+      )}
 
       {!readOnly && (
         <>
           <ActionRow
             injury={injury}
+            todayYMD={todayYMD}
             flareOpen={flareOpen}
             onToggleFlare={() => setFlareOpen((v) => !v)}
             onOpenPlan={() => setPlanOpen(true)}
@@ -1032,6 +1476,7 @@ function InjuryFullView({
               onCancel={() => setFlareOpen(false)}
             />
           )}
+          <StatusControl injury={injury} />
         </>
       )}
       {readOnly && (
@@ -1039,6 +1484,7 @@ function InjuryFullView({
           <button type="button" className="injury-btn injury-action-btn" onClick={() => setPlanOpen(true)}>
             Recovery plan
           </button>
+          <StatusControl injury={injury} />
         </div>
       )}
 
@@ -1061,19 +1507,25 @@ function InjuryFullView({
               todayYMD={todayYMD}
               log={log}
               readOnly={readOnly}
+              planStartedAt={injury.plan_started_at}
             />
           </section>
 
           <section className="injury-section">
             <h4 className="injury-section-title">Past weeks</h4>
-            <PastWeeksTable plan={plan} checks={checks} todayYMD={todayYMD} />
+            <PastWeeksTable
+              plan={plan}
+              checks={checks}
+              todayYMD={todayYMD}
+              planStartedAt={injury.plan_started_at}
+            />
           </section>
         </>
       )}
 
       {log.length > 0 && (
         <section className="injury-section">
-          <h4 className="injury-section-title">Notes</h4>
+          <h4 className="injury-section-title">Logs</h4>
           <NotesFeed log={log} />
         </section>
       )}

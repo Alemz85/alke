@@ -1,0 +1,28 @@
+.activity-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.activity-badge--water {
+  background: var(--color-env-water-dim);
+  color: var(--color-env-water);
+}
+
+.activity-badge--indoor {
+  background: var(--color-env-indoor-dim);
+  color: var(--color-env-indoor);
+}
+
+.activity-badge--outdoor {
+  background: var(--color-env-outdoor-dim);
+  color: var(--color-env-outdoor);
+}

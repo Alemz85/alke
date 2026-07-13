@@ -8,6 +8,10 @@
   grid-column: span 12;
 }
 
+.dashboard-grid--span-2 {
+  grid-column: span 2 !important;
+}
+
 .dashboard-grid--span-4 {
   grid-column: span 4 !important;
 }
@@ -40,10 +44,157 @@
   }
 }
 
+@media (max-width: 1099px) {
+  .dashboard-grid--span-2 {
+    grid-column: span 3 !important;
+  }
+}
+
 @media (max-width: 759px) {
   .dashboard-grid--span-4 {
     grid-column: span 12 !important;
   }
+  .dashboard-grid--span-2 {
+    grid-column: span 6 !important;
+  }
+}
+
+/* Small square stat tiles (ATL, TSB, TRIMP, RHR) — each a clickable square that
+   opens its metric popup. aspect-ratio keeps them square regardless of column
+   width; label top, big value centered, optional sub-label under it. */
+/* Stat tile — label + spelled-out name at the top, big value + context at the
+   bottom, stretched to the row height so it fills rather than floating a number
+   in empty space. min-height keeps it comfortably tile-shaped. */
+.stat-square {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  height: 100%;
+  min-height: 132px;
+  width: 100%;
+  padding: var(--space-md);
+  background: var(--color-surface-elevated);
+  border: none;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.stat-square:hover,
+.stat-square:focus-visible {
+  background: var(--color-surface-hover);
+}
+
+.stat-square-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.stat-square-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.stat-square-name {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-secondary);
+}
+
+/* Value + sub cluster pinned to the bottom of the tile. */
+.stat-square-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stat-square-value {
+  font-family: var(--font-display);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: 1;
+  letter-spacing: var(--type-display-letter-spacing);
+}
+
+.stat-square--load .stat-square-value {
+  color: var(--color-load-text);
+}
+
+.stat-square--recovery .stat-square-value {
+  color: var(--color-recovery-text);
+}
+
+.stat-square-sub {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+/* Clickable metric cards (Task 1) — cards/hero-metric wrapped in a <button>
+   for keyboard-accessible, semantic click targets that open MetricDetailModal.
+   Reset native button chrome, keep the card's own visual language, and add a
+   hover/focus treatment consistent with other interactive surfaces. */
+.metric-card-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-lg);
+  transition: background var(--motion-hover);
+}
+
+.metric-card-button:hover .metric-card,
+.metric-card-button:focus-visible .metric-card {
+  background: var(--color-surface-hover);
+}
+
+.metric-card--clickable {
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background var(--motion-hover);
+}
+
+.metric-card--clickable:hover {
+  background: var(--color-surface-hover);
+}
+
+.hero-metric-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.hero-metric-button:hover .hero-metric-value,
+.hero-metric-button:focus-visible .hero-metric-value {
+  opacity: 0.85;
 }
 
 /* Two-stat card (ATL & TSB) */
@@ -78,11 +229,21 @@
   color: var(--color-load-text);
 }
 
-/* Session adherence card */
-.dashboard-sessions-list {
+/* Session adherence card — fills the cell height and centres its rows so the
+   activity pills use the space rather than clustering at the top. */
+.dashboard-sessions-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  height: 100%;
+  gap: var(--space-md);
+}
+
+.dashboard-sessions-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-md);
 }
 
 .dashboard-sessions-row {
@@ -92,33 +253,191 @@
   gap: var(--space-sm);
 }
 
-.dashboard-sessions-row-label {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-secondary);
-  text-transform: capitalize;
+/* Activity pill: environment-coloured icon + badge, mirroring the Sessions list. */
+.dashboard-sessions-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
 }
 
 .dashboard-sessions-row-value {
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-sessions-text);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text);
   font-weight: 600;
+  flex-shrink: 0;
 }
 
-/* Workouts list card */
-.dashboard-workouts-card {
-  background: var(--color-surface-elevated);
+/* Row 2 = body-weight card + CTL/ATL chart. Give the chart card a FIXED height
+   so it bounds the grid row (a height:100% chart + height:100% weight sparkline
+   with an auto row would feed back and grow forever). The plot then flexes to
+   fill the fixed card — no empty space — and the weight card, stretched by the
+   grid to the same row height, matches it exactly. */
+.dashboard-load-chart-button .chart-card-plot {
+  flex: 1;
+  min-height: 0;
+}
+
+.dashboard-load-chart-cell {
+  display: flex;
+  min-height: 0;
+}
+
+.dashboard-load-chart-button {
+  width: 100%;
+  height: 300px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-lg);
-  padding: var(--space-lg);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-load-chart-button .chart-card {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  transition: background var(--motion-hover);
+}
+
+.dashboard-load-chart-button:hover .chart-card,
+.dashboard-load-chart-button:focus-visible .chart-card {
+  background: var(--color-surface-hover);
+}
+
+.dashboard-load-chart-button:focus-visible {
+  outline: 2px solid var(--color-load);
+  outline-offset: 2px;
+}
+
+.dashboard-load-chart-key,
+.dashboard-load-chart-key > span {
+  display: flex;
+  align-items: center;
+}
+
+.dashboard-load-chart-key {
+  gap: var(--space-md);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-secondary);
+}
+
+.dashboard-load-chart-key > span {
+  gap: 5px;
+}
+
+.dashboard-load-chart-swatch {
+  width: 16px;
+  height: 3px;
+  border-radius: var(--radius-full);
+}
+
+.dashboard-load-chart-swatch--ctl {
+  background: var(--color-load);
+}
+
+.dashboard-load-chart-swatch--atl {
+  background: var(--color-sessions);
+}
+
+/* Body weight card (Task 2) — squarer proportions than a plain MetricCard:
+   value + terse delta on one row, date underneath, then a sparkline that
+   gives the card height and previews the popup's full chart. */
+.weight-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  height: 300px;
+  box-sizing: border-box;
+}
+
+.weight-card-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.weight-card-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  color: var(--color-recovery-text);
+}
+
+.weight-card-delta {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-recovery-text);
+}
+
+.weight-card-date {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+}
+
+/* Sparkline flexes to fill the shared 300px row. The 90-day range is centered
+   beneath the curve so it reads as a chart caption rather than a stray axis tick. */
+.weight-card-sparkline {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 84px;
+  margin-top: var(--space-xs);
+}
+
+.weight-card-range {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: max-content;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.weight-card-sparkline-empty {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-disabled);
+}
+
+/* Recent sessions — full-width strip below the chart. Each tile opens its
+   session (with a clear hover cue); the header link opens all sessions. The box
+   itself is not clickable, so a tile's hover reads unambiguously. */
+.recent-sessions-box {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  border: none;
+  text-align: left;
 }
 
-.dashboard-workouts-title {
+.recent-sessions-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.recent-sessions-title {
   font-family: var(--font-display);
   font-size: var(--type-heading-md-size);
   font-weight: var(--type-heading-md-weight);
@@ -127,72 +446,137 @@
   color: var(--color-text);
 }
 
-.dashboard-workouts-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.dashboard-workout-row {
-  display: flex;
+.recent-sessions-all {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--color-divider-soft);
-}
-
-.dashboard-workout-row:last-child {
-  border-bottom: none;
-}
-
-.dashboard-workout-name {
-  font-family: var(--font-body);
-  font-size: var(--type-body-md-size);
-  font-weight: 600;
-  color: var(--color-text);
-  flex: 1;
-  min-width: 0;
-}
-
-.dashboard-workout-meta {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-tertiary);
-}
-
-.dashboard-workout-stats {
-  display: flex;
-  gap: var(--space-lg);
+  gap: 4px;
   flex-shrink: 0;
-}
-
-.dashboard-workout-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  min-width: 56px;
-}
-
-.dashboard-workout-stat-value {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  color: var(--color-text-secondary);
+  transition: color var(--motion-hover);
+}
+
+.recent-sessions-all:hover {
   color: var(--color-text);
 }
 
-.dashboard-workout-stat-label {
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  color: var(--color-text-tertiary);
+.recent-sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-sm);
 }
 
 @media (max-width: 759px) {
-  .dashboard-workout-row {
-    flex-wrap: wrap;
+  .recent-sessions-grid {
+    grid-template-columns: 1fr 1fr;
   }
+}
 
-  .dashboard-workout-stats {
-    gap: var(--space-md);
+/* Tiles rest at --color-surface (a step darker than the box's
+   --color-surface-elevated) and lift to --color-surface-hover with a faint ring
+   on hover/focus — a clear, unambiguous cue now that the box itself isn't
+   clickable. Info stacks on three lines (modality+icon / date / duration+distance). */
+.recent-session-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--motion-hover),
+    border-color var(--motion-hover);
+}
+
+.recent-session-tile:hover,
+.recent-session-tile:focus-visible {
+  background: var(--color-surface-hover);
+  border-color: var(--color-hairline);
+}
+
+.recent-session-tile-modality {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.recent-session-tile-label {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-session-tile-date {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-session-tile-stats {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Calendar + period summaries (moved from the Sessions view). Two columns:
+   calendar left (~2fr), month + year summaries right (~1fr). */
+.dashboard-calendar-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+.dashboard-calendar-grid-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+/* Calendar keeps its natural width-driven height; the summary column stretches
+   to match (mirrors the Sessions view's equal-height behavior). */
+.dashboard-calendar-grid-calendar > .calendar-heatmap {
+  flex: 1;
+}
+
+.dashboard-calendar-grid-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+@media (max-width: 1099px) {
+  .dashboard-calendar-grid {
+    grid-template-columns: 1fr;
   }
 }

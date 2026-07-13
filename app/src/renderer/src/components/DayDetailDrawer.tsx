@@ -1,6 +1,6 @@
-import { useEffect, type ReactElement } from 'react'
+import { useEffect, type ReactElement, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { X } from 'lucide-react'
+import { Heart, X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
@@ -12,7 +12,10 @@ import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
 import { CHART, chartAxisTickSm } from '../lib/chartTheme'
 import { EM_DASH, formatClock, formatPace100 } from '../lib/format'
+import { isGymType } from '../lib/periodSummary'
 import {
+  activeTimePercent,
+  buildSetComposition,
   detectSprintSets,
   groupByWorkout,
   normalizeHrTrack,
@@ -30,13 +33,15 @@ export interface DayDetailDrawerProps {
   workouts: Workout[]
   timezone: string | null | undefined
   onClose: () => void
+  children?: ReactNode
 }
 
 export function DayDetailDrawer({
   dateLabel,
   workouts,
   timezone,
-  onClose
+  onClose,
+  children
 }: DayDetailDrawerProps): ReactElement {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent): void {
@@ -66,6 +71,7 @@ export function DayDetailDrawer({
           {workouts.map((w) => (
             <SessionCard key={w.id} workout={w} timezone={timezone} />
           ))}
+          {children}
         </div>
       </div>
     </div>
@@ -83,13 +89,23 @@ function SessionCard({
   const domain = modalityToDomain(workout.type)
   const badgeDomain = domain === 'neutral' ? 'sessions' : domain
   const distanceKm = workout.distance_m !== null ? (workout.distance_m / 1000).toFixed(2) : null
-  const isStrength = /strength|core/i.test(workout.type ?? '')
+  const isStrength = isGymType(workout.type)
 
   const hrSamples = detailQuery.data?.hrSamples ?? []
   const hrChartData = hrSamples.map((s) => ({
     min: Math.round((s.offset_s / 60) * 10) / 10,
     bpm: s.bpm
   }))
+
+  // Gym sessions show simple max/avg HR stats instead of the HR line chart —
+  // prefer the workout row's own aggregates, fall back to the fetched trace.
+  const gymMaxHr =
+    workout.max_hr ?? (hrSamples.length > 0 ? Math.max(...hrSamples.map((s) => s.bpm)) : null)
+  const gymAvgHr =
+    workout.avg_hr ??
+    (hrSamples.length > 0
+      ? hrSamples.reduce((sum, s) => sum + s.bpm, 0) / hrSamples.length
+      : null)
 
   const computed = detailQuery.data?.computed
   const trimp = computed?.trimp
@@ -98,6 +114,8 @@ function SessionCard({
 
   const swimSets = detailQuery.data?.swimSets ?? []
   const swimSummary = swimSets.length > 0 ? summarizeSession(swimSets) : null
+  const swimActiveTimePct =
+    swimSets.length > 0 ? activeTimePercent(swimSets, workout.duration_s) : null
 
   return (
     <div className="day-drawer-session">
@@ -147,6 +165,22 @@ function SessionCard({
               <span className="day-drawer-session-stat-label">Decoupling</span>
             </div>
           )}
+          {isStrength && (
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {gymMaxHr != null ? Math.round(gymMaxHr) : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Max HR</span>
+            </div>
+          )}
+          {isStrength && (
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {gymAvgHr != null ? Math.round(gymAvgHr) : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Avg HR</span>
+            </div>
+          )}
         </div>
 
         {swimSummary && (
@@ -169,9 +203,28 @@ function SessionCard({
             </div>
             <div className="day-drawer-session-stat">
               <span className="day-drawer-session-stat-value tabular-nums">
-                {swimSummary.structure || EM_DASH}
+                {swimSummary.nSets}
               </span>
-              <span className="day-drawer-session-stat-label">Sets</span>
+              <span className="day-drawer-session-stat-label">Detected sets</span>
+            </div>
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value tabular-nums">
+                {swimActiveTimePct !== null ? `${Math.round(swimActiveTimePct)}%` : EM_DASH}
+              </span>
+              <span className="day-drawer-session-stat-label">Active time</span>
+            </div>
+            <div className="day-drawer-session-stat">
+              <span className="day-drawer-session-stat-value day-drawer-session-stat-value--hr tabular-nums">
+                {workout.avg_hr !== null ? (
+                  <>
+                    <Heart size={14} strokeWidth={1.75} className="day-drawer-session-stat-hr-icon" />
+                    {Math.round(workout.avg_hr)}
+                  </>
+                ) : (
+                  EM_DASH
+                )}
+              </span>
+              <span className="day-drawer-session-stat-label">Avg HR</span>
             </div>
           </div>
         )}
@@ -179,46 +232,43 @@ function SessionCard({
 
       <RouteMap route={detailQuery.data?.route ?? []} geo={detailQuery.data?.geo ?? null} />
 
-      <div className="day-drawer-hr-chart">
-        <div className="day-drawer-section-label">Heart rate</div>
-        {detailQuery.isLoading ? (
-          <div className="day-drawer-hr-plot day-drawer-hr-plot--empty">
-            <span className="day-drawer-empty-text">Loading...</span>
-          </div>
-        ) : hrChartData.length > 0 ? (
-          <div className="day-drawer-hr-plot">
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={hrChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <XAxis
-                  dataKey="min"
-                  tick={chartAxisTickSm}
-                  axisLine={{ stroke: CHART.grid }}
-                  tickLine={false}
-                  minTickGap={24}
-                  unit="m"
-                />
-                <YAxis
-                  tick={chartAxisTickSm}
-                  axisLine={false}
-                  tickLine={false}
-                  width={30}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="bpm"
-                  stroke="var(--color-sessions)"
-                  strokeWidth={1.5}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        ) : (
-          <div className="day-drawer-hr-plot day-drawer-hr-plot--empty">
-            <span className="day-drawer-empty-text">No heart-rate trace for this session.</span>
-          </div>
-        )}
-      </div>
+      {!isStrength && (
+        <div className="day-drawer-hr-chart">
+          <div className="day-drawer-section-label">Heart rate</div>
+          {detailQuery.isLoading ? (
+            <div className="day-drawer-hr-plot day-drawer-hr-plot--empty">
+              <span className="day-drawer-empty-text">Loading...</span>
+            </div>
+          ) : hrChartData.length > 0 ? (
+            <div className="day-drawer-hr-plot">
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={hrChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <XAxis
+                    dataKey="min"
+                    tick={chartAxisTickSm}
+                    axisLine={{ stroke: CHART.grid }}
+                    tickLine={false}
+                    minTickGap={24}
+                    unit="m"
+                  />
+                  <YAxis tick={chartAxisTickSm} axisLine={false} tickLine={false} width={30} />
+                  <Line
+                    type="monotone"
+                    dataKey="bpm"
+                    stroke="var(--color-sessions)"
+                    strokeWidth={1.5}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="day-drawer-hr-plot day-drawer-hr-plot--empty">
+              <span className="day-drawer-empty-text">No heart-rate trace for this session.</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {!isStrength && (
         <div className="day-drawer-zones">
@@ -306,6 +356,32 @@ function TimeInZonesBar({ zones }: { zones: Record<string, unknown> }): ReactEle
         ))}
       </div>
     </>
+  )
+}
+
+function SetComposition({ sets }: { sets: SwimSet[] }): ReactElement | null {
+  const rows = buildSetComposition(sets)
+  if (rows.length === 0) return null
+
+  return (
+    <div className="day-drawer-set-composition" aria-label="Set composition by distance">
+      {rows.map((row) => (
+        <div key={row.distanceM} className="day-drawer-set-composition-row">
+          <span className="day-drawer-set-composition-distance tabular-nums">
+            {row.distanceM}m
+          </span>
+          <span className="day-drawer-set-composition-track" aria-hidden="true">
+            <span
+              className="day-drawer-set-composition-bar"
+              style={{ width: `${row.barPercent}%` }}
+            />
+          </span>
+          <span className="day-drawer-set-composition-total tabular-nums">
+            {row.count} {row.count === 1 ? 'set' : 'sets'} · {row.contributedDistanceM}m
+          </span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -404,7 +480,11 @@ function SwimSetsSection({
 
   return (
     <div className="day-drawer-swim">
-      <div className="day-drawer-section-label">Sets</div>
+      <div className="day-drawer-section-label">Set composition</div>
+
+      <SetComposition sets={sets} />
+
+      <div className="day-drawer-swim-detail-label">Set timeline</div>
 
       <SwimTimeline sets={sets} paces={paces} hrSamples={hrSamples} />
 

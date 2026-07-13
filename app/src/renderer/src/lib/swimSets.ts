@@ -7,6 +7,7 @@
 // alternating strokes (free/back); overcounts breast/fly — acceptable, the
 // app assumes freestyle and HAE never sends stroke style.
 import type { SwimSet, WorkoutHrSample } from '@shared/types'
+import { scaleLinear } from 'd3-scale'
 
 export function paceSecPer100m(set: SwimSet): number | null {
   if (set.distance_m <= 0) return null
@@ -58,6 +59,43 @@ export function clusterStructure(sets: SwimSet[]): string {
     else groups.push({ distance: d, count: 1 })
   }
   return groups.map((g) => `${g.count}×${g.distance}m`).join(' + ')
+}
+
+export interface SwimSetCompositionRow {
+  distanceM: number
+  count: number
+  contributedDistanceM: number
+  barPercent: number
+}
+
+/**
+ * Compact volume summary by detected set distance. Distances are grouped to
+ * the nearest 5m, then a D3 scale maps each group's contributed distance to
+ * a percentage of the largest group for declarative bar rendering.
+ */
+export function buildSetComposition(sets: SwimSet[]): SwimSetCompositionRow[] {
+  const groups = new Map<number, number>()
+  for (const set of sets) {
+    const distanceM = Math.round(set.distance_m / 5) * 5
+    if (distanceM <= 0) continue
+    groups.set(distanceM, (groups.get(distanceM) ?? 0) + 1)
+  }
+
+  const grouped = [...groups.entries()]
+    .map(([distanceM, count]) => ({
+      distanceM,
+      count,
+      contributedDistanceM: distanceM * count
+    }))
+    .sort((a, b) => a.distanceM - b.distanceM)
+  if (grouped.length === 0) return []
+
+  const maxDistance = Math.max(...grouped.map((row) => row.contributedDistanceM))
+  const widthScale = scaleLinear().domain([0, maxDistance]).range([0, 100])
+  return grouped.map((row) => ({
+    ...row,
+    barPercent: widthScale(row.contributedDistanceM)
+  }))
 }
 
 /**
@@ -262,6 +300,22 @@ export function sprintStats(sprintSets: SwimSet[]): SprintStats | null {
     topPaceSecPer100m: topSpeedMps > 0 ? 100 / topSpeedMps : 0,
     avgSpeedMps: totalDurationS > 0 ? totalDistanceM / totalDurationS : 0
   }
+}
+
+/**
+ * Percentage of the total session spent actively swimming (sum of set
+ * `duration_s`) vs the workout's total wall-clock duration — the remainder is
+ * rest/transition time. Null when the workout duration is missing/zero or
+ * there are no detected sets. Not clamped to 100: a workout duration shorter
+ * than the summed active set time (clock drift between the watch's workout
+ * boundary and its per-second swim series) surfaces as-is rather than being
+ * silently hidden.
+ */
+export function activeTimePercent(sets: SwimSet[], workoutDurationS: number | null): number | null {
+  if (workoutDurationS === null || workoutDurationS <= 0) return null
+  if (sets.length === 0) return null
+  const activeS = sets.reduce((sum, s) => sum + s.duration_s, 0)
+  return (activeS / workoutDurationS) * 100
 }
 
 /** Groups a flat swim_sets read by workout, preserving set order. */

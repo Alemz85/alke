@@ -53,6 +53,21 @@ export function useMonthWorkouts(year: number, month: number) {
 }
 
 /**
+ * Every workout on record, fetched once. The single-user DB holds only a few
+ * hundred workouts, so an all-time pull is cheap and lets the Sessions view
+ * drive its calendar, summaries, and the (filterable) all-sessions list from
+ * one source — no 365-day window that hides older imports (e.g. RunKeeper).
+ */
+export function useAllWorkouts() {
+  return useQuery<Workout[]>({
+    queryKey: ['health', 'allWorkouts'],
+    queryFn: () =>
+      window.api.getWorkouts('1970-01-01T00:00:00.000Z', '2100-01-01T00:00:00.000Z'),
+    staleTime: 60_000
+  })
+}
+
+/**
  * A full year of workouts (trailing 365 days from today), fetched once and
  * reused for the longest-streak computation, which needs history wider than
  * any single visible month.

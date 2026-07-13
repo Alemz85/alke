@@ -329,6 +329,34 @@ export function timeProgress(goal: Goal, now: Date): TimeProgress {
   return { elapsedDays, pct }
 }
 
+/**
+ * "Active for N days · since {date}" / "On hold since {date}" / "{Completed|
+ * Abandoned} {date}" — the goal card's status meta line. Anchors on
+ * `status_changed_at` (falls back to `started_at` when null, e.g. a goal that
+ * has never changed status since creation). Returns the anchor YMD alongside
+ * the label so callers can format the date with their own formatter.
+ */
+export interface SinceLabel {
+  text: string
+  /** YMD the label is anchored on — callers append their own date formatting. */
+  anchorYMD: string
+}
+
+export function sinceLabel(goal: Goal, now: Date): SinceLabel {
+  const anchor = (goal.status_changed_at ?? goal.started_at).slice(0, 10)
+  const nowYMD = toYMD(now)
+  const days = Math.max(0, daysBetween(anchor, nowYMD))
+
+  if (goal.status === 'active') {
+    return { text: `Active for ${days} day${days === 1 ? '' : 's'} · since`, anchorYMD: anchor }
+  }
+  if (goal.status === 'on_hold') {
+    return { text: 'On hold since', anchorYMD: anchor }
+  }
+  const verb = goal.status === 'completed' ? 'Completed' : 'Abandoned'
+  return { text: verb, anchorYMD: anchor }
+}
+
 export interface MetricProgress {
   latest: number | null
   /** Signed change vs baseline, direction-aware sign not applied (raw delta: latest - baseline). */

@@ -1,10 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent, ReactElement } from 'react'
+import type { DragEvent, MouseEvent, ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Check, ChevronRight, Copy, Pencil, Plus, Square, Trash2 } from 'lucide-react'
+import {
+  ArrowUp,
+  Check,
+  ChevronRight,
+  Copy,
+  Paperclip,
+  Pencil,
+  Plus,
+  Square,
+  Trash2,
+  X
+} from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMessage, ChatSessionMeta, ChatStreamEvent } from '@shared/types'
+import {
+  MAX_CHAT_ATTACHMENTS,
+  type ChatAttachment,
+  type ChatMessage,
+  type ChatSessionMeta,
+  type ChatStreamEvent
+} from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ButtonSoft } from '../components'
 import './ChatView.css'
@@ -23,7 +40,10 @@ const SUGGESTED_PROMPTS = [
 
 export function ChatView(): ReactElement {
   const queryClient = useQueryClient()
-  const statusQuery = useQuery({ queryKey: ['chat', 'status'], queryFn: () => window.api.chatStatus() })
+  const statusQuery = useQuery({
+    queryKey: ['chat', 'status'],
+    queryFn: () => window.api.chatStatus()
+  })
   const sessionsQuery = useQuery({
     queryKey: ['chat', 'sessions'],
     queryFn: () => window.api.chatListSessions()
@@ -35,9 +55,12 @@ export function ChatView(): ReactElement {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [dragActive, setDragActive] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const activeIdRef = useRef<string | null>(null)
+  const dragCounterRef = useRef(0)
   activeIdRef.current = activeId
 
   useEffect(() => {
@@ -66,7 +89,10 @@ export function ChatView(): ReactElement {
           .map((b) => b.text)
           .join('\n\n')
         if (text.trim()) {
-          setMessages((m) => [...m, { role: 'assistant', content: text, ts: new Date().toISOString() }])
+          setMessages((m) => [
+            ...m,
+            { role: 'assistant', content: text, ts: new Date().toISOString() }
+          ])
         }
         return []
       })
@@ -105,15 +131,21 @@ export function ChatView(): ReactElement {
   }
 
   async function send(override?: string): Promise<void> {
-    const message = (override ?? input).trim()
-    if (!message || busy) return
+    const typedMessage = (override ?? input).trim()
+    if ((!typedMessage && attachments.length === 0) || busy) return
+    const message = typedMessage || 'Review the attached files.'
     setInput('')
     setError(null)
     setBusy(true)
     setMessages((m) => [...m, { role: 'user', content: message, ts: new Date().toISOString() }])
     try {
-      const { sessionId } = await window.api.chatSend(activeId, message)
+      const { sessionId } = await window.api.chatSend(
+        activeId,
+        message,
+        attachments.map(({ path }) => path)
+      )
       setActiveId(sessionId)
+      setAttachments([])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
@@ -123,6 +155,74 @@ export function ChatView(): ReactElement {
   function sendSuggestion(prompt: string): void {
     setInput(prompt)
     void send(prompt)
+  }
+
+  function addAttachments(incoming: ChatAttachment[]): void {
+    if (incoming.length === 0) return
+    setAttachments((current) => {
+      const currentPaths = new Set(current.map(({ path }) => path))
+      const additions = incoming.filter(({ path }) => !currentPaths.has(path))
+      if (additions.length === 0) return current
+      if (current.length + additions.length > MAX_CHAT_ATTACHMENTS) {
+        setError(`You can attach up to ${MAX_CHAT_ATTACHMENTS} files at a time.`)
+        return current
+      }
+      return [...current, ...additions]
+    })
+  }
+
+  async function pickAttachments(): Promise<void> {
+    if (busy || attachments.length >= MAX_CHAT_ATTACHMENTS) return
+    setError(null)
+    try {
+      const picked = await window.api.chatPickAttachments()
+      if (picked.length === 0) return
+      addAttachments(picked)
+      textareaRef.current?.focus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  function handleDragEnter(e: DragEvent<HTMLDivElement>): void {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    if (busy) return
+    dragCounterRef.current += 1
+    setDragActive(true)
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>): void {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    if (busy) return
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>): void {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+    if (dragCounterRef.current === 0) setDragActive(false)
+  }
+
+  async function handleDrop(e: DragEvent<HTMLDivElement>): Promise<void> {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    dragCounterRef.current = 0
+    setDragActive(false)
+    if (busy) return
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => window.api.getPathForFile(f))
+      .filter((p) => p.length > 0)
+    if (paths.length === 0) return
+    setError(null)
+    try {
+      const validated = await window.api.chatValidateAttachments(paths)
+      addAttachments(validated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   async function stop(): Promise<void> {
@@ -140,8 +240,8 @@ export function ChatView(): ReactElement {
         <TabHeader eyebrow="Analysis chat" title="Chat" />
         <div className="chat-offline">
           <p>
-            Claude Code isn&apos;t reachable — the chat drives the locally installed <code>claude</code> CLI
-            (subscription auth, no API key). Install or sign in, then retry.
+            Claude Code isn&apos;t reachable — the chat drives the locally installed{' '}
+            <code>claude</code> CLI (subscription auth, no API key). Install or sign in, then retry.
           </p>
           <ButtonSoft onClick={() => void statusQuery.refetch()}>Retry connection</ButtonSoft>
           {sessions.length > 0 && (
@@ -149,7 +249,9 @@ export function ChatView(): ReactElement {
               {sessions.map((s) => (
                 <div key={s.id} className="chat-session-row chat-session-row--static">
                   <span>{s.title ?? 'Untitled analysis'}</span>
-                  <span className="chat-session-date">{new Date(s.started_at).toLocaleDateString()}</span>
+                  <span className="chat-session-date">
+                    {new Date(s.started_at).toLocaleDateString()}
+                  </span>
                 </div>
               ))}
             </div>
@@ -167,32 +269,52 @@ export function ChatView(): ReactElement {
           <button className="chat-new-btn" onClick={newAnalysis}>
             <Plus size={16} strokeWidth={1.5} /> New analysis
           </button>
-          {sessions.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              active={s.id === activeId}
-              onOpen={() => void openSession(s.id)}
-              onRenamed={() => void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })}
-              onDeleted={() => {
-                void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
-                if (s.id === activeId) newAnalysis()
-              }}
-            />
-          ))}
+          <div className="chat-session-list">
+            {sessions.map((s) => (
+              <SessionRow
+                key={s.id}
+                session={s}
+                active={s.id === activeId}
+                onOpen={() => void openSession(s.id)}
+                onRenamed={() =>
+                  void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+                }
+                onDeleted={() => {
+                  void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+                  if (s.id === activeId) newAnalysis()
+                }}
+              />
+            ))}
+          </div>
         </aside>
 
-        <div className="chat-panel">
+        <div
+          className="chat-panel"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => void handleDrop(e)}
+        >
+          {dragActive && (
+            <div className="chat-drop-overlay">
+              <Paperclip size={16} strokeWidth={1.6} aria-hidden="true" />
+              Drop files to attach
+            </div>
+          )}
           <div className="chat-messages" ref={scrollRef}>
             {messages.length === 0 && stream.length === 0 && (
               <>
                 <p className="chat-hint">
-                  Ask anything about your data — &ldquo;summarize my last 2 weeks&rdquo;, &ldquo;is my swim
-                  efficiency improving?&rdquo;. Answers are computed live from the database.
+                  Ask anything about your data — &ldquo;summarize my last 2 weeks&rdquo;, &ldquo;is
+                  my swim efficiency improving?&rdquo;. Answers are computed live from the database.
                 </p>
                 <div className="chat-suggestions">
                   {SUGGESTED_PROMPTS.map((prompt) => (
-                    <button key={prompt} className="chip chat-suggestion-chip" onClick={() => sendSuggestion(prompt)}>
+                    <button
+                      key={prompt}
+                      className="chip chat-suggestion-chip"
+                      onClick={() => sendSuggestion(prompt)}
+                    >
                       {prompt}
                     </button>
                   ))}
@@ -227,30 +349,78 @@ export function ChatView(): ReactElement {
           </div>
 
           <div className="chat-input-well">
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              rows={1}
-              placeholder="Ask about your training, recovery, trends…"
-              value={input}
-              disabled={busy}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  void send()
-                }
-              }}
-            />
-            {busy ? (
-              <button className="chat-send chat-stop" onClick={() => void stop()} aria-label="Stop">
-                <Square size={14} fill="currentColor" />
-              </button>
-            ) : (
-              <button className="chat-send" onClick={() => void send()} disabled={!input.trim()} aria-label="Send">
-                <ArrowUp size={18} strokeWidth={2} />
-              </button>
+            {attachments.length > 0 && (
+              <div className="chat-attachments" aria-label="Attached files">
+                {attachments.map((attachment) => (
+                  <span
+                    className="chat-attachment-chip"
+                    key={attachment.path}
+                    title={attachment.path}
+                  >
+                    <Paperclip size={13} strokeWidth={1.7} aria-hidden="true" />
+                    <span className="chat-attachment-name">{attachment.name}</span>
+                    <button
+                      type="button"
+                      className="chat-attachment-remove"
+                      onClick={() =>
+                        setAttachments((current) =>
+                          current.filter(({ path }) => path !== attachment.path)
+                        )
+                      }
+                      disabled={busy}
+                      aria-label={`Remove ${attachment.name}`}
+                    >
+                      <X size={12} strokeWidth={2} />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
+            <div className="chat-input-row">
+              <button
+                type="button"
+                className="chat-attach-btn"
+                onClick={() => void pickAttachments()}
+                disabled={busy || attachments.length >= MAX_CHAT_ATTACHMENTS}
+                aria-label={`Attach files (${attachments.length} of ${MAX_CHAT_ATTACHMENTS})`}
+                title="Attach files"
+              >
+                <Paperclip size={18} strokeWidth={1.6} />
+              </button>
+              <textarea
+                ref={textareaRef}
+                className="chat-input"
+                rows={1}
+                placeholder="Ask about your training, recovery, trends…"
+                value={input}
+                disabled={busy}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void send()
+                  }
+                }}
+              />
+              {busy ? (
+                <button
+                  className="chat-send chat-stop"
+                  onClick={() => void stop()}
+                  aria-label="Stop"
+                >
+                  <Square size={14} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  className="chat-send"
+                  onClick={() => void send()}
+                  disabled={!input.trim() && attachments.length === 0}
+                  aria-label="Send"
+                >
+                  <ArrowUp size={18} strokeWidth={2} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -345,12 +515,20 @@ function SessionRow({
       <span className="chat-session-row-top">
         <span className="chat-session-title">{session.title ?? 'Untitled analysis'}</span>
         <span className="chat-session-actions">
-          <span className="chat-session-icon-btn" role="button" tabIndex={0} aria-label="Rename" onClick={startEditing}>
+          <span
+            className="chat-session-icon-btn"
+            role="button"
+            tabIndex={0}
+            aria-label="Rename"
+            onClick={startEditing}
+          >
             <Pencil size={14} strokeWidth={1.5} />
           </span>
           <span
             className={
-              confirmingDelete ? 'chat-session-icon-btn chat-session-icon-btn--confirm' : 'chat-session-icon-btn'
+              confirmingDelete
+                ? 'chat-session-icon-btn chat-session-icon-btn--confirm'
+                : 'chat-session-icon-btn'
             }
             role="button"
             tabIndex={0}

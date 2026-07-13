@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Goal, GoalProgressPoint, Workout } from '@shared/types'
-import { achievements, metricProgress, profileStats, timeProgress } from '../profileStats'
+import { achievements, metricProgress, profileStats, sinceLabel, timeProgress } from '../profileStats'
 
 // Fixed "now" so all windows are deterministic. 2026-07-10 is a Friday, ISO
 // week starting Mon 2026-07-06.
@@ -32,6 +32,7 @@ function goal(partial: Partial<Goal> & { id: string }): Goal {
     description: null,
     status: 'active',
     started_at: '2026-06-01',
+    status_changed_at: null,
     duration_days: null,
     created_by: 'user',
     metric_name: null,
@@ -336,5 +337,74 @@ describe('metricProgress', () => {
     const g = goal({ id: 'g1', metric_direction: 'up', metric_baseline: 10, metric_target: 20 })
     expect(metricProgress(g, [point('2026-07-10', 30)]).pctToTarget).toBe(100)
     expect(metricProgress(g, [point('2026-07-10', 0)]).pctToTarget).toBe(0)
+  })
+})
+
+// ── sinceLabel ───────────────────────────────────────────────────────────────
+
+describe('sinceLabel', () => {
+  it('active goal with no status_changed_at falls back to started_at', () => {
+    const g = goal({ id: 'g1', status: 'active', started_at: '2026-07-01', status_changed_at: null })
+    const s = sinceLabel(g, NOW)
+    expect(s.anchorYMD).toBe('2026-07-01')
+    expect(s.text).toBe('Active for 9 days · since')
+  })
+
+  it('active goal prefers status_changed_at over started_at', () => {
+    const g = goal({
+      id: 'g1',
+      status: 'active',
+      started_at: '2026-01-01',
+      status_changed_at: '2026-07-05T00:00:00Z'
+    })
+    const s = sinceLabel(g, NOW)
+    expect(s.anchorYMD).toBe('2026-07-05')
+    expect(s.text).toBe('Active for 5 days · since')
+  })
+
+  it('pluralizes "day" singular at exactly 1 day', () => {
+    const g = goal({ id: 'g1', status: 'active', started_at: '2026-07-09', status_changed_at: null })
+    expect(sinceLabel(g, NOW).text).toBe('Active for 1 day · since')
+  })
+
+  it('on_hold goal reads "On hold since"', () => {
+    const g = goal({
+      id: 'g1',
+      status: 'on_hold',
+      started_at: '2026-06-01',
+      status_changed_at: '2026-07-08T00:00:00Z'
+    })
+    const s = sinceLabel(g, NOW)
+    expect(s.text).toBe('On hold since')
+    expect(s.anchorYMD).toBe('2026-07-08')
+  })
+
+  it('completed goal reads "Completed"', () => {
+    const g = goal({
+      id: 'g1',
+      status: 'completed',
+      started_at: '2026-06-01',
+      status_changed_at: '2026-07-09T00:00:00Z'
+    })
+    const s = sinceLabel(g, NOW)
+    expect(s.text).toBe('Completed')
+    expect(s.anchorYMD).toBe('2026-07-09')
+  })
+
+  it('abandoned goal reads "Abandoned"', () => {
+    const g = goal({
+      id: 'g1',
+      status: 'abandoned',
+      started_at: '2026-06-01',
+      status_changed_at: '2026-07-02T00:00:00Z'
+    })
+    const s = sinceLabel(g, NOW)
+    expect(s.text).toBe('Abandoned')
+    expect(s.anchorYMD).toBe('2026-07-02')
+  })
+
+  it('clamps to 0 days for a future anchor', () => {
+    const g = goal({ id: 'g1', status: 'active', started_at: '2026-08-01', status_changed_at: null })
+    expect(sinceLabel(g, NOW).text).toBe('Active for 0 days · since')
   })
 })

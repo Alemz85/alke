@@ -2,6 +2,8 @@
 // Pure and timezone-agnostic: callers map workouts to local date keys first
 // (localDateKey(w.start_at, timezone)) so all bucketing here is string math.
 
+import { activityEnvironment } from './modality'
+
 export interface SummaryItem {
   dateKey: string // 'YYYY-MM-DD' in the user's timezone
   durationS: number
@@ -24,37 +26,73 @@ export function isCardioType(type: string | null): boolean {
 const VISIT_GAP_MS = 30 * 60 * 1000
 
 /**
- * Counts training VISITS rather than raw workout rows: consecutive items
- * (sorted by start time) merge into a single visit when the gap between one
- * item's end and the next item's start is <= 30 minutes AND they fall on the
- * same calendar day (dateKey) — e.g. gym + a short cardio finisher logged
- * back-to-back is one visit, not two. Items missing startMs/endMs can't be
- * compared for adjacency, so each counts as its own visit.
+ * Groups workout rows into training VISITS (single sittings). Consecutive
+ * items (sorted by start time) merge into one visit when:
+ *   - the gap between one item's end and the next item's start is <= 30 min,
+ *   - they fall on the same calendar day (dateKey), and
+ *   - they happen in the same ENVIRONMENT (water / indoor / outdoor) — a
+ *     rowing-erg warm-up + bike + lifting at the gym is ONE visit, while a
+ *     swim followed straight by a gym session is two (pool -> gym floor is a
+ *     different sitting, per user rule).
+ * Items missing startMs/endMs (or type) can't be compared for adjacency, so
+ * each counts as its own visit.
  */
-export function countVisits(items: SummaryItem[]): number {
-  const timed = items.filter(
-    (i): i is SummaryItem & { startMs: number; endMs: number } =>
-      i.startMs !== undefined && i.endMs !== undefined
-  )
-  const untimed = items.length - timed.length
+export function groupVisits(items: SummaryItem[]): SummaryItem[][] {
+  const timed: (SummaryItem & { startMs: number; endMs: number })[] = []
+  const untimed: SummaryItem[] = []
+  for (const i of items) {
+    if (i.startMs !== undefined && i.endMs !== undefined && i.type !== null) {
+      timed.push(i as SummaryItem & { startMs: number; endMs: number })
+    } else {
+      untimed.push(i)
+    }
+  }
 
   const sorted = [...timed].sort((a, b) => a.startMs - b.startMs)
 
-  let visits = untimed
+  const visits: SummaryItem[][] = untimed.map((i) => [i])
+  let current: SummaryItem[] | null = null
   let lastEndMs: number | null = null
   let lastDateKey: string | null = null
+  let lastEnv: string | null = null
 
   for (const item of sorted) {
+    const env = activityEnvironment(item.type ?? '')
     const isMerge =
+      current !== null &&
       lastEndMs !== null &&
       lastDateKey === item.dateKey &&
+      lastEnv === env &&
       item.startMs - lastEndMs <= VISIT_GAP_MS
-    if (!isMerge) visits += 1
-    lastEndMs = item.endMs
+    if (isMerge && current) {
+      current.push(item)
+    } else {
+      current = [item]
+      visits.push(current)
+    }
+    // The visit's reach extends to the latest end seen so far, so a long
+    // workout followed by a short one logged inside it still chains.
+    lastEndMs = lastEndMs !== null && current.length > 1 ? Math.max(lastEndMs, item.endMs) : item.endMs
     lastDateKey = item.dateKey
+    lastEnv = env
   }
 
   return visits
+}
+
+/** Number of single-sitting training visits — see groupVisits. */
+export function countVisits(items: SummaryItem[]): number {
+  return groupVisits(items).length
+}
+
+/** A visit containing ANY gym item counts as a gym session (mixed sittings — cardio warm-up + lifting — are gym). */
+function isGymVisit(visit: SummaryItem[]): boolean {
+  return visit.some((i) => isGymType(i.type))
+}
+
+/** A cardio session is a visit that has cardio work and no gym work. */
+function isCardioVisit(visit: SummaryItem[]): boolean {
+  return !isGymVisit(visit) && visit.some((i) => isCardioType(i.type))
 }
 
 export interface MonthSummary {
@@ -80,12 +118,17 @@ function prevMonthKey(ym: string): string {
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
 }
 
+// All session COUNTS are visit-based (single sittings, see groupVisits) so a
+// cardio warm-up logged separately from the lifting that followed it doesn't
+// double-count. Total time still sums every row. Items without start/end
+// times degrade gracefully: each is its own visit, i.e. the old raw count.
 function totals(items: SummaryItem[]): Omit<MonthSummary, 'timeTrendPct'> {
+  const visits = groupVisits(items)
   return {
-    workouts: items.length,
+    workouts: visits.length,
     totalDurationS: items.reduce((sum, i) => sum + i.durationS, 0),
-    gymSessions: items.filter((i) => isGymType(i.type)).length,
-    cardioSessions: items.filter((i) => isCardioType(i.type)).length
+    gymSessions: visits.filter(isGymVisit).length,
+    cardioSessions: visits.filter(isCardioVisit).length
   }
 }
 
@@ -140,17 +183,12 @@ export function yearSummary(items: SummaryItem[], year: number): YearSummary {
       avgCardioPerMonth: 0
     }
   }
+  // totals() is visit-based across the board (see groupVisits), so every
+  // per-month average here counts single sittings, not raw workout rows.
   const t = totals(inYear)
-  // avgWorkoutsPerMonth counts VISITS (gym + a short cardio finisher logged
-  // back-to-back is one training visit), not raw workout rows — but only when
-  // start/end times are available to judge adjacency. Gym/cardio per-month
-  // averages and the monthly `workouts` stat elsewhere stay raw-session
-  // counts; only this yearly metric changes.
-  const hasTimes = inYear.some((i) => i.startMs !== undefined && i.endMs !== undefined)
-  const avgWorkoutsPerMonth = (hasTimes ? countVisits(inYear) : t.workouts) / n
   return {
     monthsCounted: n,
-    avgWorkoutsPerMonth,
+    avgWorkoutsPerMonth: t.workouts / n,
     avgDurationSPerMonth: t.totalDurationS / n,
     avgGymPerMonth: t.gymSessions / n,
     avgCardioPerMonth: t.cardioSessions / n

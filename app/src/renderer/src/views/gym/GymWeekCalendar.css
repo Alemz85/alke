@@ -1,0 +1,214 @@
+.gym-week-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-elevated);
+}
+
+.gym-week-calendar-head,
+.gym-week-calendar-nav,
+.gym-week-calendar-day-head {
+  display: flex;
+  align-items: center;
+}
+
+.gym-week-calendar-head {
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.gym-week-calendar-title {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+}
+
+.gym-week-calendar-caption {
+  margin: var(--space-xxs) 0 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+}
+
+.gym-week-calendar-nav {
+  gap: var(--space-xs);
+}
+
+.gym-week-calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.gym-week-calendar-nav-btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.gym-week-calendar-nav-btn:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.gym-week-calendar-scroll {
+  overflow-x: auto;
+}
+
+.gym-week-calendar-weekdays,
+.gym-week-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(108px, 1fr));
+  gap: 4px;
+}
+
+.gym-week-calendar-weekdays {
+  margin-bottom: 4px;
+}
+
+.gym-week-calendar-grid {
+  min-width: 780px;
+}
+
+.gym-week-calendar-day {
+  position: relative;
+  display: flex;
+  height: clamp(108px, 9vw, 144px);
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: none;
+  color: inherit;
+  text-align: left;
+  transition: background var(--motion-hover);
+}
+
+.gym-week-calendar-day:not(:disabled) {
+  cursor: pointer;
+}
+
+.gym-week-calendar-day:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+
+.gym-week-calendar-day:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.gym-week-calendar-day--step-0 {
+  background: var(--color-sessions-step-0);
+}
+
+.gym-week-calendar-day--step-1 {
+  background: var(--color-sessions-step-1);
+}
+
+.gym-week-calendar-day--step-2 {
+  background: var(--color-sessions-step-2);
+}
+
+.gym-week-calendar-day--step-3 {
+  background: var(--color-sessions-step-3);
+}
+
+.gym-week-calendar-day--today {
+  outline: 1px solid var(--color-hairline);
+  outline-offset: -1px;
+}
+
+.gym-week-calendar-day-head {
+  justify-content: space-between;
+}
+
+.gym-week-calendar-weekday,
+.gym-week-calendar-rest,
+.gym-week-calendar-session-meta {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+}
+
+.gym-week-calendar-weekday {
+  padding-bottom: var(--space-xxs);
+  text-align: center;
+  letter-spacing: var(--type-label-letter-spacing);
+}
+
+.gym-week-calendar-date {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.gym-week-calendar-rest {
+  margin-top: auto;
+}
+
+.gym-week-calendar-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.gym-week-calendar-session {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: none;
+  border-radius: var(--radius-xs);
+  padding: var(--space-xxs);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+  transition: background var(--motion-hover);
+}
+
+.gym-week-calendar-nav-btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.gym-week-calendar-session-name {
+  width: 100%;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gym-week-calendar-day--step-3 .gym-week-calendar-date,
+.gym-week-calendar-day--step-3 .gym-week-calendar-session-name,
+.gym-week-calendar-day--step-3 .gym-week-calendar-session-meta {
+  color: var(--color-text-on-accent);
+}
+
+@media (max-width: 720px) {
+  .gym-week-calendar-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

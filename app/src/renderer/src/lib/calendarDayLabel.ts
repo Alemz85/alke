@@ -17,10 +17,11 @@ import { formatDurationHM } from './format'
 export function workoutDisplayName(type: string | null | undefined): string {
   if (!type) return 'Workout'
   const t = type.toLowerCase()
+  // Calendar cells use the shorter noun while the Cardio tab uses "Running".
+  if (t.includes('run')) return 'Run'
   const cardio = cardioModalityOf(type)
   if (cardio) return cardioModalityByKey(cardio).label
   if (t.includes('strength') || t.includes('core') || t.includes('functional_strength')) return 'Gym'
-  if (t.includes('run')) return 'Run'
   if (t.includes('yoga')) return 'Yoga'
   if (t.includes('pilates')) return 'Pilates'
   // Fallback: title-case the raw type ("high_intensity_interval_training" →

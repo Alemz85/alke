@@ -33,7 +33,7 @@ const LAGS = [0, 1, 2, 3]
 
 function cellColor(r: number): string {
   const alpha = 0.06 + Math.min(Math.abs(r), 1) * 0.8
-  // positive = aerobic teal, negative = recovery violet — sign is direction, not judgement.
+  // Positive = aerobic teal, negative = violet. Sign is direction, not judgement.
   // RGB triplets come from tokens so the poles track the theme's accent palette.
   const triplet = r >= 0 ? 'var(--color-corr-positive)' : 'var(--color-corr-negative)'
   return `rgba(${triplet}, ${alpha})`
@@ -47,22 +47,37 @@ const tooltipStyle = {
   fontVariantNumeric: 'tabular-nums' as const
 }
 
+interface FinderCandidate {
+  name: string
+  label: string
+  status: 'signal' | 'watch' | 'no_clear_signal' | 'insufficient' | 'suppressed_collinear'
+  direction?: string
+  n: number
+  required_n?: number
+  partial_r?: number
+  q_value?: number
+  stable?: boolean
+  suppressed_by?: string
+}
+
 /** Rebuild the daily analysis series in the renderer so a clicked cell can
  * show its underlying scatter — mirrors metrics/compute.py's frame. */
 function useAnalysisSeries(): Record<string, Map<string, number>> {
   const from = useMemo(() => {
     const d = new Date()
-    d.setDate(d.getDate() - 180)
+    d.setDate(d.getDate() - 365)
     return d.toISOString()
   }, [])
   const daily = useQuery({
     queryKey: ['insights', 'dailyMetrics'],
-    queryFn: () => window.api.getDailyMetrics(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
+    queryFn: () =>
+      window.api.getDailyMetrics(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
     staleTime: 60_000
   })
   const computed = useQuery({
     queryKey: ['insights', 'computedDaily'],
-    queryFn: () => window.api.getComputedDaily(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
+    queryFn: () =>
+      window.api.getComputedDaily(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
     staleTime: 60_000
   })
   const workouts = useQuery({
@@ -110,7 +125,11 @@ function useAnalysisSeries(): Record<string, Map<string, number>> {
       put('sleep_midpoint_dev', date, Math.abs(mids[i][1] - median))
     })
     // per-day workout performance means
-    const perfAcc: Record<string, Map<string, number[]>> = { ef: new Map(), decoupling: new Map(), hrr60: new Map() }
+    const perfAcc: Record<string, Map<string, number[]>> = {
+      ef: new Map(),
+      decoupling: new Map(),
+      hrr60: new Map()
+    }
     for (const w of workouts.data ?? []) {
       if (!w.computed) continue
       const day = localDateKey(w.start_at, tz)
@@ -174,15 +193,153 @@ export function InsightsView(): ReactElement {
   }, [selected, series])
 
   const models = (modelsQuery.data ?? []).filter((m) => m.coefficients)
+  const finderModel = (modelsQuery.data ?? []).find(
+    (model) => model.name === 'daily_adjusted_finder'
+  )
+  const finderDiagnostics = finderModel?.diagnostics as unknown as {
+    candidate_count?: number
+    signal_count?: number
+    watch_count?: number
+    candidates?: FinderCandidate[]
+    caveat?: string
+  } | null
+  const finderCandidates = finderDiagnostics?.candidates ?? []
+  const surfacedCandidates = finderCandidates.filter(
+    (candidate) => candidate.status === 'signal' || candidate.status === 'watch'
+  )
+  const collectingCount = finderCandidates.filter(
+    (candidate) => candidate.status === 'insufficient'
+  ).length
+  const readiness = [
+    {
+      label: 'Sleep context',
+      value: series.sleep_duration?.size ?? 0,
+      detail: 'duration and timing days'
+    },
+    {
+      label: 'Recovery context',
+      value: Math.max(series.rhr_dev?.size ?? 0, series.hrv_dev?.size ?? 0),
+      detail: 'RHR or HRV days'
+    },
+    {
+      label: 'Workout performance',
+      value: Math.max(series.ef?.size ?? 0, series.decoupling?.size ?? 0, series.hrr60?.size ?? 0),
+      detail: 'days with a computed outcome'
+    }
+  ]
+  const genericModels = models.filter((model) => model.name !== 'daily_adjusted_finder')
 
   return (
-    <div className="view">
+    <div className="view insights-view">
       <TabHeader eyebrow="Analysis" title="Insights" />
+
+      <section className="insights-readiness" aria-labelledby="insights-readiness-title">
+        <div className="insights-section-head">
+          <div>
+            <span className="insights-kicker">Evidence inventory · last year</span>
+            <h2 id="insights-readiness-title">What the data can answer</h2>
+          </div>
+          <span className="insights-section-note">Coverage, not a score</span>
+        </div>
+        <div className="insights-readiness-rows">
+          {readiness.map((item) => (
+            <div className="insights-readiness-row" key={item.label}>
+              <span>
+                <strong>{item.label}</strong>
+                <small>{item.detail}</small>
+              </span>
+              <span className="tabular-nums">{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="insights-finder" aria-labelledby="insights-finder-title">
+        <div className="insights-section-head">
+          <div>
+            <span className="insights-kicker">Automated finder</span>
+            <h2 id="insights-finder-title">Relationships that survive the checks</h2>
+          </div>
+          {finderDiagnostics && (
+            <span className="insights-finder-count tabular-nums">
+              {finderDiagnostics.candidate_count ?? finderCandidates.length} screened
+            </span>
+          )}
+        </div>
+
+        <div className="insights-gates" aria-label="Insight screening stages">
+          <span>Predeclared timing</span>
+          <span>Confound adjustment</span>
+          <span>False-discovery control</span>
+          <span>Split-half stability</span>
+          <span>Collinearity collapse</span>
+        </div>
+
+        {!finderModel ? (
+          <p className="insights-finder-empty">
+            The adjusted finder is ready and will populate on the next nightly metrics run.
+            Candidates remain dormant until they have at least 60 usable observations.
+          </p>
+        ) : surfacedCandidates.length === 0 ? (
+          <div className="insights-finder-empty">
+            <strong>No relationship has cleared every gate yet.</strong>
+            <span>
+              {collectingCount > 0
+                ? `${collectingCount} future-facing candidates are still collecting data. `
+                : ''}
+              A quiet result is evidence too; the app will surface a candidate automatically when
+              its effect, uncertainty, and stability are strong enough.
+            </span>
+          </div>
+        ) : (
+          <div className="insights-finder-results">
+            {surfacedCandidates.map((candidate) => (
+              <article key={candidate.name} className="insights-finder-result">
+                <div>
+                  <span
+                    className={`insights-finder-status insights-finder-status--${candidate.status}`}
+                  >
+                    {candidate.status === 'signal' ? 'Cleared' : 'Watch'}
+                  </span>
+                  <h3>{candidate.label}</h3>
+                  <p>
+                    {candidate.direction === 'co-measured'
+                      ? 'Co-measured association; direction is unresolved.'
+                      : 'Temporally ordered candidate; still observational.'}
+                  </p>
+                </div>
+                <dl>
+                  <div>
+                    <dt>Adjusted r</dt>
+                    <dd className="tabular-nums">{candidate.partial_r?.toFixed(2) ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>FDR q</dt>
+                    <dd className="tabular-nums">{candidate.q_value?.toFixed(3) ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>n</dt>
+                    <dd className="tabular-nums">{candidate.n}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+        <p className="insights-caption">
+          {finderDiagnostics?.caveat ??
+            'Single-person observational data. The finder reduces common false positives; it cannot establish causality.'}
+        </p>
+      </section>
 
       {correlations.length === 0 ? (
         <EmptyState message="Keep training — this tab switches on at ~20 observations (~5–6 weeks) and gets honest at ~3 months." />
       ) : (
         <>
+          <div className="insights-matrix-head">
+            <span className="insights-kicker">Exploratory matrix</span>
+            <h2>Unadjusted relationships to inspect</h2>
+          </div>
           <div className="insights-lag-row">
             <span className="insights-lag-label">Driver lead time</span>
             <div className="chip-filter" role="tablist" aria-label="Lag selector">
@@ -219,17 +376,25 @@ export function InsightsView(): ReactElement {
                   const cell = byKey.get(`${d.key}|${p.key}|${lag}`)
                   if (!cell) {
                     return (
-                      <div key={p.key} className="insights-cell insights-cell--empty" title="Fewer than 20 paired observations">
+                      <div
+                        key={p.key}
+                        className="insights-cell insights-cell--empty"
+                        title="Fewer than 20 paired observations"
+                      >
                         ·
                       </div>
                     )
                   }
                   const isSelected =
-                    selected?.var_x === cell.var_x && selected?.var_y === cell.var_y && selected?.lag_days === cell.lag_days
+                    selected?.var_x === cell.var_x &&
+                    selected?.var_y === cell.var_y &&
+                    selected?.lag_days === cell.lag_days
                   return (
                     <button
                       key={p.key}
-                      className={isSelected ? 'insights-cell insights-cell--selected' : 'insights-cell'}
+                      className={
+                        isSelected ? 'insights-cell insights-cell--selected' : 'insights-cell'
+                      }
                       style={{ background: cellColor(cell.r) }}
                       onClick={() => setSelected(cell)}
                     >
@@ -241,8 +406,8 @@ export function InsightsView(): ReactElement {
             ))}
           </div>
           <p className="insights-caption">
-            Pearson r, teal positive / violet negative. Cells need ≥20 paired days; single-person data — read as
-            hypotheses, not conclusions.
+            Pearson r, teal positive / violet negative. Cells need ≥20 paired days; single-person
+            data — read as hypotheses, not conclusions.
           </p>
 
           {selected && (
@@ -251,7 +416,8 @@ export function InsightsView(): ReactElement {
               span={12}
               headerRight={
                 <span className="insights-scatter-meta tabular-nums">
-                  r {selected.r.toFixed(2)} · n {selected.n} · p {selected.p_value < 0.001 ? '<0.001' : selected.p_value.toFixed(3)}
+                  r {selected.r.toFixed(2)} · n {selected.n} · p{' '}
+                  {selected.p_value < 0.001 ? '<0.001' : selected.p_value.toFixed(3)}
                 </span>
               }
             >
@@ -283,9 +449,9 @@ export function InsightsView(): ReactElement {
         </>
       )}
 
-      {models.length > 0 && (
+      {genericModels.length > 0 && (
         <div className="insights-models">
-          {models.map((m) => (
+          {genericModels.map((m) => (
             <div key={m.name} className="insights-model-card">
               <div className="insights-model-title">{m.name}</div>
               {m.spec && <div className="insights-model-spec">{m.spec}</div>}
@@ -306,7 +472,9 @@ export function InsightsView(): ReactElement {
                       <td className="tabular-nums">
                         [{c.ci_low.toPrecision(3)}, {c.ci_high.toPrecision(3)}]
                       </td>
-                      <td className="tabular-nums">{c.p_value < 0.001 ? '<0.001' : c.p_value.toFixed(3)}</td>
+                      <td className="tabular-nums">
+                        {c.p_value < 0.001 ? '<0.001' : c.p_value.toFixed(3)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

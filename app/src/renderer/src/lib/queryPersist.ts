@@ -1,6 +1,7 @@
-import { QueryClient, type Query } from '@tanstack/react-query'
+import { MutationCache, QueryClient, type Query } from '@tanstack/react-query'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 import type { PersistQueryClientOptions } from '@tanstack/react-query-persist-client'
+import { publishMutationError } from './mutationFeedback'
 
 // Cache survival window: persisted entries older than this are dropped on
 // rehydrate. gcTime must be at least this long or TanStack will garbage
@@ -25,6 +26,12 @@ function shouldPersistQuery(query: Query): boolean {
 }
 
 export const queryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (_error, _variables, _context, mutation) => {
+      const message = mutation.meta?.errorMessage
+      if (typeof message === 'string' && message.length > 0) publishMutationError(message)
+    }
+  }),
   defaultOptions: {
     queries: {
       staleTime: 60_000,

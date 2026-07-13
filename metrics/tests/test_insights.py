@@ -5,7 +5,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from metrics.insights import compute_correlations, ef_dlm, weight_series, zscore_trailing
+from metrics.insights import (
+    compute_correlations,
+    discover_adjusted_insights,
+    ef_dlm,
+    weight_series,
+    zscore_trailing,
+)
 
 RNG = np.random.default_rng(7)
 
@@ -51,6 +57,57 @@ def test_correlations_skip_small_n():
     frame.iloc[:10, frame.columns.get_loc("ef")] = 0.2  # only 10 obs -> n<20
     rows = compute_correlations(frame, drivers=["sleep_duration"], perfs=["ef"], max_lag=1)
     assert rows == []
+
+
+def test_adjusted_finder_recovers_stable_signal_and_drops_collinear_control():
+    n = 240
+    dates = pd.date_range("2025-01-01", periods=n, freq="D")
+    rng = np.random.default_rng(85)
+    driver = rng.normal(size=n)
+    confound = rng.normal(size=n)
+    outcome = 0.55 * driver + 0.8 * confound + rng.normal(0, 0.65, n)
+    frame = pd.DataFrame(
+        {
+            "driver": driver,
+            "outcome": outcome,
+            "confound": confound,
+            "confound_copy": confound + rng.normal(0, 0.001, n),
+        },
+        index=dates,
+    )
+    specs = [{
+        "name": "driver_to_outcome",
+        "label": "Driver → outcome",
+        "driver": "driver",
+        "outcome": "outcome",
+        "controls": ["confound", "confound_copy"],
+        "direction": "lagged",
+    }]
+
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60)
+    candidate = model["diagnostics"]["candidates"][0]
+    assert candidate["status"] == "signal"
+    assert candidate["partial_r"] > 0.4
+    assert candidate["q_value"] < 0.1
+    assert candidate["stable"] is True
+    assert "confound_copy" in candidate["dropped_controls"]
+
+
+def test_adjusted_finder_does_not_promote_random_noise():
+    n = 180
+    dates = pd.date_range("2025-01-01", periods=n, freq="D")
+    rng = np.random.default_rng(17)
+    frame = pd.DataFrame({"x": rng.normal(size=n), "y": rng.normal(size=n)}, index=dates)
+    specs = [{
+        "name": "noise",
+        "label": "Noise",
+        "driver": "x",
+        "outcome": "y",
+        "controls": [],
+        "direction": "co-measured",
+    }]
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60)
+    assert model["diagnostics"]["candidates"][0]["status"] == "no_clear_signal"
 
 
 def test_ef_dlm_recovers_coefficient_and_requires_40_obs():

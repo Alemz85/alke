@@ -21,14 +21,10 @@ import {
   ChartCard,
   EmptyState,
   MetricCard,
-  StatTable,
+  RecentSessionsCard,
   Zone2FitnessHeader
 } from '../components'
-import type { StatTableRow } from '../components'
-import { DayDetailDrawer } from '../components/DayDetailDrawer'
-import { SessionList } from '../components/SessionList'
-import { Zone2Trajectory } from '../components/Zone2Trajectory'
-import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
+import { Zone2HrZonesCard } from '../components/Zone2FitnessHeader'
 import { addDays, isoWeekKey, isoWeekStart, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import {
   CARDIO_MODALITIES,
@@ -37,10 +33,12 @@ import {
   type CardioModalityKey
 } from '../lib/cardioModality'
 import { CHART, chartTooltipStyle } from '../lib/chartTheme'
+import { buildNumericAxis } from '../lib/cardioChartScales'
 import { EM_DASH, formatPace100 } from '../lib/format'
 import { groupByWorkout, summarizeSession } from '../lib/swimSets'
 import { fastest100, fastest25, monthlyAvgPace } from '../lib/swimTrends'
 import { weekLabel } from '../lib/weekLabel'
+import { RunningView } from './RunningView'
 import './Zone2View.css'
 
 const AEROBIC = CHART.aerobic
@@ -93,6 +91,31 @@ function monthLabel(ym: string): string {
   return `${MONTH_SHORT_NAMES[m - 1]} ${y}`
 }
 
+function formatSwimDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`
+  const kilometers = meters / 1000
+  return `${kilometers >= 10 ? kilometers.toFixed(0) : kilometers.toFixed(1)} km`
+}
+
+function SwimChartKey({
+  items
+}: {
+  items: Array<{ label: string; tone?: 'aerobic' | 'neutral'; dashed?: boolean }>
+}): ReactElement {
+  return (
+    <div className="zone2-chart-key" aria-label="Chart legend">
+      {items.map((item) => (
+        <span key={item.label}>
+          <i
+            className={`zone2-chart-key-swatch zone2-chart-key-swatch--${item.tone ?? 'aerobic'}${item.dashed ? ' zone2-chart-key-swatch--dashed' : ''}`}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // --- shared chart bodies (reused by Summary and modality views) ---
 
 interface WeeklyBarsProps {
@@ -102,12 +125,30 @@ interface WeeklyBarsProps {
 
 /** Weekly Z2 minutes bar chart. Target line drawn only when `targetMin` given. */
 function WeeklyZ2Bars({ data, targetMin }: WeeklyBarsProps): ReactElement {
+  const axis = buildNumericAxis([...data.map((row) => row.minutes), targetMin], {
+    includeZero: true,
+    tickCount: 4
+  })
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="week" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="week"
+          interval="preserveStartEnd"
+          minTickGap={16}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          domain={axis.domain}
+          ticks={axis.ticks}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+          width={42}
+        />
         <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: CHART_CURSOR }} />
         {targetMin != null && (
           <ReferenceLine
@@ -139,12 +180,30 @@ interface TizBar {
 
 /** Stacked time-in-zones bars. */
 function TimeInZonesStacks({ data }: { data: TizBar[] }): ReactElement {
+  const axis = buildNumericAxis(
+    data.map((row) => row.z1 + row.z2 + row.z3 + row.z4 + row.z5),
+    { includeZero: true, tickCount: 4 }
+  )
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="date"
+          interval="preserveStartEnd"
+          minTickGap={16}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          domain={axis.domain}
+          ticks={axis.ticks}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+          width={42}
+        />
         <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: CHART_CURSOR }} />
         {(['z1', 'z2', 'z3', 'z4', 'z5'] as const).map((z, i) => (
           <Bar key={z} dataKey={z} stackId="tiz" fill={ZONE_FILLS[i]} maxBarSize={32} />
@@ -162,19 +221,35 @@ interface EfPoint {
 }
 
 function EfScatter({ data }: { data: EfPoint[] }): ReactElement {
+  const axis = buildNumericAxis(
+    data.flatMap((row) => [row.ef, row.median]),
+    { tickCount: 4 }
+  )
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="date"
+          interval="preserveStartEnd"
+          minTickGap={24}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
         <YAxis
-          domain={['auto', 'auto']}
+          domain={axis.domain}
+          ticks={axis.ticks}
           tick={{ fill: TERTIARY, fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           tickFormatter={(v: number) => v.toFixed(2)}
+          width={46}
         />
-        <Tooltip contentStyle={chartTooltipStyle} formatter={(v) => (typeof v === 'number' ? v.toFixed(3) : v)} />
+        <Tooltip
+          contentStyle={chartTooltipStyle}
+          formatter={(v) => (typeof v === 'number' ? v.toFixed(3) : v)}
+        />
         <Scatter dataKey="ef" fill={AEROBIC} />
         <Line dataKey="median" stroke={AEROBIC} strokeWidth={1.5} dot={false} type="monotone" />
       </ComposedChart>
@@ -188,27 +263,46 @@ function StrokeMechanicsChart({
 }: {
   data: { date: string; dpsMPerCycle: number | null; strokeRatePerMin: number | null }[]
 }): ReactElement {
+  const dpsAxis = buildNumericAxis(
+    data.map((row) => row.dpsMPerCycle),
+    { tickCount: 4 }
+  )
+  const rateAxis = buildNumericAxis(
+    data.map((row) => row.strokeRatePerMin),
+    { tickCount: 4 }
+  )
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart data={data} margin={{ top: 8, right: -8, left: -16, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 0, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="date"
+          interval="preserveStartEnd"
+          minTickGap={24}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
         <YAxis
           yAxisId="dps"
-          domain={['auto', 'auto']}
+          domain={dpsAxis.domain}
+          ticks={dpsAxis.ticks}
           tick={{ fill: TERTIARY, fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           tickFormatter={(v: number) => v.toFixed(1)}
+          width={44}
         />
         <YAxis
           yAxisId="rate"
           orientation="right"
-          domain={['auto', 'auto']}
+          domain={rateAxis.domain}
+          ticks={rateAxis.ticks}
           tick={{ fill: TERTIARY, fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           tickFormatter={(v: number) => v.toFixed(1)}
+          width={44}
         />
         <Tooltip
           contentStyle={chartTooltipStyle}
@@ -220,7 +314,14 @@ function StrokeMechanicsChart({
               : v
           }
         />
-        <Line yAxisId="dps" dataKey="dpsMPerCycle" stroke={AEROBIC} strokeWidth={1.5} dot type="monotone" />
+        <Line
+          yAxisId="dps"
+          dataKey="dpsMPerCycle"
+          stroke={AEROBIC}
+          strokeWidth={1.5}
+          dot
+          type="monotone"
+        />
         <Line
           yAxisId="rate"
           dataKey="strokeRatePerMin"
@@ -241,25 +342,53 @@ interface SwimTrendChartProps {
   format: (v: number) => string
   /** Friendly series name shown in the tooltip instead of the raw dataKey. */
   label: string
+  axisFormat: (v: number) => string
 }
 
-function SwimTrendChart({ data, dataKey, format, label }: SwimTrendChartProps): ReactElement {
+function SwimTrendChart({
+  data,
+  dataKey,
+  format,
+  label,
+  axisFormat
+}: SwimTrendChartProps): ReactElement {
+  const axis = buildNumericAxis(
+    data.map((row) => (typeof row[dataKey] === 'number' ? (row[dataKey] as number) : null)),
+    { tickCount: 4 }
+  )
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis
-          domain={['auto', 'auto']}
+        <XAxis
+          dataKey="date"
+          interval="preserveStartEnd"
+          minTickGap={24}
           tick={{ fill: TERTIARY, fontSize: 12 }}
           axisLine={false}
           tickLine={false}
+        />
+        <YAxis
+          domain={axis.domain}
+          ticks={axis.ticks}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={axisFormat}
+          width={46}
         />
         <Tooltip
           contentStyle={chartTooltipStyle}
           formatter={(v) => (typeof v === 'number' ? [format(v), label] : v)}
         />
-        <Line dataKey={dataKey} name={label} stroke={AEROBIC} strokeWidth={1.5} dot={{ r: 3 }} type="monotone" />
+        <Line
+          dataKey={dataKey}
+          name={label}
+          stroke={AEROBIC}
+          strokeWidth={2.25}
+          dot={{ r: 3 }}
+          type="monotone"
+        />
       </ComposedChart>
     </ResponsiveContainer>
   )
@@ -272,18 +401,32 @@ interface DecouplingPoint {
 }
 
 function DecouplingScatter({ data }: { data: DecouplingPoint[] }): ReactElement {
+  const axis = buildNumericAxis([...data.map((row) => row.pct), -5, 5], { tickCount: 4 })
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill: TERTIARY, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis
+          dataKey="date"
+          interval="preserveStartEnd"
+          minTickGap={24}
+          tick={{ fill: TERTIARY, fontSize: 12 }}
+          axisLine={false}
+          tickLine={false}
+        />
         <YAxis
+          domain={axis.domain}
+          ticks={axis.ticks}
           tick={{ fill: TERTIARY, fontSize: 12 }}
           axisLine={false}
           tickLine={false}
           tickFormatter={(v: number) => `${v}%`}
+          width={42}
         />
-        <Tooltip contentStyle={chartTooltipStyle} formatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)} />
+        <Tooltip
+          contentStyle={chartTooltipStyle}
+          formatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)}
+        />
         <ReferenceArea y1={-5} y2={5} fill={AEROBIC_DIM} strokeOpacity={0} />
         <Scatter dataKey="pct" fill={AEROBIC} />
       </ComposedChart>
@@ -341,15 +484,20 @@ function tizRows(workouts: Workout[], timezone: string | null, count: number): T
     })
 }
 
-export function Zone2View(): ReactElement {
+interface Zone2ViewProps {
+  onOpenSessions: (activity?: string) => void
+}
+
+export function Zone2View({ onOpenSessions }: Zone2ViewProps): ReactElement {
   const yearAgo = useMemo(() => {
     const d = new Date()
     d.setDate(d.getDate() - 366)
     return d.toISOString()
   }, [])
   const workoutsQuery = useQuery({
-    queryKey: ['zone2', 'workouts'],
-    queryFn: () => window.api.getWorkouts(yearAgo, new Date().toISOString()),
+    // Versioned because the previous cache entry covered only 366 days.
+    queryKey: ['zone2', 'workouts', 'all-history'],
+    queryFn: () => window.api.getWorkouts('1970-01-01T00:00:00.000Z', new Date().toISOString()),
     staleTime: 60_000
   })
   const swimSetsQuery = useQuery({
@@ -368,11 +516,11 @@ export function Zone2View(): ReactElement {
 
   const [view, setView] = useState<ViewKey>('summary')
 
-  // Modalities that actually have ≥1 workout with computed zones, in canonical order.
+  // A modality tab represents recorded history, not HR availability. Imported
+  // runs without zone data must remain navigable; each view owns its HR state.
   const presentModalities = useMemo(() => {
     const present = new Set<CardioModalityKey>()
     for (const w of workouts) {
-      if (!hasZones(w)) continue
       const key = cardioModalityOf(w.type)
       if (key) present.add(key)
     }
@@ -390,7 +538,12 @@ export function Zone2View(): ReactElement {
   const efPoints = useMemo<EfPoint[]>(() => {
     const cutoff = Date.now() - 90 * 86400_000
     const pts = workouts
-      .filter((w) => w.computed?.ef != null && new Date(w.start_at).getTime() >= cutoff)
+      .filter(
+        (w) =>
+          cardioModalityOf(w.type) === 'swim' &&
+          w.computed?.ef != null &&
+          new Date(w.start_at).getTime() >= cutoff
+      )
       .map((w) => ({
         t: new Date(w.start_at).getTime(),
         date: localDateKey(w.start_at, timezone),
@@ -412,7 +565,7 @@ export function Zone2View(): ReactElement {
   const decouplingPoints = useMemo<DecouplingPoint[]>(
     () =>
       workouts
-        .filter((w) => w.computed?.decoupling_pct != null)
+        .filter((w) => cardioModalityOf(w.type) === 'swim' && w.computed?.decoupling_pct != null)
         .map((w) => ({
           t: new Date(w.start_at).getTime(),
           date: localDateKey(w.start_at, timezone),
@@ -462,7 +615,7 @@ export function Zone2View(): ReactElement {
         <Zone2FitnessHeader timezone={timezone} />
       )}
 
-      {!hasComputed ? (
+      {activeView === 'summary' && !hasComputed ? (
         <EmptyState message="No computed zone data yet — the nightly metrics job fills this tab after your first workouts sync." />
       ) : activeView === 'summary' ? (
         <div className="zone2-grid">
@@ -470,32 +623,8 @@ export function Zone2View(): ReactElement {
             <WeeklyZ2Bars data={weekly} targetMin={weeklyTargetMin} />
           </ChartCard>
 
-          <ChartCard title="Trajectory · last 150 days" span={12}>
-            <Zone2Trajectory timezone={timezone} />
-          </ChartCard>
-
-          <ChartCard title="Efficiency factor — swims" span={6}>
-            {efPoints.length === 0 ? (
-              <EmptyState message="No eligible swims in the last 90 days — EF needs ≥20 min mostly in Z1–Z2." />
-            ) : (
-              <>
-                <EfScatter data={efPoints} />
-                <p className="zone2-caption">
-                  Output per heartbeat — up and to the right means the base is rebuilding.
-                </p>
-              </>
-            )}
-          </ChartCard>
-
-          <ChartCard title="Decoupling per session" span={6}>
-            {decouplingPoints.length === 0 ? (
-              <EmptyState message="No eligible sessions yet — decoupling uses the same swims as EF." />
-            ) : (
-              <>
-                <DecouplingScatter data={decouplingPoints} />
-                <p className="zone2-caption">Within ±5% (shaded) = aerobically steady for the session.</p>
-              </>
-            )}
+          <ChartCard title="HR zones · Karvonen" span={12}>
+            <Zone2HrZonesCard timezone={timezone} />
           </ChartCard>
 
           <ChartCard title="Time in zones — last 15 cardio sessions" span={12}>
@@ -506,6 +635,12 @@ export function Zone2View(): ReactElement {
             </p>
           </ChartCard>
         </div>
+      ) : activeView === 'running' ? (
+        <RunningView
+          workouts={workouts.filter((workout) => cardioModalityOf(workout.type) === 'running')}
+          timezone={timezone}
+          onOpenSessions={onOpenSessions}
+        />
       ) : (
         <ModalityView
           key={activeView}
@@ -515,6 +650,7 @@ export function Zone2View(): ReactElement {
           timezone={timezone}
           efPoints={efPoints}
           decouplingPoints={decouplingPoints}
+          onOpenSessions={onOpenSessions}
         />
       )}
     </div>
@@ -528,6 +664,7 @@ interface ModalityViewProps {
   timezone: string | null
   efPoints: EfPoint[]
   decouplingPoints: DecouplingPoint[]
+  onOpenSessions: (activity?: string) => void
 }
 
 function ModalityView({
@@ -536,13 +673,12 @@ function ModalityView({
   swimSets,
   timezone,
   efPoints,
-  decouplingPoints
+  decouplingPoints,
+  onOpenSessions
 }: ModalityViewProps): ReactElement {
   const modality = cardioModalityByKey(modalityKey)
 
   const isSwim = modalityKey === 'swim'
-
-  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null)
 
   // Workouts of this modality with computed zones.
   const modalityWorkouts = useMemo(
@@ -550,27 +686,14 @@ function ModalityView({
     [workouts, modalityKey]
   )
 
-  // All swim workouts (unfiltered by zones — SessionList shows every swim,
-  // not just ones the nightly job has classified yet). Also feeds the
-  // day-detail drawer's bucket lookup.
-  const swimWorkouts = useMemo(
-    () => workouts.filter((w) => cardioModalityOf(w.type) === 'swim'),
-    [workouts]
+  // All workouts of this modality, unfiltered by zones — the recent-sessions
+  // card shows every session, not just ones the nightly job has classified yet.
+  // Also feeds the swim-only stat block below (sessions this week/month).
+  const allModalityWorkouts = useMemo(
+    () => workouts.filter((w) => cardioModalityOf(w.type) === modalityKey),
+    [workouts, modalityKey]
   )
-  const swimDaysByKey = useMemo(
-    () => groupWorkoutsByDay(swimWorkouts, timezone),
-    [swimWorkouts, timezone]
-  )
-  const selectedBucket = selectedDayKey ? swimDaysByKey.get(selectedDayKey) : undefined
-  const selectedDateLabel = selectedDayKey
-    ? new Date(`${selectedDayKey}T12:00:00Z`).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-        timeZone: 'UTC'
-      })
-    : ''
+  const swimWorkouts = allModalityWorkouts
 
   // Per-session swim set summaries, oldest→newest, joined to workout dates.
   // Uses the UNFILTERED `workouts` prop (not modalityWorkouts, which requires
@@ -616,6 +739,9 @@ function ModalityView({
       return w ? localDateKey(w.start_at, timezone).slice(0, 7) : null
     }
     const paceByMonth = monthlyAvgPace(groupByWorkout(swimSets), monthOfWorkout)
+    const monthDistanceM = swimSessionRows
+      .filter((row) => row.fullDate.slice(0, 7) === thisYm)
+      .reduce((sum, row) => sum + row.setDistanceM, 0)
 
     const fastest25Effort = fastest25(swimSets)
     const fastest25Date = fastest25Effort
@@ -625,11 +751,21 @@ function ModalityView({
         })()
       : ''
 
-    return { sessionsThisWeek, sessionsThisMonth, paceByMonth, fastest25Effort, fastest25Date }
-  }, [isSwim, workouts, swimSets, swimWorkouts, timezone])
+    return {
+      sessionsThisWeek,
+      sessionsThisMonth,
+      monthDistanceM,
+      paceByMonth,
+      fastest25Effort,
+      fastest25Date
+    }
+  }, [isSwim, workouts, swimSets, swimWorkouts, swimSessionRows, timezone])
 
   // --- stat row: this-week Z2 min (modality), sessions 90d, avg Z2 share 90d ---
-  const weekly = useMemo(() => weeklyZ2(modalityWorkouts, timezone, 12), [modalityWorkouts, timezone])
+  const weekly = useMemo(
+    () => weeklyZ2(modalityWorkouts, timezone, 12),
+    [modalityWorkouts, timezone]
+  )
   const thisWeekMin = weekly.length > 0 ? weekly[weekly.length - 1].minutes : 0
 
   const { sessions90d, avgZ2Share } = useMemo(() => {
@@ -649,57 +785,70 @@ function ModalityView({
     }
   }, [modalityWorkouts])
 
-  const tizBars = useMemo(() => tizRows(modalityWorkouts, timezone, 15), [modalityWorkouts, timezone])
-
-  const paceTableRows: StatTableRow[] =
-    swimStats && swimStats.paceByMonth.length > 0
-      ? swimStats.paceByMonth.map((row) => ({
-          label: monthLabel(row.month),
-          value: formatPace100(row.paceSecPer100m)
-        }))
-      : []
+  const tizBars = useMemo(
+    () => tizRows(modalityWorkouts, timezone, 15),
+    [modalityWorkouts, timezone]
+  )
 
   return (
     <>
       {isSwim ? (
-        <div className="zone2-swim-stats">
-          <MetricCard
-            eyebrow="Swim · sessions this week"
-            value={String(swimStats?.sessionsThisWeek ?? 0)}
-            domain="aerobic"
-            caption="ISO week to date"
-          />
-          <MetricCard
-            eyebrow="Swim · sessions this month"
-            value={String(swimStats?.sessionsThisMonth ?? 0)}
-            domain="aerobic"
-            caption="calendar month to date"
-          />
-          <div className="zone2-swim-pace-table">
-            <h3 className="zone2-swim-pace-table-title">Avg pace /100m by month</h3>
-            {paceTableRows.length === 0 ? (
-              <EmptyState message="No swim set data yet." />
+        <section className="zone2-swim-overview" aria-label="Swimming overview">
+          <div className="zone2-swim-overview-top">
+            <div className="zone2-swim-volume">
+              <span className="zone2-swim-eyebrow">Swimming · this month</span>
+              <strong className="zone2-swim-volume-value tabular-nums">
+                {formatSwimDistance(swimStats?.monthDistanceM ?? 0)}
+              </strong>
+              <span className="zone2-swim-volume-caption">Detected set distance</span>
+            </div>
+            <div className="zone2-swim-facts">
+              <div>
+                <span>Sessions this week</span>
+                <strong className="tabular-nums">{swimStats?.sessionsThisWeek ?? 0}</strong>
+              </div>
+              <div>
+                <span>Sessions this month</span>
+                <strong className="tabular-nums">{swimStats?.sessionsThisMonth ?? 0}</strong>
+              </div>
+              <div>
+                <span>Fastest /100m</span>
+                <strong className="tabular-nums">
+                  {swimFastest100 ? formatPace100(swimFastest100.paceSecPer100m) : EM_DASH}
+                </strong>
+                <small>{swimFastest100 ? swimFastest100.date : 'Needs a 100m set'}</small>
+              </div>
+              <div>
+                <span>Fastest 25m equiv.</span>
+                <strong className="tabular-nums">
+                  {swimStats?.fastest25Effort
+                    ? `${swimStats.fastest25Effort.seconds.toFixed(1)}s`
+                    : EM_DASH}
+                </strong>
+                <small>
+                  {swimStats?.fastest25Effort ? swimStats.fastest25Date : 'Needs a ≥25m set'}
+                </small>
+              </div>
+            </div>
+          </div>
+          <div className="zone2-swim-pace-history">
+            <span className="zone2-swim-pace-history-label">Monthly average pace</span>
+            {swimStats && swimStats.paceByMonth.length > 0 ? (
+              <div className="zone2-swim-pace-months">
+                {swimStats.paceByMonth.slice(-5).map((row) => (
+                  <div key={row.month}>
+                    <span>{monthLabel(row.month)}</span>
+                    <strong className="tabular-nums">{formatPace100(row.paceSecPer100m)}</strong>
+                  </div>
+                ))}
+              </div>
             ) : (
-              <StatTable rows={paceTableRows} />
+              <span className="zone2-swim-pace-empty">
+                Pace history appears after swim sets sync.
+              </span>
             )}
           </div>
-          <MetricCard
-            eyebrow="Swim · fastest /100m"
-            value={swimFastest100 ? formatPace100(swimFastest100.paceSecPer100m) : EM_DASH}
-            domain="aerobic"
-            caption={swimFastest100 ? `100m set · ${swimFastest100.date}` : 'needs a 100m set'}
-          />
-          <MetricCard
-            eyebrow="Swim · fastest 25m"
-            value={swimStats?.fastest25Effort ? `${swimStats.fastest25Effort.seconds.toFixed(1)}s` : '—'}
-            domain="aerobic"
-            caption={
-              swimStats?.fastest25Effort
-                ? `25m-equivalent · ${swimStats.fastest25Date}`
-                : 'needs a set of 25m or more'
-            }
-          />
-        </div>
+        </section>
       ) : (
         <div className="zone2-stat-row">
           <MetricCard
@@ -723,9 +872,15 @@ function ModalityView({
       )}
 
       <div className="zone2-grid">
-        <ChartCard title={`Weekly Zone 2 minutes — ${modality.label.toLowerCase()}`} span={12}>
+        <ChartCard
+          title={`${modality.label} Zone 2`}
+          span={12}
+          headerRight={<span className="zone2-chart-unit">12 weeks · minutes</span>}
+        >
           {weekly.every((w) => w.minutes === 0) ? (
-            <EmptyState message={`No ${modality.label.toLowerCase()} Zone 2 minutes in the last 12 weeks yet.`} />
+            <EmptyState
+              message={`No ${modality.label.toLowerCase()} Zone 2 minutes in the last 12 weeks yet.`}
+            />
           ) : (
             <>
               <WeeklyZ2Bars data={weekly} />
@@ -738,31 +893,16 @@ function ModalityView({
 
         {isSwim ? (
           <>
-            <ChartCard title="Efficiency factor — swims" span={6}>
-              {efPoints.length === 0 ? (
-                <EmptyState message="No eligible swims in the last 90 days — EF needs ≥20 min mostly in Z1–Z2." />
-              ) : (
-                <>
-                  <EfScatter data={efPoints} />
-                  <p className="zone2-caption">
-                    Output per heartbeat — up and to the right means the base is rebuilding.
-                  </p>
-                </>
-              )}
-            </ChartCard>
+            <div className="zone2-section-heading chart-card--span-12">
+              <h2>Technique and pace</h2>
+              <p>Session-level trends from the individual sets detected by Apple Health.</p>
+            </div>
 
-            <ChartCard title="Decoupling per session" span={6}>
-              {decouplingPoints.length === 0 ? (
-                <EmptyState message="No eligible sessions yet — decoupling uses the same swims as EF." />
-              ) : (
-                <>
-                  <DecouplingScatter data={decouplingPoints} />
-                  <p className="zone2-caption">Within ±5% (shaded) = aerobically steady for the session.</p>
-                </>
-              )}
-            </ChartCard>
-
-            <ChartCard title="Set pace — swims" span={6}>
+            <ChartCard
+              title="Set pace"
+              span={6}
+              headerRight={<span className="zone2-chart-unit">per 100m</span>}
+            >
               {swimSessionRows.length === 0 ? (
                 <EmptyState message="No swim set data yet — sets appear as soon as a pool swim syncs." />
               ) : (
@@ -770,17 +910,24 @@ function ModalityView({
                   <SwimTrendChart
                     data={swimSessionRows}
                     dataKey="avgPaceSecPer100m"
-                    format={(v) => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')} /100m`}
+                    format={(v) =>
+                      `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')} /100m`
+                    }
+                    axisFormat={(v) =>
+                      `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')}`
+                    }
                     label="Pace"
                   />
-                  <p className="zone2-caption">
-                    Set-weighted pace per session — down is faster.
-                  </p>
+                  <p className="zone2-caption">Set-weighted pace per session — down is faster.</p>
                 </>
               )}
             </ChartCard>
 
-            <ChartCard title="SWOLF — swims" span={6}>
+            <ChartCard
+              title="SWOLF efficiency"
+              span={6}
+              headerRight={<span className="zone2-chart-unit">25m normalized</span>}
+            >
               {swimSessionRows.length === 0 ? (
                 <EmptyState message="No swim set data yet — sets appear as soon as a pool swim syncs." />
               ) : (
@@ -789,38 +936,87 @@ function ModalityView({
                     data={swimSessionRows}
                     dataKey="medianSwolf25"
                     format={(v) => v.toFixed(1)}
+                    axisFormat={(v) => v.toFixed(0)}
                     label="SWOLF"
                   />
                   <p className="zone2-caption">
-                    Median (time + both-hands strokes) per 25m — freestyle assumption, lower is better.
+                    Median (time + both-hands strokes) per 25m — freestyle assumption, lower is
+                    better.
                   </p>
                 </>
               )}
             </ChartCard>
 
-            <ChartCard title="Stroke mechanics — swims" span={12}>
+            <ChartCard
+              title="Stroke mechanics"
+              span={12}
+              headerRight={
+                <SwimChartKey
+                  items={[
+                    { label: 'Distance / cycle' },
+                    { label: 'Stroke rate', tone: 'neutral', dashed: true }
+                  ]}
+                />
+              }
+            >
               {swimSessionRows.length === 0 ? (
                 <EmptyState message="No swim set data yet." />
               ) : (
                 <>
                   <StrokeMechanicsChart data={swimSessionRows} />
                   <p className="zone2-caption">
-                    Distance per stroke cycle (teal, left) vs stroke rate (gray, right). Longer glide at a
-                    steady rate = technique improving; rate creeping up to hold pace = fighting the water.
+                    Distance per stroke cycle (teal, left) vs stroke rate (gray, right). Longer
+                    glide at a steady rate = technique improving; rate creeping up to hold pace =
+                    fighting the water.
                   </p>
                 </>
               )}
             </ChartCard>
 
-            <ChartCard title="Recent swim sessions" span={12}>
-              <SessionList workouts={swimWorkouts} timezone={timezone} onSelectDay={setSelectedDayKey} />
+            <div className="zone2-section-heading chart-card--span-12">
+              <h2>Aerobic response</h2>
+              <p>Heart-rate efficiency and stability from eligible steady swimming.</p>
+            </div>
+
+            <ChartCard
+              title="Efficiency factor"
+              span={6}
+              headerRight={<span className="zone2-chart-unit">90 days</span>}
+            >
+              {efPoints.length === 0 ? (
+                <EmptyState message="No eligible swims in the last 90 days — EF needs ≥20 min mostly in Z1–Z2." />
+              ) : (
+                <>
+                  <EfScatter data={efPoints} />
+                  <p className="zone2-caption">
+                    Output per heartbeat. A rising median suggests more speed for the same effort.
+                  </p>
+                </>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Aerobic stability"
+              span={6}
+              headerRight={<span className="zone2-chart-unit">decoupling</span>}
+            >
+              {decouplingPoints.length === 0 ? (
+                <EmptyState message="No eligible sessions yet — decoupling uses the same swims as EF." />
+              ) : (
+                <>
+                  <DecouplingScatter data={decouplingPoints} />
+                  <p className="zone2-caption">
+                    Inside the ±5% band means effort stayed aerobically steady.
+                  </p>
+                </>
+              )}
             </ChartCard>
           </>
         ) : (
           <ChartCard title="Efficiency factor" span={12}>
             <p className="zone2-ef-explainer">
-              EF needs a reliable output signal (distance). {modality.label} sessions don&apos;t carry one — zones and
-              duration still count toward your aerobic base.
+              EF needs a reliable output signal (distance). {modality.label} sessions don&apos;t
+              carry one — zones and duration still count toward your aerobic base.
               {modalityKey === 'rowing'
                 ? ' If your erg reports distance and you start logging it, EF switches on here.'
                 : ''}
@@ -828,28 +1024,35 @@ function ModalityView({
           </ChartCard>
         )}
 
-        <ChartCard title={`Time in zones — last 15 ${modality.label.toLowerCase()} sessions`} span={12}>
+        <ChartCard
+          title="Session intensity mix"
+          span={12}
+          headerRight={<span className="zone2-chart-unit">last 15 · minutes</span>}
+        >
           {tizBars.length === 0 ? (
-            <EmptyState message={`No ${modality.label.toLowerCase()} sessions with zone data yet.`} />
+            <EmptyState
+              message={`No ${modality.label.toLowerCase()} sessions with zone data yet.`}
+            />
           ) : (
             <>
               <TimeInZonesStacks data={tizBars} />
               <p className="zone2-caption">
-                Zone 2 carries the teal; other zones are neutral. Minutes per session, Karvonen bounds.
+                Zone 2 carries the teal; other zones are neutral. Minutes per session, Karvonen
+                bounds.
               </p>
             </>
           )}
         </ChartCard>
-      </div>
 
-      {selectedDayKey && selectedBucket && (
-        <DayDetailDrawer
-          dateLabel={selectedDateLabel}
-          workouts={selectedBucket.workouts}
-          timezone={timezone}
-          onClose={() => setSelectedDayKey(null)}
-        />
-      )}
+        <div className="chart-card--span-12">
+          <RecentSessionsCard
+            title={`Recent ${modality.label.toLowerCase()} sessions`}
+            workouts={allModalityWorkouts}
+            timezone={timezone}
+            onOpenAll={() => onOpenSessions(modality.label)}
+          />
+        </div>
+      </div>
     </>
   )
 }

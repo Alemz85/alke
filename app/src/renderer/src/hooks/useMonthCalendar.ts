@@ -18,6 +18,8 @@ export interface MonthCalendarState {
   closeDay: () => void
   /** Points the calendar at the month containing dateKey (list → calendar jumps). */
   showMonthOf: (dateKey: string) => void
+  /** Jumps the calendar straight to an arbitrary year + month (1-12). */
+  jumpToMonth: (year: number, month: number) => void
 }
 
 export function useMonthCalendar(timezone: string | null | undefined): MonthCalendarState {
@@ -52,6 +54,13 @@ export function useMonthCalendar(timezone: string | null | undefined): MonthCale
     }
   }
 
+  function jumpToMonth(year: number, month: number): void {
+    if (Number.isFinite(year) && month >= 1 && month <= 12) {
+      setViewYear(year)
+      setViewMonth(month)
+    }
+  }
+
   return {
     today,
     todayKey: ymdKey(today),
@@ -62,6 +71,7 @@ export function useMonthCalendar(timezone: string | null | undefined): MonthCale
     selectedDayKey,
     openDay: setSelectedDayKey,
     closeDay: () => setSelectedDayKey(null),
-    showMonthOf
+    showMonthOf,
+    jumpToMonth
   }
 }

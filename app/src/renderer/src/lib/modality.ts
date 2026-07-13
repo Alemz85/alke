@@ -17,3 +17,23 @@ export function workoutMatchesGoal(workoutType: string | null, goalKey: string):
   if (type.includes(goal)) return true
   return (GOAL_SYNONYMS[goal] ?? []).some((s) => type.includes(s))
 }
+
+/**
+ * The SETTING a workout happens in — water (pool/open water), indoor
+ * (gym floor, ergs, studio classes), or outdoor (roads/trails, the fallback).
+ * Distinct from the training domain: an indoor row and a strength session
+ * share an environment even though one is cardio. Drives the env accent
+ * colours AND visit merging in periodSummary (activities in the same sitting
+ * only merge when the environment matches — a swim followed straight by gym
+ * is two sessions, rowing warm-up + lifting is one).
+ */
+export type ActivityEnvironment = 'water' | 'indoor' | 'outdoor'
+
+export function activityEnvironment(type: string): ActivityEnvironment {
+  const t = type.toLowerCase()
+  if (/swim|surf|paddle|kayak|dive|water/.test(t)) return 'water'
+  if (/indoor|treadmill|elliptical|strength|core|gym|row|weight|lift|pilates|yoga|functional|spin/.test(t)) {
+    return 'indoor'
+  }
+  return 'outdoor'
+}

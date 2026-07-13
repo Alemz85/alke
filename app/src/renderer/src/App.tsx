@@ -3,8 +3,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Moon, RefreshCw, Sun } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import type { TabId } from './tabs'
-import { ButtonSoft, Toast, type ToastTone } from './components'
+import { ButtonSoft, OfflineQueueStatus, Toast, type ToastTone } from './components'
 import { useDbStatus } from './hooks/useDbStatus'
+import { useOfflineQueue } from './hooks/useOfflineQueue'
+import { subscribeMutationErrors } from './lib/mutationFeedback'
 import { DbErrorState } from './views/DbErrorState'
 import { DashboardView } from './views/DashboardView'
 import { Zone2View } from './views/Zone2View'
@@ -18,10 +20,13 @@ import { ProfileView } from './views/ProfileView'
 import { SettingsView } from './views/SettingsView'
 import './App.css'
 
-const VIEWS: Record<TabId, () => ReactElement> = {
-  dashboard: DashboardView,
-  zone2: Zone2View,
-  sessions: SessionsView,
+// Views that need no navigation wiring render from this map directly. Dashboard,
+// Sessions, and Cardio (Zone2) cross-link, so they're special-cased in the render
+// below (they receive an onOpenSessions / onBack callback) rather than listed here.
+const VIEWS: Record<
+  Exclude<TabId, 'dashboard' | 'sessions' | 'zone2'>,
+  () => ReactElement
+> = {
   gym: GymView,
   recovery: RecoveryView,
   insights: InsightsView,
@@ -54,11 +59,16 @@ function fmtRelativeTime(iso: string): string {
 
 function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard')
+  // Activity group to pre-filter the Sessions view with on the next visit (set
+  // when a cardio "recent sessions" card deep-links in). Cleared whenever
+  // Sessions is opened without a filter (sidebar, Dashboard "All sessions").
+  const [sessionsActivity, setSessionsActivity] = useState<string | null>(null)
   const [theme, setTheme] = useState<Theme>(readInitialTheme)
   const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
   const queryClient = useQueryClient()
   const dbStatus = useDbStatus()
+  const offlineQueue = useOfflineQueue()
 
   // Freshness baseline: the newest ingest timestamp we've observed. Seeded once
   // on mount so the first manual Refresh has something to compare against.
@@ -77,10 +87,19 @@ function App(): ReactElement {
 
   const dismissToast = useCallback((): void => setToast(null), [])
 
+  useEffect(
+    () =>
+      subscribeMutationErrors((message) => {
+        setToast({ message, tone: 'error' })
+      }),
+    []
+  )
+
   const handleRefresh = useCallback(async (): Promise<void> => {
     if (refreshing) return
     setRefreshing(true)
     try {
+      await offlineQueue.retry()
       // The ingest probe shares the DB connection, so if it resolves the data
       // reads did too; if the DB is unreachable it throws and we surface that.
       const [, latest] = await Promise.all([
@@ -112,7 +131,7 @@ function App(): ReactElement {
     } finally {
       setRefreshing(false)
     }
-  }, [queryClient, refreshing])
+  }, [offlineQueue, queryClient, refreshing])
 
   const toggleTheme = useCallback((): void => {
     setTheme((prev) => {
@@ -131,15 +150,62 @@ function App(): ReactElement {
     })
   }, [])
 
-  const ActiveView = VIEWS[activeTab]
-  const showDbError = dbStatus.isSuccess && dbStatus.data && !dbStatus.data.connected
+  const connected = dbStatus.data?.connected !== false
+  const hasCachedHealthData = queryClient
+    .getQueryCache()
+    .getAll()
+    .some((query) => {
+      const prefix = query.queryKey[0]
+      return prefix !== 'dbStatus' && prefix !== 'chat' && query.state.data !== undefined
+    })
+  const showDbError = dbStatus.data?.connected === false && !hasCachedHealthData
+
+  // Open the Sessions tab, optionally pre-filtered to an activity group (e.g. a
+  // cardio recent-sessions card passes "Swim"). No argument = show everything.
+  const openSessions = useCallback((activity?: string): void => {
+    setSessionsActivity(activity ?? null)
+    setActiveTab('sessions')
+  }, [])
+
+  // Sidebar navigation clears any pending Sessions filter so a manual tab click
+  // always lands on the full, unfiltered list.
+  const handleSelectTab = useCallback((tab: TabId): void => {
+    if (tab === 'sessions') setSessionsActivity(null)
+    setActiveTab(tab)
+  }, [])
+
+  function renderActiveView(): ReactElement {
+    if (activeTab === 'dashboard') {
+      return <DashboardView onOpenSessions={() => openSessions()} />
+    }
+    if (activeTab === 'sessions') {
+      return (
+        <SessionsView
+          onBack={() => setActiveTab('dashboard')}
+          initialActivity={sessionsActivity ?? undefined}
+        />
+      )
+    }
+    if (activeTab === 'zone2') {
+      return <Zone2View onOpenSessions={openSessions} />
+    }
+    const ActiveView = VIEWS[activeTab]
+    return <ActiveView />
+  }
 
   return (
     <div className="app-shell">
-      <Sidebar active={activeTab} onSelect={setActiveTab} />
+      <Sidebar active={activeTab} onSelect={handleSelectTab} />
       <main className="content-area">
         <div className="content-area-inner">
           <div className="content-area-toolbar">
+            <OfflineQueueStatus
+              connected={connected}
+              status={offlineQueue.status}
+              onRetry={() => {
+                void offlineQueue.retry()
+              }}
+            />
             <ButtonSoft
               className="button-soft--icon"
               onClick={toggleTheme}
@@ -164,7 +230,7 @@ function App(): ReactElement {
           {showDbError ? (
             <DbErrorState message={dbStatus.data?.error} onRetry={() => dbStatus.refetch()} />
           ) : (
-            <ActiveView />
+            renderActiveView()
           )}
         </div>
       </main>

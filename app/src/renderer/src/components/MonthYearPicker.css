@@ -1,0 +1,74 @@
+.month-year-picker {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 20;
+  width: 240px;
+  padding: var(--space-sm);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.month-year-picker-yearrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.month-year-picker-year {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.month-year-picker-yearbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.month-year-picker-yearbtn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.month-year-picker-months {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-xxs);
+}
+
+.month-year-picker-month {
+  padding: 8px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.month-year-picker-month:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.month-year-picker-month.is-current {
+  background: var(--color-text);
+  color: var(--color-text-on-accent);
+}

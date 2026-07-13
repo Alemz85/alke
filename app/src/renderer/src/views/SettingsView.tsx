@@ -25,8 +25,24 @@ interface Draft {
   zone2_low_pct: string
   zone2_high_pct: string
   zone2_weekly_target_min: string
+  sleep_goal_hours: string
+  bedtime_goal: string
   weekly_min_sessions: Record<string, number>
   timezone: string
+}
+
+function minutesToClock(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(minutes)) return '00:00'
+  const normalized = ((Math.round(minutes) % 1440) + 1440) % 1440
+  return `${Math.floor(normalized / 60).toString().padStart(2, '0')}:${(normalized % 60).toString().padStart(2, '0')}`
+}
+
+function clockToMinutes(clock: string): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(clock)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  return hours <= 23 && minutes <= 59 ? hours * 60 + minutes : null
 }
 
 function fracToPct(frac: number | null): string {
@@ -50,6 +66,8 @@ function toDraft(cfg: UserConfig): Draft {
     zone2_low_pct: fracToPct(cfg.zone2_low_frac),
     zone2_high_pct: fracToPct(cfg.zone2_high_frac),
     zone2_weekly_target_min: String(cfg.zone2_weekly_target_min ?? ''),
+    sleep_goal_hours: String((cfg.sleep_goal_min ?? 480) / 60),
+    bedtime_goal: minutesToClock(cfg.bedtime_goal_min ?? 0),
     weekly_min_sessions: sessions,
     timezone: cfg.timezone ?? ''
   }
@@ -165,6 +183,14 @@ export function SettingsView(): ReactElement {
     else if (target < 0 || !Number.isInteger(target))
       e.zone2_weekly_target_min = 'Whole minutes, 0 or more.'
 
+    const sleepGoal = parseNumOrNull(draft.sleep_goal_hours)
+    if (sleepGoal === 'invalid') e.sleep_goal_hours = 'Enter a number.'
+    else if (sleepGoal == null) e.sleep_goal_hours = 'Required.'
+    else if (sleepGoal < 1 || sleepGoal > 24) e.sleep_goal_hours = 'Choose 1 to 24 hours.'
+
+    if (clockToMinutes(draft.bedtime_goal) === null)
+      e.bedtime_goal = 'Enter a valid time.'
+
     if (draft.timezone.trim() !== '' && !isValidTimezone(draft.timezone))
       e.timezone = 'Not a recognized IANA time zone.'
     else if (draft.timezone.trim() === '') e.timezone = 'Required.'
@@ -197,6 +223,16 @@ export function SettingsView(): ReactElement {
     const target = parseNumOrNull(draft.zone2_weekly_target_min)
     if (typeof target === 'number' && target !== loaded.zone2_weekly_target_min)
       p.zone2_weekly_target_min = target
+
+    const sleepGoal = parseNumOrNull(draft.sleep_goal_hours)
+    if (typeof sleepGoal === 'number') {
+      const minutes = Math.round(sleepGoal * 60)
+      if (minutes !== loaded.sleep_goal_min) p.sleep_goal_min = minutes
+    }
+
+    const bedtimeGoal = clockToMinutes(draft.bedtime_goal)
+    if (bedtimeGoal !== null && bedtimeGoal !== loaded.bedtime_goal_min)
+      p.bedtime_goal_min = bedtimeGoal
 
     const loadedSessions = toDraft(loaded).weekly_min_sessions
     if (!sessionsEqual(draft.weekly_min_sessions, loadedSessions))
@@ -357,6 +393,59 @@ export function SettingsView(): ReactElement {
 
             <p className="settings-card-footnote">
               hr_max is auto-raised by the nightly job when a workout exceeds it.
+            </p>
+          </section>
+
+          <section className="settings-card" aria-labelledby="settings-sleep-title">
+            <h2 className="settings-card-title" id="settings-sleep-title">
+              Sleep &amp; recovery
+            </h2>
+
+            <div className="settings-field-pair">
+              <div className="settings-field">
+                <label className="settings-label" htmlFor="sleep_goal_hours">
+                  Sleep duration goal
+                </label>
+                <div className="settings-input-row">
+                  <input
+                    id="sleep_goal_hours"
+                    className="text-input tabular-nums settings-input--num"
+                    type="number"
+                    min={1}
+                    max={24}
+                    step={0.25}
+                    inputMode="decimal"
+                    value={draft.sleep_goal_hours}
+                    onChange={(e) => update('sleep_goal_hours', e.target.value)}
+                    aria-invalid={!!errors.sleep_goal_hours}
+                  />
+                  <span className="settings-unit">hours</span>
+                </div>
+                {errors.sleep_goal_hours && (
+                  <p className="settings-field-error">{errors.sleep_goal_hours}</p>
+                )}
+              </div>
+
+              <div className="settings-field">
+                <label className="settings-label" htmlFor="bedtime_goal">
+                  Bedtime goal
+                </label>
+                <input
+                  id="bedtime_goal"
+                  className="text-input tabular-nums settings-input--time"
+                  type="time"
+                  value={draft.bedtime_goal}
+                  onChange={(e) => update('bedtime_goal', e.target.value)}
+                  aria-invalid={!!errors.bedtime_goal}
+                />
+                {errors.bedtime_goal && (
+                  <p className="settings-field-error">{errors.bedtime_goal}</p>
+                )}
+              </div>
+            </div>
+
+            <p className="settings-card-footnote">
+              These targets appear as reference lines in Recovery charts.
             </p>
           </section>
 

@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { DailyMetric } from '@shared/types'
 import {
   bucketAggregate,
+  chartAxis,
+  clockGoalMinutesOnSleepAxis,
+  clockMinutesOnSleepAxis,
   daysAgo,
   EM_DASH,
   fmtBucketLabel,
   fmtClockTime,
+  fmtSleepAxisTime,
   fmtDelta,
   fmtHoursAsHm,
   fmtHoursMinutes,
@@ -20,6 +24,28 @@ import {
   sortByDate,
   weeklyMedianByDate
 } from '../recoveryUtils'
+
+describe('sleep chart helpers', () => {
+  it('keeps bedtime values continuous across midnight', () => {
+    expect(clockMinutesOnSleepAxis('2026-01-05T22:30:00Z', 'UTC')).toBe(1350)
+    expect(clockMinutesOnSleepAxis('2026-01-06T00:30:00Z', 'UTC')).toBe(1470)
+    expect(fmtSleepAxisTime(1470)).toBe('00:30')
+  })
+
+  it('places a midnight bedtime goal at 24:00 on the overnight axis', () => {
+    expect(clockGoalMinutesOnSleepAxis(0)).toBe(1440)
+    expect(clockGoalMinutesOnSleepAxis(23 * 60 + 45)).toBe(1425)
+    expect(clockGoalMinutesOnSleepAxis(30)).toBe(1470)
+  })
+
+  it('uses D3 nice domains and restrained tick counts', () => {
+    const axis = chartAxis([6.4, 7.1, 8.2], { padding: 0.35, tickCount: 4 })
+    expect(axis.domain[0]).toBeLessThanOrEqual(6.05)
+    expect(axis.domain[1]).toBeGreaterThanOrEqual(8.55)
+    expect(axis.ticks.length).toBeGreaterThanOrEqual(3)
+    expect(axis.ticks.length).toBeLessThanOrEqual(6)
+  })
+})
 
 function makeMetric(overrides: Partial<DailyMetric> & { date: string }): DailyMetric {
   return {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { countVisits, isCardioType, isGymType, monthSummary, yearSummary } from '../periodSummary'
+import {
+  countVisits,
+  groupVisits,
+  isCardioType,
+  isGymType,
+  monthSummary,
+  yearSummary
+} from '../periodSummary'
 import type { SummaryItem } from '../periodSummary'
 
 function item(dateKey: string, type: string, durationS = 3600): SummaryItem {
@@ -153,5 +160,83 @@ describe('countVisits', () => {
   it('items missing times each count as their own visit', () => {
     const items = [item('2026-07-08', 'pool_swim'), item('2026-07-08', 'functional_strength_training')]
     expect(countVisits(items)).toBe(2)
+  })
+
+  it('a swim followed straight by gym stays 2 visits (environment change)', () => {
+    const day = '2026-07-08'
+    const base = Date.UTC(2026, 6, 8, 8, 0, 0)
+    const items = [
+      timedItem(day, 'pool_swim', base, base + 40 * 60 * 1000),
+      // 10 min later — well within the merge gap, but pool -> gym floor.
+      timedItem(day, 'functional_strength_training', base + 50 * 60 * 1000, base + 100 * 60 * 1000)
+    ]
+    expect(countVisits(items)).toBe(2)
+  })
+
+  it('an outdoor run followed straight by gym stays 2 visits (environment change)', () => {
+    const day = '2026-07-08'
+    const base = Date.UTC(2026, 6, 8, 8, 0, 0)
+    const items = [
+      timedItem(day, 'running', base, base + 30 * 60 * 1000),
+      timedItem(day, 'functional_strength_training', base + 40 * 60 * 1000, base + 90 * 60 * 1000)
+    ]
+    expect(countVisits(items)).toBe(2)
+  })
+
+  it('rowing + bike + strength chained back-to-back at the gym is ONE visit', () => {
+    const day = '2026-07-08'
+    const base = Date.UTC(2026, 6, 8, 8, 0, 0)
+    const items = [
+      timedItem(day, 'rowing', base, base + 15 * 60 * 1000),
+      timedItem(day, 'indoor_cycling', base + 17 * 60 * 1000, base + 32 * 60 * 1000),
+      timedItem(day, 'functional_strength_training', base + 35 * 60 * 1000, base + 95 * 60 * 1000)
+    ]
+    expect(countVisits(items)).toBe(1)
+  })
+})
+
+describe('groupVisits classification through monthSummary', () => {
+  it('a mixed gym sitting counts as 1 workout and 1 gym session, 0 cardio', () => {
+    const day = '2026-07-08'
+    const base = Date.UTC(2026, 6, 8, 8, 0, 0)
+    const items = [
+      timedItem(day, 'rowing', base, base + 15 * 60 * 1000),
+      timedItem(day, 'indoor_cycling', base + 17 * 60 * 1000, base + 32 * 60 * 1000),
+      timedItem(day, 'functional_strength_training', base + 35 * 60 * 1000, base + 95 * 60 * 1000)
+    ]
+    const s = monthSummary(items, '2026-07', '2026-07-11')
+    expect(s.workouts).toBe(1)
+    expect(s.gymSessions).toBe(1)
+    expect(s.cardioSessions).toBe(0)
+    // Total time still sums every row.
+    expect(s.totalDurationS).toBe((15 + 15 + 60) * 60)
+  })
+
+  it('swim + later gym on the same day is 1 cardio + 1 gym session', () => {
+    const day = '2026-07-08'
+    const morning = Date.UTC(2026, 6, 8, 6, 0, 0)
+    const evening = Date.UTC(2026, 6, 8, 18, 0, 0)
+    const items = [
+      timedItem(day, 'pool_swim', morning, morning + 40 * 60 * 1000),
+      timedItem(day, 'functional_strength_training', evening, evening + 50 * 60 * 1000)
+    ]
+    const s = monthSummary(items, '2026-07', '2026-07-11')
+    expect(s.workouts).toBe(2)
+    expect(s.gymSessions).toBe(1)
+    expect(s.cardioSessions).toBe(1)
+  })
+
+  it('a long workout containing a shorter overlapping log still chains the sitting', () => {
+    const day = '2026-07-08'
+    const base = Date.UTC(2026, 6, 8, 8, 0, 0)
+    const visits = groupVisits([
+      // Strength log spans the whole visit; a bike interval sits inside it,
+      // and a core finisher starts after the bike ends but within 30 min of
+      // the strength log's end.
+      timedItem(day, 'functional_strength_training', base, base + 90 * 60 * 1000),
+      timedItem(day, 'indoor_cycling', base + 10 * 60 * 1000, base + 25 * 60 * 1000),
+      timedItem(day, 'core_training', base + 100 * 60 * 1000, base + 110 * 60 * 1000)
+    ])
+    expect(visits).toHaveLength(1)
   })
 })

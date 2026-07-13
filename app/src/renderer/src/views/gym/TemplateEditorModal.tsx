@@ -2,8 +2,15 @@
 // optional targets), and an archive toggle for existing templates.
 import { useEffect, useState, type ReactElement } from 'react'
 import { GYM_BODY_PARTS, type GymBodyPart, type GymTemplate, type NewGymTemplateItem } from '@shared/types'
-import { useAddGymTemplate, useUpdateGymTemplate } from '../../hooks/useGymData'
+import { useAddGymTemplate, useCreateGymTemplateVersion, useUpdateGymTemplate } from '../../hooks/useGymData'
+import { Dropdown } from '../../components/Dropdown'
+import { formatRest } from '../../lib/gymLog'
 import { ExercisePicker } from './ExercisePicker'
+
+const BODY_PART_OPTIONS = [
+  { value: '', label: 'any' },
+  ...GYM_BODY_PARTS.map((p) => ({ value: p, label: p }))
+]
 import '../GymView.css'
 
 interface ItemRow {
@@ -15,6 +22,8 @@ interface ItemRow {
   targetSets: string
   targetReps: string
   targetWeightKg: string
+  // Per-exercise rest override (seconds); blank = use the template default.
+  restAfterSeconds: string
   note: string
 }
 
@@ -33,6 +42,7 @@ function blankItem(): ItemRow {
     targetSets: '',
     targetReps: '',
     targetWeightKg: '',
+    restAfterSeconds: '',
     note: ''
   }
 }
@@ -48,8 +58,16 @@ function itemsFromTemplate(template: GymTemplate): ItemRow[] {
       targetSets: item.target_sets != null ? String(item.target_sets) : '',
       targetReps: item.target_reps != null ? String(item.target_reps) : '',
       targetWeightKg: item.target_weight_kg != null ? String(item.target_weight_kg) : '',
+      restAfterSeconds: item.rest_after_s != null ? String(item.rest_after_s) : '',
       note: item.note ?? ''
     }))
+}
+
+/** Clamp/round to the 0–3600s rest range, or null when blank/invalid. */
+function toNullableRestSeconds(s: string): number | null {
+  const n = toNullableInt(s)
+  if (n == null) return null
+  return Math.max(0, Math.min(3600, n))
 }
 
 function toNullableInt(s: string): number | null {
@@ -68,28 +86,27 @@ function toNullableFloat(s: string): number | null {
 
 function TemplateItemEditor({
   item,
+  defaultRestSeconds,
   onChange,
   onRemove
 }: {
   item: ItemRow
+  defaultRestSeconds: number | null
   onChange: (patch: Partial<ItemRow>) => void
   onRemove: () => void
 }): ReactElement {
+  const restPlaceholder = defaultRestSeconds != null ? `${formatRest(defaultRestSeconds)} (default)` : 'default'
   return (
     <div className="gym-template-item-row">
-      <select
-        className="gym-input gym-bodypart-select"
-        aria-label="Filter by body part"
-        value={item.bodyPartFilter ?? ''}
-        onChange={(e) => onChange({ bodyPartFilter: (e.target.value || null) as GymBodyPart | null })}
-      >
-        <option value="">any</option>
-        {GYM_BODY_PARTS.map((part) => (
-          <option key={part} value={part}>
-            {part}
-          </option>
-        ))}
-      </select>
+      <div className="gym-template-bodypart">
+        <Dropdown
+          ariaLabel="Filter by body part"
+          value={item.bodyPartFilter ?? ''}
+          align="left"
+          options={BODY_PART_OPTIONS}
+          onChange={(v) => onChange({ bodyPartFilter: (v || null) as GymBodyPart | null })}
+        />
+      </div>
       <ExercisePicker
         value={item.exerciseName}
         bodyPart={item.bodyPartFilter}
@@ -122,6 +139,16 @@ function TemplateItemEditor({
         value={item.targetWeightKg}
         onChange={(e) => onChange({ targetWeightKg: e.target.value })}
       />
+      <input
+        className="gym-input gym-template-target-input gym-template-rest-input"
+        type="number"
+        min={0}
+        max={3600}
+        placeholder={restPlaceholder}
+        aria-label="Rest override (seconds)"
+        value={item.restAfterSeconds}
+        onChange={(e) => onChange({ restAfterSeconds: e.target.value })}
+      />
       <button type="button" className="gym-set-remove" aria-label="Remove exercise" onClick={onRemove}>
         ×
       </button>
@@ -141,11 +168,15 @@ export function TemplateEditorModal({
   const [notes, setNotes] = useState(template?.notes ?? '')
   const [items, setItems] = useState<ItemRow[]>(template ? itemsFromTemplate(template) : [])
   const [archived, setArchived] = useState(template?.archived ?? false)
+  const [defaultRestSeconds, setDefaultRestSeconds] = useState(
+    template?.default_rest_s != null ? String(template.default_rest_s) : ''
+  )
   const [error, setError] = useState<string | null>(null)
 
   const addMutation = useAddGymTemplate()
   const updateMutation = useUpdateGymTemplate()
-  const pending = addMutation.isPending || updateMutation.isPending
+  const createVersionMutation = useCreateGymTemplateVersion()
+  const pending = addMutation.isPending || updateMutation.isPending || createVersionMutation.isPending
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -160,52 +191,63 @@ export function TemplateEditorModal({
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)))
   const removeItem = (key: string): void => setItems((prev) => prev.filter((it) => it.key !== key))
 
-  const handleSave = (): void => {
+  /** Validates the form and builds the shared NewGymTemplate payload, or returns null on error. */
+  const buildPayload = (): { name: string; notes: string | null; default_rest_s: number | null; items: NewGymTemplateItem[] } | null => {
     setError(null)
     if (!name.trim()) {
       setError('Give the template a name.')
-      return
+      return null
     }
     const incomplete = items.some((it) => !it.exerciseId)
     if (incomplete) {
       setError('Finish or remove the exercise row without a name.')
-      return
+      return null
     }
     const newItems: NewGymTemplateItem[] = items.map((it) => ({
       exercise_id: it.exerciseId as string,
       target_sets: toNullableInt(it.targetSets),
       target_reps: toNullableInt(it.targetReps),
       target_weight_kg: toNullableFloat(it.targetWeightKg),
+      rest_after_s: toNullableRestSeconds(it.restAfterSeconds),
       note: it.note.trim() || null
     }))
+    return {
+      name: name.trim(),
+      notes: notes.trim() || null,
+      default_rest_s: toNullableRestSeconds(defaultRestSeconds),
+      items: newItems
+    }
+  }
+
+  const handleSave = (): void => {
+    const payload = buildPayload()
+    if (!payload) return
 
     if (isEdit && template) {
-      updateMutation.mutate(
-        {
-          id: template.id,
-          patch: { name: name.trim(), notes: notes.trim() || null, archived, items: newItems }
-        },
-        {
-          onSuccess: () => onClose(),
-          onError: (err) => setError(err instanceof Error ? err.message : 'Could not save.')
-        }
-      )
+      updateMutation.mutate({
+        id: template.id,
+        patch: { ...payload, archived }
+      })
+      onClose()
       return
     }
 
-    addMutation.mutate(
-      { name: name.trim(), notes: notes.trim() || null, items: newItems },
-      {
-        onSuccess: () => onClose(),
-        onError: (err) => setError(err instanceof Error ? err.message : 'Could not save.')
-      }
-    )
+    addMutation.mutate(payload)
+    onClose()
+  }
+
+  const handleSaveAsNewVersion = (): void => {
+    if (!isEdit || !template) return
+    const payload = buildPayload()
+    if (!payload) return
+    createVersionMutation.mutate({ baseTemplateId: template.id, template: payload })
+    onClose()
   }
 
   return (
     <div className="gym-modal-overlay" onClick={onClose}>
       <div
-        className="gym-modal"
+        className="gym-modal gym-modal--wide"
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? 'Edit template' : 'New template'}
@@ -240,11 +282,27 @@ export function TemplateEditorModal({
             />
           </label>
 
+          <h4 className="gym-modal-section-title">Rest</h4>
+          <label className="gym-field gym-template-rest-field">
+            <span className="gym-field-label">Default rest between sets (seconds)</span>
+            <input
+              className="gym-input gym-template-rest-default-input"
+              type="number"
+              min={0}
+              max={3600}
+              placeholder="none"
+              value={defaultRestSeconds}
+              onChange={(e) => setDefaultRestSeconds(e.target.value)}
+            />
+          </label>
+
+          <h4 className="gym-modal-section-title">Exercises</h4>
           <div className="gym-template-items">
             {items.map((item) => (
               <TemplateItemEditor
                 key={item.key}
                 item={item}
+                defaultRestSeconds={toNullableRestSeconds(defaultRestSeconds)}
                 onChange={(patch) => updateItem(item.key, patch)}
                 onRemove={() => removeItem(item.key)}
               />
@@ -256,12 +314,14 @@ export function TemplateEditorModal({
           </button>
 
           {isEdit && (
-            <label className="gym-archive-toggle">
+            <label className="gym-check gym-archive-toggle">
               <input
+                className="gym-check-input"
                 type="checkbox"
                 checked={archived}
                 onChange={(e) => setArchived(e.target.checked)}
               />
+              <span className="gym-check-mark" aria-hidden="true" />
               Archived
             </label>
           )}
@@ -270,8 +330,20 @@ export function TemplateEditorModal({
 
           <div className="gym-modal-actions">
             <button type="button" className="gym-btn gym-btn--primary" disabled={pending} onClick={handleSave}>
-              {pending ? 'Saving…' : 'Save'}
+              {updateMutation.isPending || addMutation.isPending ? 'Saving…' : 'Save'}
             </button>
+            {isEdit && template && (
+              <button
+                type="button"
+                className="gym-btn"
+                disabled={pending}
+                onClick={handleSaveAsNewVersion}
+              >
+                {createVersionMutation.isPending
+                  ? 'Saving…'
+                  : `Save as new version (v${template.version + 1})`}
+              </button>
+            )}
             <button type="button" className="gym-btn" onClick={onClose} disabled={pending}>
               Cancel
             </button>

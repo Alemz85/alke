@@ -53,11 +53,11 @@ This system adapts Revolut's design language from a marketing site to a **deskto
 | --- | --- | --- | --- |
 | `{colors.aerobic}` | `#2DD4BF` | Zone 2 / aerobic base | Z2 charts, EF trend, time-in-zone bars, Zone 2 tab hero metric |
 | `{colors.load}` | `#6366F1` | Training load / fitness | CTL/ATL curves, TRIMP bars, load tab accents |
-| `{colors.recovery}` | `#A78BFA` | Recovery | Sleep charts, RHR trend, HRV trend, recovery tab hero |
+| `{colors.recovery}` | `#5B8DEF` | Recovery | Sleep charts, RHR trend, HRV trend, recovery tab hero |
 | `{colors.sessions}` | `#FB923C` | Sessions / adherence | Calendar heatmap cells, streak counter, session list markers |
 | `{colors.flag}` | `#EF4444` | Warnings only | ACWR flag banner, elevated-RHR flag, missed-minimum flag. Nowhere else, ever. |
 
-Each accent has a **dim variant** at 15% opacity for area fills, calendar cell backgrounds, and badge backgrounds: `{colors.aerobic-dim}` `rgba(45,212,191,0.15)`, `{colors.load-dim}` `rgba(99,102,241,0.15)`, `{colors.recovery-dim}` `rgba(167,139,250,0.15)`, `{colors.sessions-dim}` `rgba(251,146,60,0.15)`, `{colors.flag-dim}` `rgba(239,68,68,0.15)`.
+Each accent has a **dim variant** at 15% opacity for area fills, calendar cell backgrounds, and badge backgrounds: `{colors.aerobic-dim}` `rgba(45,212,191,0.15)`, `{colors.load-dim}` `rgba(99,102,241,0.15)`, `{colors.recovery-dim}` `rgba(91,141,239,0.15)`, `{colors.sessions-dim}` `rgba(251,146,60,0.15)`, `{colors.flag-dim}` `rgba(239,68,68,0.15)`.
 
 Multi-series charts within one domain (e.g. deep vs. REM sleep) use the domain accent plus `{colors.text-tertiary}` gray for secondary series — never borrow another domain's accent.
 
@@ -246,7 +246,7 @@ Light inverts the surface ladder onto a true-white canvas. The two laws that def
 | `{colors.text-tertiary}` | `rgba(0,0,0,0.46)` | Axis labels, captions. |
 | `{colors.text-disabled}` | `rgba(0,0,0,0.30)` | |
 
-The five accent **hues are unchanged** — teal still means aerobic. Their `-dim` fill variants drop to **12% opacity on white** (dark uses 15%): `aerobic-dim rgba(45,212,191,0.12)`, `load-dim rgba(99,102,241,0.12)`, `recovery-dim rgba(167,139,250,0.12)`, `sessions-dim rgba(251,146,60,0.12)`, `flag-dim rgba(239,68,68,0.12)`.
+The five accent **hues are unchanged** — teal still means aerobic. Their `-dim` fill variants drop to **12% opacity on white** (dark uses 15%): `aerobic-dim rgba(45,212,191,0.12)`, `load-dim rgba(99,102,241,0.12)`, `recovery-dim rgba(91,141,239,0.12)`, `sessions-dim rgba(251,146,60,0.12)`, `flag-dim rgba(239,68,68,0.12)`.
 
 ### `-text` accent variants (the contrast rule)
 
@@ -256,7 +256,7 @@ The base accent hues are tuned for a black canvas; several are too light to read
 | --- | --- |
 | `{colors.aerobic-text}` | `#0F766E` (teal-700) |
 | `{colors.load-text}` | `#4F46E5` (indigo-600) |
-| `{colors.recovery-text}` | `#7C3AED` (violet-600) |
+| `{colors.recovery-text}` | `#2563EB` (blue-600) |
 | `{colors.sessions-text}` | `#C2410C` (orange-700) |
 | `{colors.flag-text}` | `#DC2626` (red-600) |
 

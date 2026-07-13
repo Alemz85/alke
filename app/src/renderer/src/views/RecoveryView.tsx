@@ -5,6 +5,8 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -13,6 +15,7 @@ import {
   YAxis,
   ZAxis
 } from 'recharts'
+import { quantile } from 'd3-array'
 import { TabHeader } from './TabHeader'
 import { ChartCard, ChipFilter, EmptyState, FlagBanner, HeroMetric, MetricCard } from '../components'
 import type { ChipRange } from '../components'
@@ -26,14 +29,19 @@ import {
 import {
   buildWeightSeries,
   bucketAggregate,
+  chartAxis,
+  clockGoalMinutesOnSleepAxis,
+  clockMinutesOnSleepAxis,
   daysAgo,
   fmtBucketLabel,
   fmtClockTime,
   fmtHoursAsHm,
   fmtHoursMinutes,
   fmtLocalDate,
+  fmtSleepAxisTime,
   granularityForDays,
   mean,
+  median,
   readStageHours,
   rollingAverage,
   sliceLastNDays,
@@ -56,6 +64,7 @@ const TOOLTIP_ITEM_STYLE = { fontVariantNumeric: 'tabular-nums' as const }
 
 export function RecoveryView(): ReactElement {
   const [sleepRange, setSleepRange] = useState<ChipRange>('30d')
+  const [bedtimeRange, setBedtimeRange] = useState<ChipRange>('30d')
   const [rhrRange, setRhrRange] = useState<ChipRange>('90d')
   const [hrvRange, setHrvRange] = useState<ChipRange>('90d')
   const [respRange, setRespRange] = useState<ChipRange>('90d')
@@ -71,6 +80,13 @@ export function RecoveryView(): ReactElement {
   const computedDailyQuery = useRecoveryComputedDaily(RANGE_DAYS['1y'])
 
   const timezone = userConfigQuery.data?.timezone ?? undefined
+  const sleepGoalMinutes = userConfigQuery.data?.sleep_goal_min ?? 480
+  const sleepGoalHours = sleepGoalMinutes / 60
+  const sleepGoalLabel = sleepGoalMinutes % 60 === 0
+    ? `${sleepGoalMinutes / 60}h`
+    : fmtHoursMinutes(sleepGoalMinutes)
+  const bedtimeGoalMinutes = userConfigQuery.data?.bedtime_goal_min ?? 0
+  const bedtimeGoalAxisMinutes = clockGoalMinutesOnSleepAxis(bedtimeGoalMinutes)
   const flags = flagsQuery.data ?? []
 
   const allMetrics = useMemo(() => sortByDate(dailyMetricsQuery.data ?? []), [dailyMetricsQuery.data])
@@ -128,13 +144,44 @@ export function RecoveryView(): ReactElement {
           avgHours: null as number | null
         }))
   const hasSleepData = sleepChartData.some((d) => d.hours !== null)
+  const sleepValues = sleepChartData
+    .map((d) => d.hours)
+    .filter((value): value is number => value !== null)
+  const sleepSorted = [...sleepValues].sort((a, b) => a - b)
+  const sleepAxis = chartAxis([...sleepValues, sleepGoalHours], { padding: 0.35, tickCount: 4 })
+  const sleepMedian = median(sleepValues)
+  const sleepQ1 = quantile(sleepSorted, 0.25) ?? null
+  const sleepQ3 = quantile(sleepSorted, 0.75) ?? null
+  const sleepWindowAverage = mean(sleepValues)
   const sleepBarLabel =
     sleepGran === 'weekly' ? 'Weekly avg' : sleepGran === 'monthly' ? 'Monthly avg' : 'Sleep'
 
   // Bedtime / wake for the most recent night with a recorded sleep window.
   const latestBedtime = fmtClockTime(latestSleepRow?.sleep_start, timezone)
   const latestWake = fmtClockTime(latestSleepRow?.sleep_end, timezone)
-  const hasBedtime = Boolean(latestSleepRow?.sleep_start || latestSleepRow?.sleep_end)
+  // Shift post-midnight times beyond 24:00 so the overnight clock remains
+  // continuous instead of drawing a false jump at midnight.
+  const bedtimeDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[bedtimeRange])
+  const bedtimeChartData = bedtimeDaysWindow.map((row, index, rows) => {
+    const rawBedtime = clockMinutesOnSleepAxis(row.sleep_start, timezone)
+    const bedtime = rawBedtime !== null && rawBedtime >= 16 * 60 && rawBedtime <= 36 * 60
+      ? rawBedtime
+      : null
+    const trailing = rows
+      .slice(Math.max(0, index - 6), index + 1)
+      .map((candidate) => clockMinutesOnSleepAxis(candidate.sleep_start, timezone))
+      .filter((value): value is number => value !== null && value >= 16 * 60 && value <= 36 * 60)
+    return { date: row.date, bedtime, avgBedtime: mean(trailing) }
+  })
+  const bedtimeValues = bedtimeChartData
+    .map((row) => row.bedtime)
+    .filter((value): value is number => value !== null)
+  const bedtimeSorted = [...bedtimeValues].sort((a, b) => a - b)
+  const bedtimeAxis = chartAxis([...bedtimeValues, bedtimeGoalAxisMinutes], { padding: 45, tickCount: 5 })
+  const bedtimeMedian = median(bedtimeValues)
+  const bedtimeQ1 = quantile(bedtimeSorted, 0.25) ?? null
+  const bedtimeQ3 = quantile(bedtimeSorted, 0.75) ?? null
+  const hasBedtimeTrend = bedtimeValues.length > 0
 
   const latestStages =
     latestSleepRow?.sleep_stages && typeof latestSleepRow.sleep_stages === 'object'
@@ -255,13 +302,41 @@ export function RecoveryView(): ReactElement {
         </div>
       )}
 
-      <HeroMetric
-        eyebrow="RECOVERY · LAST NIGHT"
-        value={latestSleepMinutes === null ? EM_DASH : fmtHoursMinutes(latestSleepMinutes)}
-        delta={heroCaption}
-        deltaPositive={sleepDeltaMin !== null && sleepDeltaMin >= 0}
-        domain="recovery"
-      />
+      <section className="recovery-hero" aria-label="Last night recovery summary">
+        <HeroMetric
+          eyebrow="RECOVERY · LAST NIGHT"
+          value={latestSleepMinutes === null ? EM_DASH : fmtHoursMinutes(latestSleepMinutes)}
+          delta={heroCaption}
+          deltaPositive={sleepDeltaMin !== null && sleepDeltaMin >= 0}
+          domain="recovery"
+        />
+
+        <div className="recovery-hero-details">
+          <div className="recovery-hero-window">
+            <span className="recovery-hero-detail-label">Sleep window</span>
+            <div className="recovery-hero-times">
+              <span>
+                <small>Asleep</small>
+                <strong className="tabular-nums">{latestBedtime}</strong>
+              </span>
+              <span className="recovery-hero-time-rule" aria-hidden="true" />
+              <span>
+                <small>Awake</small>
+                <strong className="tabular-nums">{latestWake}</strong>
+              </span>
+            </div>
+          </div>
+
+          {hasStageLegend && (
+            <div className="recovery-hero-stages" aria-label="Last night sleep stages">
+              <span><small>Deep</small><strong className="tabular-nums">{fmtHoursAsHm(deepH)}</strong></span>
+              <span><small>Core</small><strong className="tabular-nums">{fmtHoursAsHm(coreH)}</strong></span>
+              <span><small>REM</small><strong className="tabular-nums">{fmtHoursAsHm(remH)}</strong></span>
+              <span><small>Awake</small><strong className="tabular-nums">{fmtHoursAsHm(awakeH)}</strong></span>
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="recovery-grid">
         <div className="recovery-grid--span-12">
@@ -284,6 +359,8 @@ export function RecoveryView(): ReactElement {
                       tickFormatter={(d: string) => fmtBucketLabel(d, sleepGran, timezone)}
                     />
                     <YAxis
+                      domain={sleepAxis.domain}
+                      ticks={sleepAxis.ticks}
                       tick={AXIS_TICK}
                       axisLine={false}
                       tickLine={false}
@@ -296,17 +373,45 @@ export function RecoveryView(): ReactElement {
                       itemStyle={TOOLTIP_ITEM_STYLE}
                       labelFormatter={(d: string) => fmtBucketLabel(d, sleepGran, timezone)}
                       formatter={(value: number, name: string) => [
-                        `${value.toFixed(1)}h`,
+                        fmtHoursMinutes(value * 60),
                         name === 'avgHours' ? '7d avg' : sleepBarLabel
                       ]}
                     />
+                    {sleepQ1 !== null && sleepQ3 !== null && (
+                      <ReferenceArea
+                        y1={sleepQ1}
+                        y2={sleepQ3}
+                        fill="var(--color-recovery-dim)"
+                        fillOpacity={0.7}
+                        strokeOpacity={0}
+                      />
+                    )}
+                    <ReferenceLine
+                      y={sleepGoalHours}
+                      stroke="var(--color-recovery)"
+                      strokeWidth={2}
+                      label={{
+                        value: `Goal ${sleepGoalLabel}`,
+                        position: 'insideTopRight',
+                        fill: 'var(--color-recovery-text)',
+                        fontSize: 12,
+                        fontWeight: 600
+                      }}
+                    />
+                    {sleepMedian !== null && (
+                      <ReferenceLine
+                        y={sleepMedian}
+                        stroke="var(--color-text-tertiary)"
+                        strokeDasharray="3 4"
+                      />
+                    )}
                     <Bar
                       dataKey="hours"
                       name="hours"
-                      fill="var(--color-recovery-dim)"
-                      stroke="var(--color-recovery)"
-                      strokeWidth={1}
-                      radius={[2, 2, 0, 0]}
+                      fill="var(--color-recovery)"
+                      fillOpacity={0.48}
+                      radius={[3, 3, 0, 0]}
+                      maxBarSize={22}
                     />
                     {sleepGran === 'daily' && (
                       <Line
@@ -314,37 +419,139 @@ export function RecoveryView(): ReactElement {
                         dataKey="avgHours"
                         name="avgHours"
                         stroke="var(--color-recovery)"
-                        strokeWidth={1.5}
+                        strokeWidth={2.25}
                         dot={false}
                         connectNulls={false}
                       />
                     )}
                   </ComposedChart>
                 </ResponsiveContainer>
-                {hasBedtime && (
-                  <p className="recovery-chart-caption">
-                    Last night · asleep {latestBedtime} → awake {latestWake}
-                  </p>
-                )}
-                {hasStageLegend && (
-                  <div className="recovery-stage-legend">
-                    <span className="recovery-stage-legend-item">
-                      Deep <span className="tabular-nums">{fmtHoursAsHm(deepH)}</span>
-                    </span>
-                    <span className="recovery-stage-legend-item">
-                      Core <span className="tabular-nums">{fmtHoursAsHm(coreH)}</span>
-                    </span>
-                    <span className="recovery-stage-legend-item">
-                      REM <span className="tabular-nums">{fmtHoursAsHm(remH)}</span>
-                    </span>
-                    <span className="recovery-stage-legend-item">
-                      Awake <span className="tabular-nums">{fmtHoursAsHm(awakeH)}</span>
-                    </span>
-                  </div>
-                )}
+                <div className="recovery-sleep-summary" aria-label="Sleep range summary">
+                  <span>
+                    <small>Average</small>
+                    <strong className="tabular-nums">{fmtHoursMinutes(sleepWindowAverage === null ? null : sleepWindowAverage * 60)}</strong>
+                  </span>
+                  <span>
+                    <small>Typical range</small>
+                    <strong className="tabular-nums">{sleepQ1 === null || sleepQ3 === null ? EM_DASH : `${fmtHoursMinutes(sleepQ1 * 60)}–${fmtHoursMinutes(sleepQ3 * 60)}`}</strong>
+                  </span>
+                  <span>
+                    <small>Nights recorded</small>
+                    <strong className="tabular-nums">{sleepValues.length}</strong>
+                  </span>
+                </div>
               </>
             ) : (
               <EmptyState message="No sleep data in this range yet — nightly sleep duration will chart here once Apple Health exports sleep sessions." />
+            )}
+          </ChartCard>
+        </div>
+
+        <div className="recovery-grid--span-12">
+          <ChartCard
+            title="Bedtime"
+            span={12}
+            headerRight={<ChipFilter value={bedtimeRange} onChange={setBedtimeRange} options={['7d', '30d', '90d']} />}
+          >
+            {hasBedtimeTrend ? (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={bedtimeChartData} margin={{ top: 8, right: 12, bottom: 0, left: 8 }}>
+                    <CartesianGrid stroke="var(--color-divider-soft)" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={AXIS_TICK}
+                      axisLine={AXIS_LINE}
+                      tickLine={false}
+                      minTickGap={32}
+                      tickFormatter={(date: string) => fmtBucketLabel(date, 'daily', timezone)}
+                    />
+                    <YAxis
+                      domain={bedtimeAxis.domain}
+                      ticks={bedtimeAxis.ticks}
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={48}
+                      reversed
+                      tickFormatter={fmtSleepAxisTime}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
+                      labelFormatter={(date: string) => fmtLocalDate(date, timezone)}
+                      formatter={(value: number, name: string) => [
+                        fmtSleepAxisTime(value),
+                        name === 'avgBedtime' ? '7d avg' : 'Bedtime'
+                      ]}
+                    />
+                    {bedtimeQ1 !== null && bedtimeQ3 !== null && (
+                      <ReferenceArea
+                        y1={bedtimeQ1}
+                        y2={bedtimeQ3}
+                        fill="var(--color-recovery-dim)"
+                        fillOpacity={0.65}
+                        strokeOpacity={0}
+                      />
+                    )}
+                    <ReferenceLine
+                      y={bedtimeGoalAxisMinutes}
+                      stroke="var(--color-recovery)"
+                      strokeWidth={2}
+                      label={{
+                        value: `Goal ${fmtSleepAxisTime(bedtimeGoalAxisMinutes)}`,
+                        position: 'insideTopRight',
+                        fill: 'var(--color-recovery-text)',
+                        fontSize: 12,
+                        fontWeight: 600
+                      }}
+                    />
+                    {bedtimeMedian !== null && (
+                      <ReferenceLine
+                        y={bedtimeMedian}
+                        stroke="var(--color-text-tertiary)"
+                        strokeDasharray="3 4"
+                      />
+                    )}
+                    <Line
+                      type="linear"
+                      dataKey="bedtime"
+                      name="bedtime"
+                      stroke="var(--color-text-tertiary)"
+                      strokeWidth={1}
+                      dot={{ r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }}
+                      connectNulls={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="avgBedtime"
+                      name="avgBedtime"
+                      stroke="var(--color-recovery)"
+                      strokeWidth={2.25}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <div className="recovery-sleep-summary" aria-label="Bedtime range summary">
+                  <span>
+                    <small>Typical bedtime</small>
+                    <strong className="tabular-nums">{bedtimeMedian === null ? EM_DASH : fmtSleepAxisTime(bedtimeMedian)}</strong>
+                  </span>
+                  <span>
+                    <small>Typical window</small>
+                    <strong className="tabular-nums">{bedtimeQ1 === null || bedtimeQ3 === null ? EM_DASH : `${fmtSleepAxisTime(bedtimeQ1)}–${fmtSleepAxisTime(bedtimeQ3)}`}</strong>
+                  </span>
+                  <span>
+                    <small>Nights recorded</small>
+                    <strong className="tabular-nums">{bedtimeValues.length}</strong>
+                  </span>
+                </div>
+                <p className="recovery-chart-caption">Times after midnight continue across the overnight axis, so small schedule shifts stay small.</p>
+              </>
+            ) : (
+              <EmptyState message="No bedtime data in this range yet. Sleep start times will chart here once Apple Health exports them." />
             )}
           </ChartCard>
         </div>

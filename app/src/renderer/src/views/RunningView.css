@@ -1,0 +1,310 @@
+.running-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxl);
+}
+
+.running-overview {
+  overflow: hidden;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+}
+
+.running-overview-top {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.15fr) minmax(0, 2fr);
+  align-items: stretch;
+}
+
+.running-lifetime-intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xl);
+}
+
+.running-section-kicker,
+.running-lifetime-fact span,
+.running-period-label,
+.running-period-facts span {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.running-lifetime-distance {
+  color: var(--color-aerobic-text);
+  font-family: var(--font-display);
+  font-size: clamp(var(--type-heading-lg-size), 3.5vw, 48px);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: 1;
+  letter-spacing: -0.6px;
+}
+
+.running-lifetime-caption {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+.running-lifetime-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.running-lifetime-fact {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-lg);
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.running-lifetime-fact:first-child {
+  border-left: 0;
+}
+
+.running-lifetime-fact strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-period-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.running-period-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-lg) var(--space-xl);
+}
+
+.running-period-summary + .running-period-summary {
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.running-period-label {
+  color: var(--color-text-secondary);
+}
+
+.running-period-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.running-period-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.running-period-facts strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  line-height: var(--type-body-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.running-section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.running-section-heading h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+}
+
+.running-section-heading p {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+}
+
+.running-period-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.running-period-stats .metric-card {
+  min-width: 0;
+}
+
+.running-chart-key,
+.running-chart-key span {
+  display: flex;
+  align-items: center;
+}
+
+.running-chart-key {
+  gap: var(--space-md);
+}
+
+.running-chart-key span,
+.running-chart-unit {
+  gap: var(--space-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.running-chart-key-swatch {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-aerobic);
+}
+
+.running-chart-key-swatch--bar {
+  width: 10px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--color-aerobic-dim);
+  border: 1px solid var(--color-aerobic);
+}
+
+.running-chart-key-swatch--dashed {
+  height: 0;
+  background: transparent;
+  border-top: 2px dashed var(--color-text-tertiary);
+}
+
+.running-caption {
+  max-width: 72ch;
+  margin: var(--space-xs) 0 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.running-hr-pending {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.45fr) minmax(260px, 1fr);
+  gap: var(--space-lg);
+  padding: var(--space-lg) 0;
+  border-top: 1px solid var(--color-divider-soft);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.running-hr-pending strong {
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+}
+
+.running-hr-pending span {
+  max-width: 65ch;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+}
+
+.running-training-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-md);
+}
+
+.running-training-grid .chart-card--span-6 {
+  grid-column: span 6;
+}
+
+@media (max-width: 1100px) {
+  .running-overview-top,
+  .running-period-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .running-lifetime-facts {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .running-period-summary + .running-period-summary {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .running-training-grid .chart-card--span-6 {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 760px) {
+  .running-view {
+    gap: var(--space-xl);
+  }
+
+  .running-lifetime-facts,
+  .running-period-facts,
+  .running-period-stats,
+  .running-hr-pending {
+    grid-template-columns: 1fr;
+  }
+
+  .running-lifetime-fact {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .running-lifetime-fact:first-child {
+    border-top: 0;
+  }
+
+  .running-period-facts {
+    gap: var(--space-sm);
+  }
+
+  .running-chart-key {
+    display: none;
+  }
+}

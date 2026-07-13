@@ -31,6 +31,7 @@ import {
   type GymTemplate,
   type GymTemplateItem,
   type GymTemplatePatch,
+  type GymTemplateRun,
   type Injury,
   type InjuryLogEntry,
   type NewGoal,
@@ -40,6 +41,7 @@ import {
   type NewGymTemplateItem,
   type NewInjuryLog,
   type PlanItemCheck,
+  type ProteinDay,
   type RecoveryPlanItem,
   type RoutePoint,
   type SwimSet,
@@ -48,6 +50,7 @@ import {
   type Workout,
   type WorkoutDetail,
   type WorkoutGeo,
+  type WorkoutPlace,
   type WorkoutHrSample,
   type Zone2Fitness
 } from '@shared/types'
@@ -150,7 +153,9 @@ const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
   'swim_hr_offset',
   'zone2_low_frac',
   'zone2_high_frac',
-  'zone2_weekly_target_min'
+  'zone2_weekly_target_min',
+  'sleep_goal_min',
+  'bedtime_goal_min'
 ]
 
 // Whitelist of user_config columns that may be modified via updateUserConfig.
@@ -161,8 +166,11 @@ const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
   'zone2_low_frac',
   'zone2_high_frac',
   'zone2_weekly_target_min',
+  'sleep_goal_min',
+  'bedtime_goal_min',
   'weekly_min_sessions',
-  'timezone'
+  'timezone',
+  'about_me'
 ]
 
 const WORKOUT_COLUMNS =
@@ -181,7 +189,7 @@ const ZONE2_FITNESS_COLUMNS =
   'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, maintain_horizon_days, build_interval_days, expected_session_build, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
-  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, weekly_min_sessions, timezone'
+  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me'
 
 const SWIM_SET_COLUMNS =
   'workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s'
@@ -296,6 +304,19 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
   }
 }
 
+/** Batched place labels for history views. Avoids fetching full workout detail N times. */
+export async function getWorkoutPlaces(workoutIds: string[]): Promise<WorkoutPlace[]> {
+  if (workoutIds.length === 0) return []
+  const supabase = getClient()
+  const { data, error } = await supabase
+    .from('workout_geo')
+    .select('workout_id, city, country, admin')
+    .in('workout_id', workoutIds)
+
+  if (error) throw new Error(`getWorkoutPlaces: ${error.message}`)
+  return (data ?? []) as WorkoutPlace[]
+}
+
 /** Swim sets for all swim workouts starting in [fromIso, toIso], for trend views. */
 export async function getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]> {
   const supabase = getClient()
@@ -408,7 +429,9 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     'swim_hr_offset',
     'zone2_low_frac',
     'zone2_high_frac',
-    'zone2_weekly_target_min'
+    'zone2_weekly_target_min',
+    'sleep_goal_min',
+    'bedtime_goal_min'
   ]
   for (const field of numericFields) {
     if (field in update) {
@@ -416,6 +439,20 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
       if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
         throw new Error(`updateUserConfig: ${field} must be a finite number or null`)
       }
+    }
+  }
+
+  if ('sleep_goal_min' in update) {
+    const value = update.sleep_goal_min
+    if (!Number.isInteger(value) || (value as number) < 60 || (value as number) > 1440) {
+      throw new Error('updateUserConfig: sleep_goal_min must be a whole number from 60 to 1440')
+    }
+  }
+
+  if ('bedtime_goal_min' in update) {
+    const value = update.bedtime_goal_min
+    if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 1439) {
+      throw new Error('updateUserConfig: bedtime_goal_min must be a whole number from 0 to 1439')
     }
   }
 
@@ -441,6 +478,13 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
           )
         }
       }
+    }
+  }
+
+  if ('about_me' in update) {
+    const about = update.about_me
+    if (about !== null && (typeof about !== 'string' || about.length > 5000)) {
+      throw new Error('updateUserConfig: about_me must be text up to 5000 characters or null')
     }
   }
 
@@ -477,7 +521,7 @@ export async function getTodayFlags(): Promise<Flag[]> {
 }
 
 const INJURY_COLUMNS =
-  'id, name, body_area, status, severity, started_at, resolved_at, summary, recovery_plan, created_at, updated_at'
+  'id, name, body_area, status, severity, started_at, plan_started_at, resolved_at, summary, recovery_plan, created_at, updated_at'
 
 const INJURY_LOG_COLUMNS =
   'id, injury_id, entry_date, noted_at, source, note, pain_level, context, workout_id'
@@ -485,12 +529,15 @@ const INJURY_LOG_COLUMNS =
 const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
 
 const RECOVERY_PLAN_ITEM_COLUMNS =
-  'id, injury_id, name, kind, weekly_target, green_min, yellow_min, note, active, exercise_id, created_at, updated_at'
+  'id, injury_id, name, kind, weekly_target, green_min, yellow_min, start_week, target_sets, target_reps, steps, note, active, exercise_id, created_at, updated_at'
 
 const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = [
   'weekly_target',
   'green_min',
-  'yellow_min'
+  'yellow_min',
+  'start_week',
+  'target_sets',
+  'target_reps'
 ]
 
 const PLAN_ITEM_CHECK_COLUMNS = 'id, item_id, done_date, source'
@@ -535,10 +582,14 @@ export async function getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]> 
   return (data ?? []).map((row) => normalizeNumeric(row as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS))
 }
 
-export async function addInjuryLog(entry: NewInjuryLog): Promise<InjuryLogEntry> {
+export async function addInjuryLog(
+  entry: NewInjuryLog,
+  mutationId: string
+): Promise<InjuryLogEntry> {
   const supabase = getClient()
 
   assertUuid(entry.injury_id, 'injury_id')
+  assertUuid(mutationId, 'mutationId')
 
   if (typeof entry.note !== 'string' || entry.note.trim().length === 0 || entry.note.length > 2000) {
     throw new Error('invalid note')
@@ -569,26 +620,70 @@ export async function addInjuryLog(entry: NewInjuryLog): Promise<InjuryLogEntry>
     assertDate(entry.entry_date, 'entry_date')
   }
 
-  const row: Record<string, unknown> = {
+  // Offline replays carry the same mutationId. If this write already landed,
+  // return that row untouched rather than re-running the day-merge below.
+  const { data: prior, error: priorError } = await supabase
+    .from('injury_notes')
+    .select(INJURY_LOG_COLUMNS)
+    .eq('client_mutation_id', mutationId)
+    .maybeSingle()
+  if (priorError) throw new Error(`addInjuryLog (idempotency): ${priorError.message}`)
+  if (prior) return normalizeNumeric(prior as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
+
+  // One log per day, highest pain wins: a same-day entry only supersedes the
+  // existing one when its pain is >= the day's current pain. Corrections that
+  // lower the reading are made by deleting the log, not by re-logging.
+  const entryDate = entry.entry_date ?? new Date().toISOString().slice(0, 10)
+  const { data: dayRow, error: dayError } = await supabase
+    .from('injury_notes')
+    .select('id, pain_level')
+    .eq('injury_id', entry.injury_id)
+    .eq('entry_date', entryDate)
+    .maybeSingle()
+  if (dayError) throw new Error(`addInjuryLog (day lookup): ${dayError.message}`)
+
+  const fields: Record<string, unknown> = {
+    client_mutation_id: mutationId,
     injury_id: entry.injury_id,
+    entry_date: entryDate,
     note: entry.note,
     pain_level: entry.pain_level,
     context: entry.context,
     workout_id: entry.workout_id ?? null,
-    source: 'user'
+    source: 'user',
+    noted_at: new Date().toISOString()
   }
-  if (entry.entry_date !== undefined) {
-    row.entry_date = entry.entry_date
+
+  if (dayRow) {
+    // null pain sorts below any real 0–10 reading, so a genuine reading always
+    // supersedes a note that carried no pain level.
+    const existingPain = dayRow.pain_level ?? -1
+    const incomingPain = entry.pain_level ?? -1
+    if (incomingPain < existingPain) {
+      const { data: kept, error: keptError } = await supabase
+        .from('injury_notes')
+        .select(INJURY_LOG_COLUMNS)
+        .eq('id', dayRow.id)
+        .single()
+      if (keptError) throw new Error(`addInjuryLog (keep existing): ${keptError.message}`)
+      return normalizeNumeric(kept as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
+    }
+    const { data: updated, error: updateError } = await supabase
+      .from('injury_notes')
+      .update(fields)
+      .eq('id', dayRow.id)
+      .select(INJURY_LOG_COLUMNS)
+      .single()
+    if (updateError) throw new Error(`addInjuryLog (overwrite): ${updateError.message}`)
+    return normalizeNumeric(updated as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
   }
 
   const { data, error } = await supabase
     .from('injury_notes')
-    .insert(row)
+    .insert(fields)
     .select(INJURY_LOG_COLUMNS)
     .single()
-
   if (error) throw new Error(`addInjuryLog: ${error.message}`)
-
   return normalizeNumeric(data as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
 }
 
@@ -608,6 +703,81 @@ export async function getInjuryPlan(injuryId: string): Promise<RecoveryPlanItem[
   return (data ?? []).map((row) =>
     normalizeNumeric(row as RecoveryPlanItem, RECOVERY_PLAN_ITEM_NUMERIC_KEYS)
   )
+}
+
+export async function updateInjuryPlanStart(
+  injuryId: string,
+  planStartedAt: string
+): Promise<Injury> {
+  const supabase = getClient()
+
+  assertUuid(injuryId, 'injury_id')
+  assertDate(planStartedAt, 'planStartedAt')
+
+  const { data, error } = await supabase
+    .from('injuries')
+    .update({ plan_started_at: planStartedAt })
+    .eq('id', injuryId)
+    .select(INJURY_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateInjuryPlanStart: ${error.message}`)
+  return data as Injury
+}
+
+export async function updateInjuryStartedAt(
+  injuryId: string,
+  startedAt: string
+): Promise<Injury> {
+  const supabase = getClient()
+
+  assertUuid(injuryId, 'injury_id')
+  assertDate(startedAt, 'startedAt')
+
+  const { data, error } = await supabase
+    .from('injuries')
+    .update({ started_at: startedAt, updated_at: new Date().toISOString() })
+    .eq('id', injuryId)
+    .select(INJURY_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateInjuryStartedAt: ${error.message}`)
+  return data as Injury
+}
+
+export async function deleteInjuryLog(id: number): Promise<void> {
+  if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
+    throw new Error('invalid injury log id')
+  }
+  const { error } = await getClient().from('injury_notes').delete().eq('id', id)
+  if (error) throw new Error(`deleteInjuryLog: ${error.message}`)
+}
+
+export async function updateInjuryStatus(
+  injuryId: string,
+  status: Injury['status']
+): Promise<Injury> {
+  assertUuid(injuryId, 'injury_id')
+  if (status !== 'active' && status !== 'recovering' && status !== 'resolved') {
+    throw new Error('invalid status')
+  }
+
+  // Resolving stamps resolved_at (a date); reopening clears it.
+  const row: Record<string, unknown> = {
+    status,
+    resolved_at: status === 'resolved' ? new Date().toISOString().slice(0, 10) : null,
+    updated_at: new Date().toISOString()
+  }
+
+  const { data, error } = await getClient()
+    .from('injuries')
+    .update(row)
+    .eq('id', injuryId)
+    .select(INJURY_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateInjuryStatus: ${error.message}`)
+  return data as Injury
 }
 
 export async function getInjuryPlanChecks(
@@ -677,16 +847,20 @@ export async function setPlanItemCheck(
 const EXERCISE_COLUMNS =
   'id, name, aliases, body_part, primary_muscles, secondary_muscles, equipment, mechanics, movement_pattern, source, created_at'
 
-const GYM_TEMPLATE_COLUMNS = 'id, name, notes, archived, created_at, updated_at'
+const GYM_TEMPLATE_COLUMNS =
+  'id, name, notes, archived, default_rest_s, family_id, version, is_current, created_at, updated_at'
+
+const GYM_TEMPLATE_RUN_COLUMNS = 'id, template_id, started_at, ended_at, source'
 
 const GYM_TEMPLATE_ITEM_COLUMNS =
-  'id, template_id, exercise_id, position, target_sets, target_reps, target_weight_kg, note'
+  'id, template_id, exercise_id, position, target_sets, target_reps, target_weight_kg, rest_after_s, note'
 
 const GYM_TEMPLATE_ITEM_NUMERIC_KEYS: (keyof GymTemplateItem)[] = [
   'position',
   'target_sets',
   'target_reps',
-  'target_weight_kg'
+  'target_weight_kg',
+  'rest_after_s'
 ]
 
 const GYM_SESSION_COLUMNS =
@@ -736,6 +910,18 @@ function assertGymSets(sets: unknown): asserts sets is NewGymSet[] {
   }
 }
 
+function assertTemplateIds(templateIds: unknown): asserts templateIds is string[] {
+  if (!Array.isArray(templateIds) || templateIds.length > 20) {
+    throw new Error('invalid template_ids')
+  }
+  const seen = new Set<string>()
+  for (const templateId of templateIds) {
+    assertUuid(templateId, 'template_ids[]')
+    if (seen.has(templateId)) throw new Error('template_ids must not contain duplicates')
+    seen.add(templateId)
+  }
+}
+
 function assertTemplateItems(items: unknown): asserts items is NewGymTemplateItem[] {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
     throw new Error('a template needs 1–50 exercises')
@@ -745,6 +931,7 @@ function assertTemplateItems(items: unknown): asserts items is NewGymTemplateIte
     assertOptionalInt(item.target_sets, 'items[].target_sets', 1, 50)
     assertOptionalInt(item.target_reps, 'items[].target_reps', 1, 500)
     assertOptionalNumber(item.target_weight_kg, 'items[].target_weight_kg', 0, 1500)
+    assertOptionalInt(item.rest_after_s, 'items[].rest_after_s', 0, 3600)
     assertOptionalText(item.note, 'items[].note', 500)
   }
 }
@@ -811,6 +998,26 @@ export async function addExercise(name: string, bodyPart: GymBodyPart | null): P
   return existing as Exercise
 }
 
+// Runs for a set of template versions, grouped by template_id, most recent first.
+async function templateRunsByTemplate(
+  templateIds: string[]
+): Promise<Map<string, GymTemplateRun[]>> {
+  const byTemplate = new Map<string, GymTemplateRun[]>()
+  if (templateIds.length === 0) return byTemplate
+  const { data, error } = await getClient()
+    .from('gym_template_runs')
+    .select(GYM_TEMPLATE_RUN_COLUMNS)
+    .in('template_id', templateIds)
+    .order('started_at', { ascending: false })
+  if (error) throw new Error(`templateRunsByTemplate: ${error.message}`)
+  for (const row of (data ?? []) as GymTemplateRun[]) {
+    const list = byTemplate.get(row.template_id)
+    if (list) list.push(row)
+    else byTemplate.set(row.template_id, [row])
+  }
+  return byTemplate
+}
+
 async function getGymTemplateById(id: string): Promise<GymTemplate> {
   const supabase = getClient()
   const { data: template, error } = await supabase
@@ -827,32 +1034,39 @@ async function getGymTemplateById(id: string): Promise<GymTemplate> {
     .order('position', { ascending: true })
   if (itemsError) throw new Error(`getGymTemplateById (items): ${itemsError.message}`)
 
+  const runs = (await templateRunsByTemplate([id])).get(id) ?? []
   const names = await exerciseNamesById((items ?? []).map((item) => item.exercise_id))
   return {
-    ...(template as Omit<GymTemplate, 'items'>),
+    ...(template as Omit<GymTemplate, 'items' | 'runs'>),
     items: (items ?? []).map((row) => ({
       ...normalizeNumeric(row as GymTemplateItem, GYM_TEMPLATE_ITEM_NUMERIC_KEYS),
       exercise_name: names.get(row.exercise_id) ?? '?'
-    }))
+    })),
+    runs
   }
 }
 
 export async function getGymTemplates(): Promise<GymTemplate[]> {
   const supabase = getClient()
+  // Only the current version of each family shows in the tab; older versions are
+  // reached through the version dropdown (getGymTemplateVersions).
   const { data: templates, error } = await supabase
     .from('gym_templates')
     .select(GYM_TEMPLATE_COLUMNS)
+    .eq('is_current', true)
     .order('created_at', { ascending: true })
   if (error) throw new Error(`getGymTemplates: ${error.message}`)
   if (!templates || templates.length === 0) return []
 
+  const templateIds = templates.map((t) => t.id)
   const { data: items, error: itemsError } = await supabase
     .from('gym_template_exercises')
     .select(GYM_TEMPLATE_ITEM_COLUMNS)
-    .in('template_id', templates.map((t) => t.id))
+    .in('template_id', templateIds)
     .order('position', { ascending: true })
   if (itemsError) throw new Error(`getGymTemplates (items): ${itemsError.message}`)
 
+  const runsByTemplate = await templateRunsByTemplate(templateIds)
   const names = await exerciseNamesById((items ?? []).map((item) => item.exercise_id))
   const itemsByTemplate = new Map<string, GymTemplateItem[]>()
   for (const row of items ?? []) {
@@ -866,8 +1080,49 @@ export async function getGymTemplates(): Promise<GymTemplate[]> {
   }
 
   return templates.map((t) => ({
-    ...(t as Omit<GymTemplate, 'items'>),
-    items: itemsByTemplate.get(t.id) ?? []
+    ...(t as Omit<GymTemplate, 'items' | 'runs'>),
+    items: itemsByTemplate.get(t.id) ?? [],
+    runs: runsByTemplate.get(t.id) ?? []
+  }))
+}
+
+// Every version of a template family, ascending by version — powers the dropdown.
+export async function getGymTemplateVersions(familyId: string): Promise<GymTemplate[]> {
+  assertUuid(familyId, 'family_id')
+  const supabase = getClient()
+  const { data: templates, error } = await supabase
+    .from('gym_templates')
+    .select(GYM_TEMPLATE_COLUMNS)
+    .eq('family_id', familyId)
+    .order('version', { ascending: true })
+  if (error) throw new Error(`getGymTemplateVersions: ${error.message}`)
+  if (!templates || templates.length === 0) return []
+
+  const templateIds = templates.map((t) => t.id)
+  const { data: items, error: itemsError } = await supabase
+    .from('gym_template_exercises')
+    .select(GYM_TEMPLATE_ITEM_COLUMNS)
+    .in('template_id', templateIds)
+    .order('position', { ascending: true })
+  if (itemsError) throw new Error(`getGymTemplateVersions (items): ${itemsError.message}`)
+
+  const runsByTemplate = await templateRunsByTemplate(templateIds)
+  const names = await exerciseNamesById((items ?? []).map((item) => item.exercise_id))
+  const itemsByTemplate = new Map<string, GymTemplateItem[]>()
+  for (const row of items ?? []) {
+    const item = {
+      ...normalizeNumeric(row as GymTemplateItem, GYM_TEMPLATE_ITEM_NUMERIC_KEYS),
+      exercise_name: names.get(row.exercise_id) ?? '?'
+    }
+    const list = itemsByTemplate.get(item.template_id)
+    if (list) list.push(item)
+    else itemsByTemplate.set(item.template_id, [item])
+  }
+
+  return templates.map((t) => ({
+    ...(t as Omit<GymTemplate, 'items' | 'runs'>),
+    items: itemsByTemplate.get(t.id) ?? [],
+    runs: runsByTemplate.get(t.id) ?? []
   }))
 }
 
@@ -879,13 +1134,17 @@ async function insertTemplateItems(templateId: string, items: NewGymTemplateItem
     target_sets: item.target_sets,
     target_reps: item.target_reps,
     target_weight_kg: item.target_weight_kg,
+    rest_after_s: item.rest_after_s ?? null,
     note: item.note ?? null
   }))
   const { error } = await getClient().from('gym_template_exercises').insert(rows)
   if (error) throw new Error(`insertTemplateItems: ${error.message}`)
 }
 
-export async function addGymTemplate(template: NewGymTemplate): Promise<GymTemplate> {
+export async function addGymTemplate(
+  template: NewGymTemplate,
+  mutationId: string
+): Promise<GymTemplate> {
   if (
     typeof template.name !== 'string' ||
     template.name.trim().length === 0 ||
@@ -894,17 +1153,34 @@ export async function addGymTemplate(template: NewGymTemplate): Promise<GymTempl
     throw new Error('invalid name')
   }
   assertOptionalText(template.notes, 'notes', 2000)
+  assertOptionalInt(template.default_rest_s, 'default_rest_s', 0, 3600)
   assertTemplateItems(template.items)
+  assertUuid(mutationId, 'mutationId')
 
   const supabase = getClient()
   const { data, error } = await supabase
     .from('gym_templates')
-    .insert({ name: template.name.trim(), notes: template.notes })
+    .upsert(
+      {
+        id: mutationId,
+        name: template.name.trim(),
+        notes: template.notes,
+        archived: false,
+        default_rest_s: template.default_rest_s ?? null,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    )
     .select(GYM_TEMPLATE_COLUMNS)
     .single()
   if (error) throw new Error(`addGymTemplate: ${error.message}`)
 
   try {
+    const { error: clearError } = await supabase
+      .from('gym_template_exercises')
+      .delete()
+      .eq('template_id', data.id)
+    if (clearError) throw new Error(`addGymTemplate (clear items): ${clearError.message}`)
     await insertTemplateItems(data.id, template.items)
   } catch (err) {
     // No transactions over PostgREST — best-effort rollback of the header row.
@@ -932,6 +1208,10 @@ export async function updateGymTemplate(id: string, patch: GymTemplatePatch): Pr
     if (typeof patch.archived !== 'boolean') throw new Error('invalid archived')
     row.archived = patch.archived
   }
+  if (patch.default_rest_s !== undefined) {
+    assertOptionalInt(patch.default_rest_s, 'default_rest_s', 0, 3600)
+    row.default_rest_s = patch.default_rest_s
+  }
   if (patch.items !== undefined) assertTemplateItems(patch.items)
 
   const supabase = getClient()
@@ -947,6 +1227,192 @@ export async function updateGymTemplate(id: string, patch: GymTemplatePatch): Pr
     await insertTemplateItems(id, patch.items)
   }
   return getGymTemplateById(id)
+}
+
+export async function deleteGymTemplate(id: string): Promise<void> {
+  assertUuid(id, 'template_id')
+  const supabase = getClient()
+  // gym_session_templates links this template to past logs with ON DELETE
+  // RESTRICT (the schema favours archiving to preserve history). An explicit
+  // delete therefore has to drop those join rows first; gym_template_exercises
+  // (cascade) and gym_sessions.template_id (set null) clean themselves up.
+  const { error: linkError } = await supabase
+    .from('gym_session_templates')
+    .delete()
+    .eq('template_id', id)
+  if (linkError) throw new Error(`deleteGymTemplate (links): ${linkError.message}`)
+
+  const { error } = await supabase.from('gym_templates').delete().eq('id', id)
+  if (error) throw new Error(`deleteGymTemplate: ${error.message}`)
+}
+
+async function familyTemplateIds(familyId: string): Promise<string[]> {
+  const { data, error } = await getClient()
+    .from('gym_templates')
+    .select('id')
+    .eq('family_id', familyId)
+  if (error) throw new Error(`familyTemplateIds: ${error.message}`)
+  return (data ?? []).map((r) => (r as { id: string }).id)
+}
+
+// Save an edited template as the next version in its family. The previous
+// versions are demoted (is_current=false) and kept as history; any active run
+// carries forward onto the new version so the family stays active.
+export async function createGymTemplateVersion(
+  baseTemplateId: string,
+  template: NewGymTemplate,
+  mutationId: string
+): Promise<GymTemplate> {
+  assertUuid(baseTemplateId, 'baseTemplateId')
+  assertUuid(mutationId, 'mutationId')
+  if (
+    typeof template.name !== 'string' ||
+    template.name.trim().length === 0 ||
+    template.name.trim().length > 120
+  ) {
+    throw new Error('invalid name')
+  }
+  assertOptionalText(template.notes, 'notes', 2000)
+  assertOptionalInt(template.default_rest_s, 'default_rest_s', 0, 3600)
+  assertTemplateItems(template.items)
+
+  const supabase = getClient()
+
+  const { data: base, error: baseError } = await supabase
+    .from('gym_templates')
+    .select('family_id')
+    .eq('id', baseTemplateId)
+    .single()
+  if (baseError) throw new Error(`createGymTemplateVersion (base): ${baseError.message}`)
+  const familyId = (base as { family_id: string }).family_id
+
+  const { data: latest, error: latestError } = await supabase
+    .from('gym_templates')
+    .select('version')
+    .eq('family_id', familyId)
+    .order('version', { ascending: false })
+    .limit(1)
+  if (latestError) throw new Error(`createGymTemplateVersion (version): ${latestError.message}`)
+  const nextVersion = ((latest?.[0] as { version: number } | undefined)?.version ?? 0) + 1
+
+  const { data, error } = await supabase
+    .from('gym_templates')
+    .upsert(
+      {
+        id: mutationId,
+        name: template.name.trim(),
+        notes: template.notes,
+        archived: false,
+        default_rest_s: template.default_rest_s ?? null,
+        family_id: familyId,
+        version: nextVersion,
+        is_current: true,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    )
+    .select(GYM_TEMPLATE_COLUMNS)
+    .single()
+  if (error) throw new Error(`createGymTemplateVersion: ${error.message}`)
+
+  try {
+    const { error: clearError } = await supabase
+      .from('gym_template_exercises')
+      .delete()
+      .eq('template_id', data.id)
+    if (clearError) throw new Error(`createGymTemplateVersion (clear items): ${clearError.message}`)
+    await insertTemplateItems(data.id, template.items)
+  } catch (err) {
+    // No transactions over PostgREST — best-effort rollback of the header row.
+    await supabase.from('gym_templates').delete().eq('id', data.id)
+    throw err
+  }
+
+  // Demote the previous versions and carry any active run forward.
+  const { error: demoteError } = await supabase
+    .from('gym_templates')
+    .update({ is_current: false })
+    .eq('family_id', familyId)
+    .neq('id', data.id)
+  if (demoteError) throw new Error(`createGymTemplateVersion (demote): ${demoteError.message}`)
+
+  const siblingIds = (await familyTemplateIds(familyId)).filter((fid) => fid !== data.id)
+  if (siblingIds.length > 0) {
+    const { error: carryError } = await supabase
+      .from('gym_template_runs')
+      .update({ template_id: data.id })
+      .in('template_id', siblingIds)
+      .is('ended_at', null)
+    if (carryError) throw new Error(`createGymTemplateVersion (carry run): ${carryError.message}`)
+  }
+
+  return getGymTemplateById(data.id)
+}
+
+// Open a run (activate / resurrect). Idempotent when already active on this
+// version; otherwise closes any other open run in the family first (one active
+// run per family) and opens a fresh one.
+export async function startGymTemplateRun(templateId: string): Promise<GymTemplateRun> {
+  assertUuid(templateId, 'template_id')
+  const supabase = getClient()
+
+  const { data: tpl, error: tplError } = await supabase
+    .from('gym_templates')
+    .select('family_id')
+    .eq('id', templateId)
+    .single()
+  if (tplError) throw new Error(`startGymTemplateRun (template): ${tplError.message}`)
+
+  const { data: openOnThis, error: openError } = await supabase
+    .from('gym_template_runs')
+    .select(GYM_TEMPLATE_RUN_COLUMNS)
+    .eq('template_id', templateId)
+    .is('ended_at', null)
+    .maybeSingle()
+  if (openError) throw new Error(`startGymTemplateRun (open): ${openError.message}`)
+  if (openOnThis) return openOnThis as GymTemplateRun
+
+  const today = new Date().toISOString().slice(0, 10)
+  const familyIds = await familyTemplateIds((tpl as { family_id: string }).family_id)
+  const { error: closeError } = await supabase
+    .from('gym_template_runs')
+    .update({ ended_at: today })
+    .in('template_id', familyIds)
+    .is('ended_at', null)
+  if (closeError) throw new Error(`startGymTemplateRun (close siblings): ${closeError.message}`)
+
+  const { data, error } = await supabase
+    .from('gym_template_runs')
+    .insert({ template_id: templateId, started_at: today, source: 'user' })
+    .select(GYM_TEMPLATE_RUN_COLUMNS)
+    .single()
+  if (error) throw new Error(`startGymTemplateRun: ${error.message}`)
+  return data as GymTemplateRun
+}
+
+// Close the family's open run ("mark complete" / coach archive). Null if none open.
+export async function completeGymTemplateRun(
+  templateId: string
+): Promise<GymTemplateRun | null> {
+  assertUuid(templateId, 'template_id')
+  const supabase = getClient()
+
+  const { data: tpl, error: tplError } = await supabase
+    .from('gym_templates')
+    .select('family_id')
+    .eq('id', templateId)
+    .single()
+  if (tplError) throw new Error(`completeGymTemplateRun (template): ${tplError.message}`)
+
+  const familyIds = await familyTemplateIds((tpl as { family_id: string }).family_id)
+  const { data, error } = await supabase
+    .from('gym_template_runs')
+    .update({ ended_at: new Date().toISOString().slice(0, 10) })
+    .in('template_id', familyIds)
+    .is('ended_at', null)
+    .select(GYM_TEMPLATE_RUN_COLUMNS)
+  if (error) throw new Error(`completeGymTemplateRun: ${error.message}`)
+  return data && data.length > 0 ? (data[0] as GymTemplateRun) : null
 }
 
 function toGymSet(row: Record<string, unknown>, names: Map<string, string>): GymSet {
@@ -972,9 +1438,13 @@ async function getGymSessionById(id: string): Promise<GymSession> {
     .order('position', { ascending: true })
   if (setsError) throw new Error(`getGymSessionById (sets): ${setsError.message}`)
 
-  const names = await exerciseNamesById((sets ?? []).map((s) => s.exercise_id))
+  const [names, templateIdsBySession] = await Promise.all([
+    exerciseNamesById((sets ?? []).map((s) => s.exercise_id)),
+    getGymSessionTemplateIds([id])
+  ])
   return {
     ...(session as Omit<GymSession, 'sets'>),
+    template_ids: templateIdsBySession.get(id) ?? (session.template_id ? [session.template_id] : []),
     sets: (sets ?? []).map((row) => toGymSet(row, names))
   }
 }
@@ -997,7 +1467,10 @@ export async function getGymSessions(fromIso: string, toIso: string): Promise<Gy
     .order('position', { ascending: true })
   if (setsError) throw new Error(`getGymSessions (sets): ${setsError.message}`)
 
-  const names = await exerciseNamesById((sets ?? []).map((s) => s.exercise_id))
+  const [names, templateIdsBySession] = await Promise.all([
+    exerciseNamesById((sets ?? []).map((s) => s.exercise_id)),
+    getGymSessionTemplateIds((sessions ?? []).map((s) => s.id))
+  ])
   const setsBySession = new Map<string, GymSet[]>()
   for (const row of sets ?? []) {
     const set = toGymSet(row, names)
@@ -1008,8 +1481,29 @@ export async function getGymSessions(fromIso: string, toIso: string): Promise<Gy
 
   return sessions.map((s) => ({
     ...(s as Omit<GymSession, 'sets'>),
+    template_ids: templateIdsBySession.get(s.id) ?? (s.template_id ? [s.template_id] : []),
     sets: setsBySession.get(s.id) ?? []
   }))
+}
+
+/** All template blocks applied to the requested sessions, in editor order. */
+async function getGymSessionTemplateIds(sessionIds: string[]): Promise<Map<string, string[]>> {
+  const bySession = new Map<string, string[]>()
+  if (sessionIds.length === 0) return bySession
+
+  const { data, error } = await getClient()
+    .from('gym_session_templates')
+    .select('session_id, template_id, position')
+    .in('session_id', sessionIds)
+    .order('position', { ascending: true })
+  if (error) throw new Error(`getGymSessionTemplateIds: ${error.message}`)
+
+  for (const row of data ?? []) {
+    const ids = bySession.get(row.session_id)
+    if (ids) ids.push(row.template_id)
+    else bySession.set(row.session_id, [row.template_id])
+  }
+  return bySession
 }
 
 /** "2026-07-12" for an ISO instant in the user's timezone (falls back to the instant's UTC date). */
@@ -1084,21 +1578,43 @@ async function insertGymSets(sessionId: string, sets: NewGymSet[]): Promise<void
   if (error) throw new Error(`insertGymSets: ${error.message}`)
 }
 
-export async function addGymSession(session: NewGymSession): Promise<GymSession> {
+async function replaceGymSessionTemplates(sessionId: string, templateIds: string[]): Promise<void> {
+  const supabase = getClient()
+  const { error: clearError } = await supabase
+    .from('gym_session_templates')
+    .delete()
+    .eq('session_id', sessionId)
+  if (clearError) throw new Error(`replaceGymSessionTemplates (clear): ${clearError.message}`)
+  if (templateIds.length === 0) return
+
+  const { error } = await supabase.from('gym_session_templates').insert(
+    templateIds.map((template_id, position) => ({ session_id: sessionId, template_id, position }))
+  )
+  if (error) throw new Error(`replaceGymSessionTemplates: ${error.message}`)
+}
+
+export async function addGymSession(
+  session: NewGymSession,
+  mutationId: string
+): Promise<GymSession> {
   assertOptionalText(session.title, 'title', 120)
   assertOptionalText(session.notes, 'notes', 2000)
   if (session.template_id !== undefined && session.template_id !== null) {
     assertUuid(session.template_id, 'template_id')
   }
+  if (session.template_ids !== undefined) assertTemplateIds(session.template_ids)
   if (session.body_parts !== undefined && session.body_parts !== null) {
     assertBodyParts(session.body_parts)
   }
   assertGymSets(session.sets)
+  assertUuid(mutationId, 'mutationId')
 
+  const templateIds = session.template_ids ?? (session.template_id ? [session.template_id] : [])
   const supabase = getClient()
   const row: Record<string, unknown> = {
+    id: mutationId,
     workout_id: session.workout_id ?? null,
-    template_id: session.template_id ?? null,
+    template_id: templateIds[0] ?? null,
     title: session.title ?? null,
     notes: session.notes ?? null,
     body_parts: session.body_parts ?? null,
@@ -1122,7 +1638,7 @@ export async function addGymSession(session: NewGymSession): Promise<GymSession>
 
   const { data, error } = await supabase
     .from('gym_sessions')
-    .insert(row)
+    .upsert(row, { onConflict: 'id' })
     .select(GYM_SESSION_COLUMNS)
     .single()
   if (error) {
@@ -1131,6 +1647,12 @@ export async function addGymSession(session: NewGymSession): Promise<GymSession>
   }
 
   try {
+    await replaceGymSessionTemplates(data.id, templateIds)
+    const { error: clearSetsError } = await supabase
+      .from('gym_sets')
+      .delete()
+      .eq('session_id', data.id)
+    if (clearSetsError) throw new Error(`addGymSession (clear sets): ${clearSetsError.message}`)
     await insertGymSets(data.id, session.sets)
   } catch (err) {
     // No transactions over PostgREST — best-effort rollback of the header row.
@@ -1153,8 +1675,14 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
     assertOptionalText(patch.notes, 'notes', 2000)
     row.notes = patch.notes
   }
-  if (patch.template_id !== undefined) {
+  let replacementTemplateIds: string[] | undefined
+  if (patch.template_ids !== undefined) {
+    assertTemplateIds(patch.template_ids)
+    replacementTemplateIds = patch.template_ids
+    row.template_id = patch.template_ids[0] ?? null
+  } else if (patch.template_id !== undefined) {
     if (patch.template_id !== null) assertUuid(patch.template_id, 'template_id')
+    replacementTemplateIds = patch.template_id ? [patch.template_id] : []
     row.template_id = patch.template_id
   }
   if (patch.body_parts !== undefined) {
@@ -1166,6 +1694,10 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
   const supabase = getClient()
   const { error } = await supabase.from('gym_sessions').update(row).eq('id', id)
   if (error) throw new Error(`updateGymSession: ${error.message}`)
+
+  if (replacementTemplateIds !== undefined) {
+    await replaceGymSessionTemplates(id, replacementTemplateIds)
+  }
 
   if (patch.sets !== undefined) {
     const { error: deleteError } = await supabase.from('gym_sets').delete().eq('session_id', id)
@@ -1184,8 +1716,90 @@ export async function deleteGymSession(id: string): Promise<void> {
   if (error) throw new Error(`deleteGymSession: ${error.message}`)
 }
 
+// ---- Protein tracker (manual daily log, additive per entry) ----
+// One row per date; addProtein increments it (stacking), setProtein
+// overwrites it (corrections). No source column — this is app-only, no
+// chat-agent writer exists (or is planned) for this table.
+
+const PROTEIN_LOG_COLUMNS = 'log_date, grams'
+
+const PROTEIN_LOG_NUMERIC_KEYS: (keyof ProteinDay)[] = ['grams']
+
+function assertGrams(grams: unknown): asserts grams is number {
+  if (typeof grams !== 'number' || !Number.isFinite(grams) || grams < 0 || grams > 2000) {
+    throw new Error('invalid grams')
+  }
+}
+
+export async function getProteinLog(fromDate: string, toDate: string): Promise<ProteinDay[]> {
+  assertDate(fromDate, 'fromDate')
+  assertDate(toDate, 'toDate')
+
+  const supabase = getClient()
+  const { data, error } = await supabase
+    .from('protein_log')
+    .select(PROTEIN_LOG_COLUMNS)
+    .gte('log_date', fromDate)
+    .lte('log_date', toDate)
+    .order('log_date', { ascending: true })
+
+  if (error) throw new Error(`getProteinLog: ${error.message}`)
+
+  return (data ?? []).map((row) => normalizeNumeric(row as ProteinDay, PROTEIN_LOG_NUMERIC_KEYS))
+}
+
+/**
+ * Increments the day's existing total (stacking: "+40g at dinner" adds onto
+ * today's row). supabase-js's upsert() can't express `grams = grams +
+ * excluded.grams` (it only replaces or ignores on conflict), so this reads
+ * the current total then writes the sum — same "no transactions over
+ * PostgREST" tradeoff already accepted elsewhere in this file. Fine for a
+ * single-user desktop app issuing one write at a time.
+ */
+export async function addProtein(
+  date: string,
+  grams: number,
+  mutationId: string
+): Promise<ProteinDay> {
+  assertDate(date, 'date')
+  assertGrams(grams)
+  assertUuid(mutationId, 'mutationId')
+
+  const supabase = getClient()
+  const { data, error } = await supabase.rpc('apply_protein_delta', {
+    p_mutation_id: mutationId,
+    p_log_date: date,
+    p_grams: grams
+  })
+
+  if (error) throw new Error(`addProtein: ${error.message}`)
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) throw new Error('addProtein: no row returned')
+  return normalizeNumeric(row as ProteinDay, PROTEIN_LOG_NUMERIC_KEYS)
+}
+
+/** Overwrites the day's total outright — for corrections, not stacking. */
+export async function setProtein(date: string, grams: number): Promise<ProteinDay> {
+  assertDate(date, 'date')
+  assertGrams(grams)
+
+  const supabase = getClient()
+  const { data, error } = await supabase
+    .from('protein_log')
+    .upsert(
+      { log_date: date, grams, updated_at: new Date().toISOString() },
+      { onConflict: 'log_date' }
+    )
+    .select(PROTEIN_LOG_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`setProtein: ${error.message}`)
+
+  return normalizeNumeric(data as ProteinDay, PROTEIN_LOG_NUMERIC_KEYS)
+}
+
 const GOAL_COLUMNS =
-  'id, title, description, status, started_at, duration_days, created_by, metric_name, metric_description, metric_sql, metric_direction, metric_unit, metric_baseline, metric_target, created_at, updated_at'
+  'id, title, description, status, started_at, status_changed_at, duration_days, created_by, metric_name, metric_description, metric_sql, metric_direction, metric_unit, metric_baseline, metric_target, created_at, updated_at'
 
 const GOAL_NUMERIC_KEYS: (keyof Goal)[] = ['duration_days', 'metric_baseline', 'metric_target']
 
@@ -1260,6 +1874,12 @@ export async function addGoal(goal: NewGoal): Promise<Goal> {
 
   if (error) throw new Error(`addGoal: ${error.message}`)
 
+  // Open the status timeline (best-effort — the card doesn't depend on it; it's
+  // context for the chat agent). goals.status_changed_at is DB-defaulted to now.
+  await supabase
+    .from('goal_status_events')
+    .insert({ goal_id: (data as Goal).id, status: 'active', source: 'user' })
+
   return normalizeNumeric(data as Goal, GOAL_NUMERIC_KEYS)
 }
 
@@ -1281,11 +1901,24 @@ export async function updateGoal(id: string, patch: GoalPatch): Promise<Goal> {
     assertGoalDuration(patch.duration_days)
     row.duration_days = patch.duration_days
   }
+  let statusChanged = false
   if (patch.status !== undefined) {
     if (!(GOAL_STATUSES as readonly string[]).includes(patch.status)) {
       throw new Error('invalid status')
     }
     row.status = patch.status
+    // Only stamp the timeline when the status genuinely transitions, so
+    // "active for X since …" reflects the last real change, not every edit.
+    const { data: current, error: readError } = await supabase
+      .from('goals')
+      .select('status')
+      .eq('id', id)
+      .single()
+    if (readError) throw new Error(`updateGoal (status read): ${readError.message}`)
+    if ((current as { status: string }).status !== patch.status) {
+      statusChanged = true
+      row.status_changed_at = new Date().toISOString()
+    }
   }
 
   const { data, error } = await supabase
@@ -1296,6 +1929,12 @@ export async function updateGoal(id: string, patch: GoalPatch): Promise<Goal> {
     .single()
 
   if (error) throw new Error(`updateGoal: ${error.message}`)
+
+  if (statusChanged) {
+    await supabase
+      .from('goal_status_events')
+      .insert({ goal_id: id, status: patch.status, source: 'user' })
+  }
 
   return normalizeNumeric(data as Goal, GOAL_NUMERIC_KEYS)
 }

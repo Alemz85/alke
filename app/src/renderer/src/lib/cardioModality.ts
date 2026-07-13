@@ -9,7 +9,13 @@
 // (open_water_swim, mixed_cardio biking, hiking...) fall into the right family
 // without a code change.
 
-export type CardioModalityKey = 'swim' | 'cycling' | 'rowing' | 'elliptical' | 'walking'
+export type CardioModalityKey =
+  | 'swim'
+  | 'running'
+  | 'cycling'
+  | 'rowing'
+  | 'elliptical'
+  | 'walking'
 
 export interface CardioModality {
   key: CardioModalityKey
@@ -22,6 +28,7 @@ export interface CardioModality {
 // Ordered — this is also the switcher's chip order after Summary.
 export const CARDIO_MODALITIES: readonly CardioModality[] = [
   { key: 'swim', label: 'Swim', match: ['swim'] },
+  { key: 'running', label: 'Running', match: ['run'] },
   { key: 'cycling', label: 'Cycling', match: ['cycling', 'biking'] },
   { key: 'rowing', label: 'Rowing', match: ['rowing'] },
   { key: 'elliptical', label: 'Elliptical', match: ['elliptical'] },

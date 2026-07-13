@@ -35,6 +35,12 @@ describe('cardioModalityOf', () => {
     expect(cardioModalityOf('hiking')).toBe('walking')
   })
 
+  it('maps running variants to running', () => {
+    expect(cardioModalityOf('running')).toBe('running')
+    expect(cardioModalityOf('indoor_run')).toBe('running')
+    expect(cardioModalityOf('OUTDOOR_RUNNING')).toBe('running')
+  })
+
   it('returns null for strength / core / non-cardio types', () => {
     expect(cardioModalityOf('functional_strength_training')).toBeNull()
     expect(cardioModalityOf('core_training')).toBeNull()

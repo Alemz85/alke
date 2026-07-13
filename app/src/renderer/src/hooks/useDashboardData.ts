@@ -6,7 +6,8 @@ import type { ComputedDaily, DailyMetric, UserConfig, Workout } from '@shared/ty
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-function isoDateNDaysAgo(n: number): string {
+/** Exported so views can build date-filtered slices of a widened query window (e.g. the dashboard's 90d CTL/ATL card carved out of a 365d pull). */
+export function isoDateNDaysAgo(n: number): string {
   const d = new Date(Date.now() - n * DAY_MS)
   return d.toISOString().slice(0, 10)
 }
@@ -16,7 +17,8 @@ function isoDateToday(): string {
 }
 
 /**
- * Last 3 workouts — fetch a generous 90d window and slice, since there's no
+ * Recent workouts (dashboard's last-4 box) — fetch a generous 90d window and
+ * slice, since there's no
  * "limit" API. The window bounds are snapped to whole calendar days so the
  * query key is stable within a day; using millisecond-precision ISO timestamps
  * here made the key change on every render, spawning an endless refetch loop
@@ -39,7 +41,12 @@ export function useWorkoutsInRange(fromIso: string, toIso: string) {
   })
 }
 
-/** Daily metrics (RHR, HRV, sleep, steps) for the last N days. */
+/**
+ * Daily metrics (RHR, HRV, sleep, steps) for the last N days. Callers wanting
+ * a richer history graph (e.g. the dashboard's metric-detail popups) may pass
+ * a wide window like 365 — the existing calcs filter to their own narrower
+ * range by date, so widening this pull is safe.
+ */
 export function useDailyMetrics(days: number) {
   const fromDate = isoDateNDaysAgo(days)
   const toDate = isoDateToday()
@@ -49,7 +56,10 @@ export function useDailyMetrics(days: number) {
   })
 }
 
-/** Computed daily rows (CTL/ATL/TSB/TRIMP) for the last N days. Empty until the nightly job exists. */
+/**
+ * Computed daily rows (CTL/ATL/TSB/TRIMP) for the last N days. Empty until
+ * the nightly job exists. See `useDailyMetrics` re: widening for history graphs.
+ */
 export function useComputedDaily(days: number) {
   const fromDate = isoDateNDaysAgo(days)
   const toDate = isoDateToday()

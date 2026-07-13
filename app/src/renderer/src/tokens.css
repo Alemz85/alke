@@ -33,12 +33,23 @@
   --color-aerobic-dim: rgba(45, 212, 191, 0.15);
   --color-load: #6366f1;
   --color-load-dim: rgba(99, 102, 241, 0.15);
-  --color-recovery: #a78bfa;
-  --color-recovery-dim: rgba(167, 139, 250, 0.15);
+  --color-recovery: #5b8def;
+  --color-recovery-dim: rgba(91, 141, 239, 0.15);
   --color-sessions: #fb923c;
   --color-sessions-dim: rgba(251, 146, 60, 0.15);
   --color-flag: #ef4444;
   --color-flag-dim: rgba(239, 68, 68, 0.15);
+
+  /* Activity-environment accents — a workout's setting (not its training
+     domain): water = blue, indoor = orange, outdoor = green. Used to colour
+     activity icons + delimiters in the session filters. Base hues live on
+     :root (theme-invariant, like the accents above). */
+  --color-env-water: #38bdf8;
+  --color-env-water-dim: rgba(56, 189, 248, 0.15);
+  --color-env-indoor: #fb923c;
+  --color-env-indoor-dim: rgba(251, 146, 60, 0.15);
+  --color-env-outdoor: #4ade80;
+  --color-env-outdoor-dim: rgba(74, 222, 128, 0.15);
 
   /* Accent-as-TEXT variants — used wherever an accent paints small digits or
      labels (hero eyebrow/delta, metric-card value, badges, deltas). In dark
@@ -75,7 +86,7 @@
 
   /* Insight correlation heatmap poles (sign = direction, not judgement). */
   --color-corr-positive: 45, 212, 191; /* aerobic teal RGB triplet */
-  --color-corr-negative: 167, 139, 250; /* recovery violet RGB triplet */
+  --color-corr-negative: 167, 139, 250; /* violet RGB triplet */
 
   /* Faint chart cursor/hover wash over the plot. */
   --color-chart-cursor: rgba(255, 255, 255, 0.04);
@@ -205,14 +216,14 @@
   /* Semantic accents — same hues; -dim re-derived at 12% on white */
   --color-aerobic-dim: rgba(45, 212, 191, 0.12);
   --color-load-dim: rgba(99, 102, 241, 0.12);
-  --color-recovery-dim: rgba(167, 139, 250, 0.12);
+  --color-recovery-dim: rgba(91, 141, 239, 0.12);
   --color-sessions-dim: rgba(251, 146, 60, 0.12);
   --color-flag-dim: rgba(239, 68, 68, 0.12);
 
   /* Accent-as-text — darkened for ~4.5:1 on white, hue preserved */
   --color-aerobic-text: #0f766e; /* teal-700 */
   --color-load-text: #4f46e5; /* indigo-600 */
-  --color-recovery-text: #7c3aed; /* violet-600 */
+  --color-recovery-text: #2563eb; /* blue-600 */
   --color-sessions-text: #c2410c; /* orange-700 */
   --color-flag-text: #dc2626; /* red-600 */
 

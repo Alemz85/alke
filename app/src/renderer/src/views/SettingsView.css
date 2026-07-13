@@ -105,6 +105,15 @@
   width: 140px;
 }
 
+.settings-input--time {
+  width: 140px;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] .settings-input--time {
+  color-scheme: light;
+}
+
 .settings-input--tz {
   width: 100%;
   max-width: 340px;

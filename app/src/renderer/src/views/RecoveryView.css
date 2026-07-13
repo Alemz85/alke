@@ -4,6 +4,105 @@
   gap: var(--space-sm);
 }
 
+.recovery-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(420px, 1.1fr);
+  gap: var(--space-xl);
+  align-items: stretch;
+  padding: var(--space-xl);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+}
+
+.recovery-hero > .hero-metric {
+  justify-content: center;
+}
+
+.recovery-hero-details {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding-left: var(--space-xl);
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.recovery-hero-window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.recovery-hero-detail-label,
+.recovery-hero-times small,
+.recovery-hero-stages small {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+}
+
+.recovery-hero-times {
+  display: grid;
+  grid-template-columns: max-content minmax(48px, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.recovery-hero-times > span:not(.recovery-hero-time-rule),
+.recovery-hero-stages > span {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.recovery-hero-times strong {
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  line-height: var(--type-heading-lg-line-height);
+}
+
+.recovery-hero-time-rule {
+  height: 1px;
+  background: var(--color-recovery);
+  opacity: 0.65;
+}
+
+.recovery-hero-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.recovery-hero-stages strong {
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .recovery-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .recovery-hero-details {
+    padding-top: var(--space-lg);
+    padding-left: 0;
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+}
+
 .recovery-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -39,22 +138,54 @@
   }
 }
 
-/* Sleep-stage legend row under the sleep chart */
-.recovery-stage-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-lg);
-  padding: 0 var(--space-xs);
+.recovery-sleep-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 var(--space-xs);
+  border-top: 1px solid var(--color-divider-soft);
+  border-bottom: 1px solid var(--color-divider-soft);
 }
 
-.recovery-stage-legend-item {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-secondary);
+.recovery-sleep-summary > span {
   display: flex;
+  flex-direction: column;
   gap: var(--space-xxs);
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md);
+}
+
+.recovery-sleep-summary > span + span {
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.recovery-sleep-summary small {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.recovery-sleep-summary strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .recovery-sleep-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .recovery-sleep-summary > span + span {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
 }
 
 /* Required captions under HRV / VO2max charts */

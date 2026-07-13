@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import type { Exercise, GymSession, GymSet, GymTemplate } from '@shared/types'
 import {
+  buildQuickSetRows,
   exerciseUsage,
+  formatExerciseSetSummary,
+  formatRest,
   formatSetLine,
+  groupExerciseBlocksByBodyPart,
   groupSetsIntoBlocks,
   isStrengthWorkout,
   lastPerformance,
   muscleSetVolume,
   prefillFromTemplate,
+  prefillFromTemplates,
   sessionBodyParts,
   sessionVolumeKg,
-  summarizeSession
+  summarizeSession,
+  uniformPrefillDose
 } from '../gymLog'
 
 let setId = 0
@@ -42,7 +48,8 @@ function session(partial: Partial<GymSession> = {}): GymSession {
     sets: [],
     created_at: null,
     updated_at: null,
-    ...partial
+    ...partial,
+    template_ids: partial.template_ids ?? []
   }
 }
 
@@ -68,6 +75,11 @@ function template(partial: Partial<GymTemplate> = {}): GymTemplate {
     name: 'Legs',
     notes: null,
     archived: false,
+    default_rest_s: null,
+    family_id: 'tmpl-1-family',
+    version: 1,
+    is_current: true,
+    runs: [],
     items: [],
     created_at: null,
     updated_at: null,
@@ -113,6 +125,83 @@ describe('groupSetsIntoBlocks', () => {
 
   it('returns an empty array for no sets', () => {
     expect(groupSetsIntoBlocks([])).toEqual([])
+  })
+})
+
+describe('formatExerciseSetSummary', () => {
+  it('formats uniform working sets as count by reps', () => {
+    expect(
+      formatExerciseSetSummary([
+        set({ exercise_id: 'bench', position: 0, reps: 8 }),
+        set({ exercise_id: 'bench', position: 1, reps: 8 }),
+        set({ exercise_id: 'bench', position: 2, reps: 8 })
+      ])
+    ).toBe('3 × 8')
+  })
+
+  it('shows the rep sequence for mixed working sets', () => {
+    expect(
+      formatExerciseSetSummary([
+        set({ exercise_id: 'bench', position: 0, reps: 8 }),
+        set({ exercise_id: 'bench', position: 1, reps: 8 }),
+        set({ exercise_id: 'bench', position: 2, reps: 6 })
+      ])
+    ).toBe('3 sets · 8 / 8 / 6')
+  })
+
+  it('excludes warm-ups from the compact summary', () => {
+    expect(
+      formatExerciseSetSummary([
+        set({ exercise_id: 'bench', position: 0, reps: 12, is_warmup: true }),
+        set({ exercise_id: 'bench', position: 1, reps: 8 }),
+        set({ exercise_id: 'bench', position: 2, reps: 8 })
+      ])
+    ).toBe('2 × 8')
+  })
+})
+
+describe('groupExerciseBlocksByBodyPart', () => {
+  it('groups exercise blocks in the app body-part order', () => {
+    const blocks = groupSetsIntoBlocks([
+      set({ exercise_id: 'curl', position: 0, reps: 10 }),
+      set({ exercise_id: 'bench', position: 1, reps: 8 }),
+      set({ exercise_id: 'row', position: 2, reps: 8 }),
+      set({ exercise_id: 'triceps', position: 3, reps: 12 })
+    ])
+    const exercises = new Map([
+      ['curl', exercise({ id: 'curl', body_part: 'arms' })],
+      ['bench', exercise({ id: 'bench', body_part: 'chest' })],
+      ['row', exercise({ id: 'row', body_part: 'back' })],
+      ['triceps', exercise({ id: 'triceps', body_part: 'arms' })]
+    ])
+
+    const groups = groupExerciseBlocksByBodyPart(blocks, exercises)
+
+    expect(groups.map((group) => group.bodyPart)).toEqual(['chest', 'back', 'arms'])
+    expect(groups[2].blocks.map((block) => block.exerciseId)).toEqual(['curl', 'triceps'])
+  })
+
+  it('puts exercises without body-part metadata in Other', () => {
+    const blocks = groupSetsIntoBlocks([set({ exercise_id: 'custom', position: 0, reps: 10 })])
+    expect(groupExerciseBlocksByBodyPart(blocks, new Map())).toEqual([
+      { bodyPart: 'other', blocks }
+    ])
+  })
+})
+
+describe('buildQuickSetRows', () => {
+  it('creates the requested working sets and reps', () => {
+    expect(buildQuickSetRows('bench', 'Bench Press', 3, 8)).toEqual([
+      { exerciseId: 'bench', exerciseName: 'Bench Press', reps: 8, weightKg: null, isWarmup: false },
+      { exerciseId: 'bench', exerciseName: 'Bench Press', reps: 8, weightKg: null, isWarmup: false },
+      { exerciseId: 'bench', exerciseName: 'Bench Press', reps: 8, weightKg: null, isWarmup: false }
+    ])
+  })
+
+  it('rejects non-positive or fractional counts', () => {
+    expect(buildQuickSetRows('bench', 'Bench Press', 0, 8)).toBeNull()
+    expect(buildQuickSetRows('bench', 'Bench Press', 3.5, 8)).toBeNull()
+    expect(buildQuickSetRows('bench', 'Bench Press', 3, -1)).toBeNull()
   })
 })
 
@@ -220,7 +309,8 @@ describe('prefillFromTemplate', () => {
           target_sets: 3,
           target_reps: 8,
           target_weight_kg: 60,
-          note: null
+          note: null,
+          rest_after_s: null
         }
       ]
     })
@@ -247,7 +337,8 @@ describe('prefillFromTemplate', () => {
           target_sets: null,
           target_reps: null,
           target_weight_kg: null,
-          note: null
+          note: null,
+          rest_after_s: null
         }
       ]
     })
@@ -268,7 +359,8 @@ describe('prefillFromTemplate', () => {
           target_sets: 1,
           target_reps: 12,
           target_weight_kg: 50,
-          note: null
+          note: null,
+          rest_after_s: null
         },
         {
           id: 'item-1',
@@ -279,7 +371,8 @@ describe('prefillFromTemplate', () => {
           target_sets: 1,
           target_reps: 8,
           target_weight_kg: 60,
-          note: null
+          note: null,
+          rest_after_s: null
         }
       ]
     })
@@ -289,6 +382,68 @@ describe('prefillFromTemplate', () => {
 
   it('returns an empty array for a template with no items', () => {
     expect(prefillFromTemplate(template({ items: [] }))).toEqual([])
+  })
+})
+
+describe('uniformPrefillDose', () => {
+  it('restores a template prescription into the quick Sets and Reps controls', () => {
+    expect(uniformPrefillDose([
+      { exerciseId: 'calf', exerciseName: 'Calf raises', reps: 15, weightKg: null, isWarmup: false },
+      { exerciseId: 'calf', exerciseName: 'Calf raises', reps: 15, weightKg: null, isWarmup: false },
+      { exerciseId: 'calf', exerciseName: 'Calf raises', reps: 15, weightKg: null, isWarmup: false }
+    ])).toEqual({ sets: '3', reps: '15' })
+  })
+
+  it('does not claim one prescription for mixed or blank reps', () => {
+    expect(uniformPrefillDose([
+      { exerciseId: 'x', exerciseName: 'X', reps: 8, weightKg: null, isWarmup: false },
+      { exerciseId: 'x', exerciseName: 'X', reps: 10, weightKg: null, isWarmup: false }
+    ])).toEqual({ sets: '', reps: '' })
+  })
+})
+
+describe('prefillFromTemplates', () => {
+  it('keeps each selected template together in the order it was added', () => {
+    const legs = template({
+      id: 'legs',
+      items: [
+        {
+          id: 'legs-squat',
+          template_id: 'legs',
+          exercise_id: 'squat',
+          exercise_name: 'Squat',
+          position: 0,
+          target_sets: 2,
+          target_reps: 8,
+          target_weight_kg: 60,
+          note: null,
+          rest_after_s: null
+        }
+      ]
+    })
+    const core = template({
+      id: 'core',
+      items: [
+        {
+          id: 'core-plank',
+          template_id: 'core',
+          exercise_id: 'plank',
+          exercise_name: 'Plank',
+          position: 0,
+          target_sets: 1,
+          target_reps: 45,
+          target_weight_kg: null,
+          note: null,
+          rest_after_s: null
+        }
+      ]
+    })
+
+    expect(prefillFromTemplates([legs, core]).map((row) => row.exerciseId)).toEqual([
+      'squat',
+      'squat',
+      'plank'
+    ])
   })
 })
 
@@ -478,5 +633,21 @@ describe('muscleSetVolume', () => {
 
   it('returns empty for no sessions', () => {
     expect(muscleSetVolume([], catalog)).toEqual([])
+  })
+})
+
+// ── formatRest ───────────────────────────────────────────────────────────────
+
+describe('formatRest', () => {
+  it('formats sub-minute durations as seconds', () => {
+    expect(formatRest(45)).toBe('45s')
+    expect(formatRest(0)).toBe('0s')
+    expect(formatRest(59)).toBe('59s')
+  })
+
+  it('formats minute-and-above durations as m:ss', () => {
+    expect(formatRest(60)).toBe('1:00')
+    expect(formatRest(90)).toBe('1:30')
+    expect(formatRest(125)).toBe('2:05')
   })
 })

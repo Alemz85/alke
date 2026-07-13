@@ -41,6 +41,19 @@ python3 gym.py delete <session_id>
 
 Rules: log only what the user actually states — never invent reps/weights; leave fields they didn't give as null (a `body_parts`-only log is valid and better than fabricated sets). Check `gym.py list` first so you don't double-log a session the user already entered in the app; if a synced strength workout exists for that day (`workouts`, type ~ strength/core), pass its id as `workout_id` so the log attaches to it. Exercise names resolve against the `exercises` catalog including aliases; on a no-match the command aborts with suggestions — only add `"create": true` when it's genuinely a new exercise, not a near-miss of an existing one. Sets of exercises linked to recovery-plan items auto-check the day's rehab item (`source='gym'`) — mention it when it happens. `delete` is for correcting your own mis-logs, not for removing the user's app-entered sessions.
 
+## Creating reusable Gym workout templates
+
+When the user asks you to create, save, or add a workout plan/template, the deliverable is database-backed reusable Gym templates, not a prose routine and not logged sessions. Use the complete contract:
+
+```
+python3 gym.py template-list
+node workout_template_contract.mjs template > /tmp/workout-templates.json
+node workout_template_contract.mjs validate /tmp/workout-templates.json
+python3 gym.py template-apply --file /tmp/workout-templates.json
+```
+
+Before authoring, read active goals, injuries/constraints, relevant training history, and the exercise catalog as needed. Every exercise must use an exact catalog name and include sets/reps; leave starting weight null unless the user supplied it or asked for a justified value. Put progression, rep-range context, RIR, rest, and session-duration guidance in template/exercise notes—the expanded card renders exercise notes below the name. The current template dose field is rep-counted, not time-counted: do not encode a timed hold as a misleading `1 rep`; choose a suitable rep-counted alternative unless the user specifically requires the timed exercise. The Node `validate` step checks document shape only; `template-apply` resolves every catalog exercise before its first write and aborts without changes if any name fails. `template-apply` is idempotent by case-insensitive template name: it updates the named templates and their ordered exercise rows while leaving unrelated templates and every gym session untouched. Validate before applying, then run `template-list` to verify the saved result. Do not call `--help` for commands already documented here unless a documented invocation fails.
+
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
 
 ## Agent issue log — self-report problems you hit

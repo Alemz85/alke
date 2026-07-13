@@ -12,6 +12,7 @@ from scipy.stats import pearsonr
 
 MIN_CORR_N = 20
 MIN_DLM_N = 40
+MIN_ADJUSTED_N = 60
 
 DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior"]
 PERFS = ["ef", "decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
@@ -19,6 +20,170 @@ PERFS = ["ef", "decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 WEIGHT_FFILL_LIMIT_DAYS = 3
 WEIGHT_ROLLING_WINDOW_DAYS = 7
 WEIGHT_ROLLING_MIN_PERIODS = 4
+
+DEFAULT_ADJUSTED_SPECS = [
+    {"name": "prior_load_to_sleep", "label": "Prior-day load → sleep duration", "driver": "trimp_prior", "outcome": "sleep_duration", "controls": ["lag:sleep_duration", "ctl"], "direction": "lagged"},
+    {"name": "prior_load_to_rhr", "label": "Prior-day load → RHR deviation", "driver": "trimp_prior", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "ctl"], "direction": "lagged"},
+    {"name": "prior_load_to_hrv", "label": "Prior-day load → HRV deviation", "driver": "trimp_prior", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "ctl"], "direction": "lagged"},
+    {"name": "sleep_to_rhr", "label": "Sleep duration ↔ RHR deviation", "driver": "sleep_duration", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "atl"], "direction": "co-measured"},
+    {"name": "sleep_to_hrv", "label": "Sleep duration ↔ HRV deviation", "driver": "sleep_duration", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
+    {"name": "timing_to_sleep", "label": "Sleep timing drift ↔ duration", "driver": "sleep_midpoint_dev", "outcome": "sleep_duration", "controls": ["lag:sleep_duration"], "direction": "co-measured"},
+    {"name": "timing_to_rhr", "label": "Sleep timing drift ↔ RHR deviation", "driver": "sleep_midpoint_dev", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "atl"], "direction": "co-measured"},
+    {"name": "timing_to_hrv", "label": "Sleep timing drift ↔ HRV deviation", "driver": "sleep_midpoint_dev", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
+    {"name": "rhr_to_load", "label": "RHR deviation → same-day load", "driver": "rhr_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
+    {"name": "hrv_to_load", "label": "HRV deviation → same-day load", "driver": "hrv_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
+    # Performance candidates stay dormant until enough swim EF observations
+    # accumulate. EF is swim-only in compute.py, avoiding cross-modality units.
+    {"name": "sleep_prev_to_ef", "label": "Previous-night sleep → swim efficiency", "driver": "sleep_duration", "driver_lag": 1, "outcome": "ef", "controls": ["ctl", "atl"], "direction": "lagged"},
+    {"name": "timing_to_ef", "label": "Sleep timing drift → swim efficiency", "driver": "sleep_midpoint_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "sleep-before-workout"},
+    {"name": "rhr_to_ef", "label": "RHR deviation → swim efficiency", "driver": "rhr_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "pre-workout-marker"},
+    {"name": "hrv_to_ef", "label": "HRV deviation → swim efficiency", "driver": "hrv_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "pre-workout-marker"},
+    {"name": "prior_load_to_ef", "label": "Prior-day load → swim efficiency", "driver": "trimp_prior", "outcome": "ef", "controls": ["ctl"], "direction": "lagged"},
+]
+
+
+def _zscore(series: pd.Series) -> pd.Series:
+    sd = series.std(ddof=0)
+    return (series - series.mean()) / sd if sd and np.isfinite(sd) else series * np.nan
+
+
+def _drop_collinear_controls(df: pd.DataFrame, controls: list[str], threshold: float = 0.85) -> tuple[list[str], list[str]]:
+    """Deterministically retain the first control in each correlated cluster."""
+    kept: list[str] = []
+    dropped: list[str] = []
+    for control in controls:
+        if any(abs(df[[control, prior]].corr().iloc[0, 1]) >= threshold for prior in kept):
+            dropped.append(control)
+        else:
+            kept.append(control)
+    return kept, dropped
+
+
+def _partial_r(df: pd.DataFrame, controls: list[str]) -> float:
+    if not controls:
+        return float(pearsonr(df["x"], df["y"])[0])
+    matrix = sm.add_constant(df[controls].astype(float), has_constant="add")
+    x_resid = sm.OLS(df["x"], matrix).fit().resid
+    y_resid = sm.OLS(df["y"], matrix).fit().resid
+    return float(pearsonr(x_resid, y_resid)[0])
+
+
+def discover_adjusted_insights(
+    frame: pd.DataFrame,
+    specs: list[dict] | None = None,
+    min_n: int = MIN_ADJUSTED_N,
+) -> dict:
+    """Predeclared, confound-adjusted daily insight finder.
+
+    It deliberately does not sweep arbitrary lags. Each candidate declares its
+    temporal interpretation and controls before seeing results. Calendar trend
+    and weekday are always adjusted; highly collinear controls are collapsed;
+    HC3 robust intervals, BH false-discovery correction, and split-half sign
+    stability gate promotion. This reduces common false positives but does not
+    make single-person observational data causal.
+    """
+    candidate_specs = specs if specs is not None else DEFAULT_ADJUSTED_SPECS
+    results: list[dict] = []
+
+    for spec in candidate_specs:
+        driver, outcome = spec["driver"], spec["outcome"]
+        if driver not in frame or outcome not in frame:
+            continue
+        driver_lag = int(spec.get("driver_lag", 0))
+        data = pd.DataFrame({"x": frame[driver].shift(driver_lag), "y": frame[outcome]}, index=frame.index)
+        raw_controls: list[str] = []
+        for control in spec.get("controls", []):
+            if control.startswith("lag:"):
+                source = control[4:]
+                if source in frame:
+                    name = f"{source}_prev"
+                    data[name] = frame[source].shift(1)
+                    raw_controls.append(name)
+            elif control in frame:
+                data[control] = frame[control]
+                raw_controls.append(control)
+
+        data["time_trend"] = np.arange(len(data), dtype=float)
+        weekdays = pd.get_dummies(pd.DatetimeIndex(data.index).dayofweek, prefix="dow", drop_first=True, dtype=float)
+        weekdays.index = data.index
+        data = pd.concat([data, weekdays], axis=1).dropna()
+        if len(data) < min_n or data["x"].std() == 0 or data["y"].std() == 0:
+            results.append({"name": spec["name"], "label": spec["label"], "status": "insufficient", "n": int(len(data)), "required_n": min_n, "direction": spec.get("direction", "co-measured")})
+            continue
+
+        kept, dropped = _drop_collinear_controls(data, raw_controls)
+        controls = kept + ["time_trend", *weekdays.columns.tolist()]
+        partial = _partial_r(data, controls)
+        X = sm.add_constant(pd.concat([_zscore(data["x"]).rename("x"), data[controls]], axis=1), has_constant="add")
+        fit = sm.OLS(_zscore(data["y"]), X).fit(cov_type="HC3")
+        ci = fit.conf_int().loc["x"]
+
+        half_values: list[float] = []
+        midpoint = len(data) // 2
+        for half in (data.iloc[:midpoint], data.iloc[midpoint:]):
+            if len(half) >= max(20, min_n // 3) and half["x"].std() > 0 and half["y"].std() > 0:
+                half_values.append(_partial_r(half, controls))
+        stable = len(half_values) == 2 and all(np.sign(value) == np.sign(partial) and abs(value) >= 0.05 for value in half_values)
+        results.append({
+            "name": spec["name"], "label": spec["label"], "driver": driver, "outcome": outcome,
+            "direction": spec.get("direction", "co-measured"), "n": int(len(data)),
+            "partial_r": float(partial), "beta": float(fit.params["x"]),
+            "ci_low": float(ci.iloc[0]), "ci_high": float(ci.iloc[1]),
+            "p_value": float(fit.pvalues["x"]), "stable": bool(stable),
+            "half_r": [float(value) for value in half_values], "dropped_controls": dropped,
+        })
+
+    tested = [result for result in results if "p_value" in result]
+    if tested:
+        order = np.argsort([result["p_value"] for result in tested])
+        running = 1.0
+        for reverse_index in range(len(order) - 1, -1, -1):
+            item_index = int(order[reverse_index])
+            rank = reverse_index + 1
+            running = min(running, tested[item_index]["p_value"] * len(tested) / rank)
+            tested[item_index]["q_value"] = float(running)
+        for result in tested:
+            effect = abs(result["partial_r"])
+            result["status"] = (
+                "signal" if result["q_value"] <= 0.10 and effect >= 0.15 and result["stable"]
+                else "watch" if result["q_value"] <= 0.20 and effect >= 0.15 and result["stable"]
+                else "no_clear_signal"
+            )
+
+    # Avoid presenting two near-duplicate drivers for one outcome. Keep the
+    # lower-q candidate and explicitly record which candidate suppressed the other.
+    promoted = [r for r in tested if r["status"] in ("signal", "watch")]
+    for i, left in enumerate(promoted):
+        for right in promoted[i + 1:]:
+            if left["outcome"] != right["outcome"] or left["driver"] not in frame or right["driver"] not in frame:
+                continue
+            corr = frame[[left["driver"], right["driver"]]].corr().iloc[0, 1]
+            if np.isfinite(corr) and abs(corr) >= 0.75:
+                keep, suppress = sorted((left, right), key=lambda item: item["q_value"])
+                suppress["status"] = "suppressed_collinear"
+                suppress["suppressed_by"] = keep["name"]
+
+    coefficients = {
+        result["name"]: {
+            "coef": result["beta"], "ci_low": result["ci_low"],
+            "ci_high": result["ci_high"], "p_value": result["p_value"],
+        }
+        for result in tested
+    }
+    return {
+        "name": "daily_adjusted_finder",
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "spec": "Predeclared partial associations; weekday + time trend + candidate-specific prior-state/load controls; HC3 CI; BH FDR; split-half stability; collinear-driver suppression",
+        "coefficients": coefficients,
+        "diagnostics": {
+            "n": max((result.get("n", 0) for result in results), default=0),
+            "candidate_count": len(results),
+            "signal_count": sum(result.get("status") == "signal" for result in results),
+            "watch_count": sum(result.get("status") == "watch" for result in results),
+            "candidates": results,
+            "caveat": "Exploratory single-person associations, not causal effects. No result is promoted without multiplicity correction and split-half sign stability.",
+        },
+    }
 
 
 def zscore_trailing(frame: pd.DataFrame, days: int = 180) -> pd.DataFrame:

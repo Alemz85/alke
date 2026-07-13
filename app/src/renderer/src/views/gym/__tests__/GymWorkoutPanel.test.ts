@@ -1,0 +1,72 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import type { Exercise, GymSession } from '@shared/types'
+import { GymWorkoutPanel } from '../GymWorkoutPanel'
+
+describe('GymWorkoutPanel read view', () => {
+  it('exposes distinct hierarchy hooks for the workout header, exercises, and notes', () => {
+    const exercise: Exercise = {
+      id: 'incline-bench',
+      name: 'Incline Bench Press',
+      aliases: [],
+      body_part: 'chest',
+      primary_muscles: ['upper chest'],
+      secondary_muscles: ['triceps'],
+      equipment: 'barbell',
+      mechanics: 'compound',
+      movement_pattern: 'push',
+      source: 'catalog',
+      created_at: null
+    }
+    const session: GymSession = {
+      id: 'session-1',
+      workout_id: null,
+      template_id: null,
+      template_ids: [],
+      performed_at: '2026-07-12T12:00:00Z',
+      title: 'Upper B',
+      notes: 'Controlled tempo throughout.',
+      source: 'mock',
+      body_parts: null,
+      sets: [1, 2, 3].map((id) => ({
+        id,
+        session_id: 'session-1',
+        exercise_id: exercise.id,
+        exercise_name: exercise.name,
+        position: id - 1,
+        reps: 8,
+        weight_kg: 60,
+        rpe: null,
+        is_warmup: false,
+        note: null
+      })),
+      created_at: null,
+      updated_at: null
+    }
+
+    const markup = renderToStaticMarkup(
+      createElement(GymWorkoutPanel, {
+        item: {
+          key: session.id,
+          workout: null,
+          session,
+          dateIso: session.performed_at,
+          logged: true
+        },
+        templates: [],
+        recoveryTemplates: [],
+        sessions: [session],
+        exercisesById: new Map([[exercise.id, exercise]]),
+        templateNameById: new Map(),
+        timezone: 'Europe/Berlin',
+        onClose: () => undefined
+      })
+    )
+
+    expect(markup).toContain('gym-log-view-eyebrow')
+    expect(markup).toContain('gym-log-edit-button')
+    expect(markup).toContain('gym-log-view-section-label')
+    expect(markup).toContain('gym-log-notes-label')
+  })
+})

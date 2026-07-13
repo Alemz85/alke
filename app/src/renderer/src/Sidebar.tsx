@@ -2,7 +2,6 @@ import type { ReactElement } from 'react'
 import {
   LayoutDashboard,
   Waves,
-  ListChecks,
   Dumbbell,
   Moon,
   Sparkles,
@@ -23,7 +22,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'zone2', label: 'Cardio', icon: Waves },
-  { id: 'sessions', label: 'Sessions', icon: ListChecks },
   { id: 'gym', label: 'Gym', icon: Dumbbell },
   { id: 'recovery', label: 'Recovery', icon: Moon },
   { id: 'insights', label: 'Insights', icon: Sparkles },

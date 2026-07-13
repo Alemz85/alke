@@ -28,7 +28,11 @@ export function Toast({
 
   const Icon = ICONS[tone]
   return (
-    <div className={`toast toast--${tone}`} role="status" aria-live="polite">
+    <div
+      className={`toast toast--${tone}`}
+      role={tone === 'error' ? 'alert' : 'status'}
+      aria-live={tone === 'error' ? 'assertive' : 'polite'}
+    >
       <Icon size={16} strokeWidth={1.5} className="toast-icon" />
       <span className="toast-text">{message}</span>
       <button className="toast-dismiss" onClick={onDismiss} aria-label="Dismiss">

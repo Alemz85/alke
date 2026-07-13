@@ -44,7 +44,8 @@ export function ExercisePicker({
       e.aliases.some((a) => a === normalizedInput)
   )
   const showCreateRow = open && trimmed.length > 0 && !exactMatch && !addExercise.isPending
-  const rowCount = results.length + (showCreateRow ? 1 : 0)
+  const showCreatingRow = open && trimmed.length > 0 && addExercise.isPending
+  const rowCount = results.length + (showCreateRow || showCreatingRow ? 1 : 0)
 
   const select = (exercise: Exercise): void => {
     setText(exercise.name)
@@ -162,6 +163,16 @@ export function ExercisePicker({
             >
               <span className="gym-picker-name">Create “{trimmed}”…</span>
             </button>
+          )}
+          {showCreatingRow && (
+            <div
+              role="option"
+              aria-selected="false"
+              aria-disabled="true"
+              className="gym-picker-row gym-picker-row--create"
+            >
+              <span className="gym-picker-name">Creating “{trimmed}”…</span>
+            </div>
           )}
         </div>
       )}

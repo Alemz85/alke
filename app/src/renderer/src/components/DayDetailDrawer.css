@@ -120,6 +120,17 @@
   color: var(--color-text);
 }
 
+.day-drawer-session-stat-value--hr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.day-drawer-session-stat-hr-icon {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
 .day-drawer-session-stat-label {
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
@@ -214,11 +225,75 @@
   margin-top: var(--space-md);
 }
 
+.day-drawer-set-composition {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0 var(--space-lg);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.day-drawer-set-composition-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(6rem, 1fr) 9rem;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.day-drawer-set-composition-distance {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.day-drawer-set-composition-track {
+  display: block;
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+}
+
+.day-drawer-set-composition-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-aerobic);
+}
+
+.day-drawer-set-composition-total {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.day-drawer-swim-detail-label {
+  margin-top: var(--space-lg);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 .day-drawer-swim-timeline {
   display: block;
   width: 100%;
   height: 72px;
   margin: var(--space-sm) 0 var(--space-md);
+}
+
+@media (max-width: 760px) {
+  .day-drawer-set-composition-row {
+    grid-template-columns: 3.75rem minmax(4rem, 1fr);
+    gap: var(--space-xs) var(--space-sm);
+  }
+
+  .day-drawer-set-composition-total {
+    grid-column: 2;
+    text-align: left;
+  }
 }
 
 .day-drawer-swim-table {

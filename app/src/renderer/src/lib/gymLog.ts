@@ -33,6 +33,44 @@ export function groupSetsIntoBlocks(sets: GymSet[]): ExerciseBlock[] {
   return blocks
 }
 
+export interface BodyPartExerciseGroup {
+  bodyPart: string
+  blocks: ExerciseBlock[]
+}
+
+/** Group logged exercise runs under the app's major body-part categories. */
+export function groupExerciseBlocksByBodyPart(
+  blocks: ExerciseBlock[],
+  exercisesById: Map<string, Exercise>
+): BodyPartExerciseGroup[] {
+  const byPart = new Map<string, ExerciseBlock[]>()
+  for (const block of blocks) {
+    const part = exercisesById.get(block.exerciseId)?.body_part ?? 'other'
+    const group = byPart.get(part)
+    if (group) group.push(block)
+    else byPart.set(part, [block])
+  }
+  const orderedParts = [...GYM_BODY_PARTS, 'other']
+  return orderedParts.flatMap((bodyPart) => {
+    const groupedBlocks = byPart.get(bodyPart)
+    return groupedBlocks ? [{ bodyPart, blocks: groupedBlocks }] : []
+  })
+}
+
+/** Compact working-set prescription for a collapsed exercise disclosure. */
+export function formatExerciseSetSummary(sets: GymSet[]): string {
+  const working = sets.filter((set) => !set.is_warmup)
+  if (working.length === 0) return 'Warm-up only'
+  const reps = working.map((set) => set.reps)
+  if (reps.every((value) => value != null && value === reps[0])) {
+    return `${working.length} × ${reps[0]}`
+  }
+  if (reps.every((value) => value != null)) {
+    return `${working.length} sets · ${reps.join(' / ')}`
+  }
+  return `${working.length} ${working.length === 1 ? 'set' : 'sets'}`
+}
+
 /** Sum of reps × weight_kg over non-warmup sets where both are non-null. */
 export function sessionVolumeKg(sets: GymSet[]): number {
   let total = 0
@@ -52,6 +90,15 @@ function formatVolume(kg: number): string {
 /** "legs" -> "Legs", "full body" -> "Full body" — display form of a body part. */
 export function displayBodyPart(part: string): string {
   return part.charAt(0).toUpperCase() + part.slice(1)
+}
+
+/** Rest duration for display: under 60s -> "45s"; 60s+ -> "m:ss" like "1:30". */
+export function formatRest(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  if (total < 60) return `${total}s`
+  const minutes = Math.floor(total / 60)
+  const secs = total % 60
+  return `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
 /**
@@ -107,6 +154,39 @@ export interface PrefillSetRow {
   isWarmup: boolean
 }
 
+/** Recover one compact prescription from already-expanded template rows. */
+export function uniformPrefillDose(rows: PrefillSetRow[]): { sets: string; reps: string } {
+  if (rows.length === 0 || rows.some((row) => row.reps == null || row.reps !== rows[0].reps)) {
+    return { sets: '', reps: '' }
+  }
+  return { sets: String(rows.length), reps: String(rows[0].reps) }
+}
+
+/** Build a simple editable prescription from the logger's Sets + Reps shortcut. */
+export function buildQuickSetRows(
+  exerciseId: string,
+  exerciseName: string,
+  setCount: number,
+  reps: number
+): PrefillSetRow[] | null {
+  if (
+    !exerciseId ||
+    !Number.isInteger(setCount) ||
+    setCount <= 0 ||
+    !Number.isInteger(reps) ||
+    reps <= 0
+  ) {
+    return null
+  }
+  return Array.from({ length: setCount }, () => ({
+    exerciseId,
+    exerciseName,
+    reps,
+    weightKg: null,
+    isWarmup: false
+  }))
+}
+
 /**
  * Expands a template's items into editor set rows: target_sets rows per item
  * (default 3 when target_sets is null), each prefilled with the item's
@@ -128,6 +208,15 @@ export function prefillFromTemplate(template: GymTemplate): PrefillSetRow[] {
     }
   }
   return rows
+}
+
+/**
+ * Expands several templates without merging their exercise runs. The caller
+ * supplies templates in the order the user selected them, which becomes the
+ * session-editor order (for example: rehab, then core, then upper body).
+ */
+export function prefillFromTemplates(templates: GymTemplate[]): PrefillSetRow[] {
+  return templates.flatMap(prefillFromTemplate)
 }
 
 /**

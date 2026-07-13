@@ -17,6 +17,12 @@ Subagents do NOT reduce total token spend for a fixed task; they usually increas
 
 Dispatch when: (a) ≥2 genuinely independent tasks exist, or (b) the reading required is bulky and one-shot (you need the conclusion, not the material). Work inline when the task is small, single-surface, and you already know where the code is — dispatch overhead exceeds the isolation benefit.
 
+### Launch independent agents at the *start*, not after your own slice
+
+A recurring anti-pattern: the main session does its own piece of the work first and only *then* spawns the agents. If an agent's task doesn't depend on what you're doing right now, that ordering wastes wall-clock — the agent could have been running the entire time you were typing. Before you start a step, ask "what here is independent of it?" and dispatch that immediately, in the *same* turn, so it runs in the background while you work.
+
+Dependence is the **only** valid reason to hold an agent back — it consumes your in-progress output (a frozen contract, a schema, a file you're mid-edit on). "I'll launch them once I finish this part" is not a reason. Concretely: contract-dependent builders wait for the frozen contract; everything else (independent views, read-only exploration, doc/skill edits, unrelated features, a new item the user queues mid-flight) launches on turn one alongside your own work. When a fresh independent task arrives while you're busy, spawn it right then rather than parking it behind your current step — provided its file surface is disjoint (rule 1 still governs).
+
 **Tiering math**: down-tier tokens cost a fraction of top-tier tokens, so the agent's boot tax (re-reading CLAUDE.md, exploring) is paid in cheap tokens while the orchestrator's expensive tokens go only to spec, judgment, and integration. The decision variable is rework probability, not token price: cheap work is only cheap when acceptance is machine-checkable (tests/typecheck gates), because otherwise verification means re-reading the work at top-tier prices — or worse, accepting subtly wrong work and paying during reconciliation. Rule: **delegate down-tier when spec + machine-checkable acceptance costs under ~20% of doing the work; keep in-tier anything whose verification requires re-reading it.** The two mechanisms multiply: expensive-model × small context + cheap-model × large context.
 
 ## Non-negotiable rules (learned the hard way — see memory `parallel-agent-file-collisions`)

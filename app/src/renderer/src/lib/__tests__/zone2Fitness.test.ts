@@ -11,6 +11,7 @@ import {
   latestZone2Row,
   maintenanceMessage,
   stageLabel,
+  zone2TrajectorySnapshot,
   zone2Meters,
   zone2CalendarGuidance,
   zone2IndexValue
@@ -110,9 +111,9 @@ describe('stageLabel', () => {
 
 describe('durableBandCaption', () => {
   it('combines band and stage', () => {
-    expect(durableBandCaption(row({ durable_band_lo: 34, durable_band_hi: 46, stage: 'literature' }))).toBe(
-      '±6 · Literature estimate'
-    )
+    expect(
+      durableBandCaption(row({ durable_band_lo: 34, durable_band_hi: 46, stage: 'literature' }))
+    ).toBe('±6 · Literature estimate')
   })
 
   it('falls back to stage only when band is unknown', () => {
@@ -122,7 +123,9 @@ describe('durableBandCaption', () => {
 
 describe('hasMaintenanceFlag / maintenanceMessage', () => {
   it('detects a zone2_maintenance flag', () => {
-    const r = row({ flags: [{ type: 'zone2_maintenance', severity: 'info', message: 'below the dose' }] })
+    const r = row({
+      flags: [{ type: 'zone2_maintenance', severity: 'info', message: 'below the dose' }]
+    })
     expect(hasMaintenanceFlag(r)).toBe(true)
     expect(maintenanceMessage(r)).toBe('below the dose')
   })
@@ -160,54 +163,88 @@ describe('formatGuidanceDate', () => {
 describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
   const TODAY = '2026-07-10' // Friday
 
-  it('anchors the build window at the LAST SESSION + cadence (not the row date)', () => {
-    // Last aerobic session 07-08, cadence 2d → due 07-10 (today). The window is
-    // the 2-day band ending at/after the deadline, clamped forward.
+  it('keeps the literal 24–48h build window on Jul 12–13, never Jul 13–14', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-09', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
+      {
+        date: '2026-07-12',
+        warn_after_days: null,
+        maintain_horizon_days: 5,
+        build_interval_days: 2.25
+      },
+      ['2026-07-11T15:00:00.000Z'],
+      '2026-07-13',
+      'Europe/Berlin',
+      '2026-07-13T08:00:00.000Z'
+    )
+
+    expect(g.buildWindow).toEqual({ start: '2026-07-12', end: '2026-07-13' })
+    expect(g.buildOverdue).toBe(false)
+    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-12', '2026-07-13'])
+    expect(g.markers['2026-07-14']).toBeUndefined()
+  })
+
+  it('anchors the literal build window at 24–48h after the last session', () => {
+    const g = zone2CalendarGuidance(
+      {
+        date: '2026-07-09',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2
+      },
       ['2026-07-08'],
       TODAY
     )
-    // due = 07-08 + 2 = 07-10 = today → due now. Window = [today, today+1].
-    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
+    expect(g.buildWindow).toEqual({ start: '2026-07-09', end: '2026-07-10' })
     expect(g.buildOverdue).toBe(true)
-    // BOTH window cells carry the build marker; nothing else in the building phase.
-    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-10', '2026-07-11'])
+    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-09', '2026-07-10'])
+    expect(g.markers['2026-07-09'].kind).toBe('build')
     expect(g.markers['2026-07-10'].kind).toBe('build')
-    expect(g.markers['2026-07-11'].kind).toBe('build')
   })
 
-  it('places a future build window as the 2 days ending at the cadence deadline', () => {
-    // Last session 07-09, cadence 3 → due 07-12 (future). Window = [07-11, 07-12].
+  it('does not let a longer model cadence move the literal 24–48h window', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 3 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 3
+      },
       ['2026-07-09'],
       TODAY
     )
-    expect(g.buildWindow).toEqual({ start: '2026-07-11', end: '2026-07-12' })
+    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
     expect(g.buildOverdue).toBe(false)
   })
 
-  it('shows an overdue build window as today→tomorrow with "due now" copy', () => {
-    // Last session 07-01, cadence 2 → due 07-03, long past. Window clamps forward.
+  it('keeps an overdue build window on its real historical dates', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2
+      },
       ['2026-07-01'],
       TODAY
     )
-    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
+    expect(g.buildWindow).toEqual({ start: '2026-07-02', end: '2026-07-03' })
     expect(g.buildOverdue).toBe(true)
-    expect(g.markers['2026-07-10'].label).toMatch(/due now/i)
+    expect(g.markers['2026-07-02'].label).toMatch(/due now/i)
+    expect(g.markers['2026-07-10']).toBeUndefined()
   })
 
-  it('anchors the build window at today when no session is on record', () => {
+  it('does not invent a build window when no session is on record', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2
+      },
       [],
       TODAY
     )
-    // due = today + 2 = 07-12 → window [07-11, 07-12].
-    expect(g.buildWindow).toEqual({ start: '2026-07-11', end: '2026-07-12' })
+    expect(g.buildWindow).toBeNull()
     expect(g.lastSession).toBeNull()
   })
 
@@ -216,7 +253,12 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     // null eases horizon. maintain_horizon may still be present, but it must NOT
     // surface — there is nothing banked to protect yet.
     const g = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: 8, build_interval_days: 2 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: 8,
+        build_interval_days: 2
+      },
       ['2026-07-08'],
       TODAY
     )
@@ -240,9 +282,10 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.phase).toBe('maintenance')
     expect(g.easesFrom).toBe('2026-07-22') // rowDate 07-08 + 14
     expect(g.holdBy).toBe('2026-07-14') // rowDate 07-08 + 6
-    // Build window anchored at last session 07-08 + 2 = 07-10 (due today).
-    expect(g.buildWindow).toEqual({ start: '2026-07-10', end: '2026-07-11' })
-    const kinds = Object.values(g.markers).map((m) => m.kind).sort()
+    expect(g.buildWindow).toEqual({ start: '2026-07-09', end: '2026-07-10' })
+    const kinds = Object.values(g.markers)
+      .map((m) => m.kind)
+      .sort()
     expect(kinds).toEqual(['build', 'build', 'decay', 'maintain'])
   })
 
@@ -262,7 +305,12 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
 
   it('derives the build dose frequency from build_interval_days, not a hardcoded dose', () => {
     const everyTwo = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 2 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2
+      },
       [],
       TODAY
     )
@@ -274,7 +322,12 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
 
   it('omits the build window when build_interval_days is null (old pre-migration rows)', () => {
     const g = zone2CalendarGuidance(
-      { date: '2026-07-08', warn_after_days: 12, maintain_horizon_days: null, build_interval_days: null },
+      {
+        date: '2026-07-08',
+        warn_after_days: 12,
+        maintain_horizon_days: null,
+        build_interval_days: null
+      },
       [],
       TODAY
     )
@@ -298,15 +351,20 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.lastSession).toBe('2026-07-08')
   })
 
-  it('counts sessions in the trailing 7 days and clamps future-dated sessions', () => {
+  it('counts sessions in the trailing 7 days and ignores future-dated sessions', () => {
     // 07-04..07-10 inclusive is the window; 07-03 is out, 07-11 is future.
     const g = zone2CalendarGuidance(
-      { date: '2026-07-10', warn_after_days: null, maintain_horizon_days: null, build_interval_days: 3 },
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 3
+      },
       ['2026-07-03', '2026-07-04', '2026-07-08', '2026-07-10', '2026-07-11'],
       TODAY
     )
     expect(g.sessions7d).toBe(3) // 07-04, 07-08, 07-10
-    expect(g.lastSession).toBe('2026-07-10') // future 07-11 clamped to today
+    expect(g.lastSession).toBe('2026-07-10') // future 07-11 ignored
   })
 })
 
@@ -380,5 +438,58 @@ describe('zone2Meters (v4 two-bar layout)', () => {
     const m = zone2Meters(row({ durable_base: 10, sharpness: 5 }), 0, 0)
     expect(m.durablePct).toBe(0)
     expect(m.fastPct).toBe(0)
+  })
+})
+
+describe('zone2TrajectorySnapshot', () => {
+  it('derives start, current, signed change, and current band from unsorted valid rows', () => {
+    const snapshot = zone2TrajectorySnapshot([
+      row({
+        date: '2026-07-10',
+        durable_base: 42.2,
+        sharpness: 12.1,
+        durable_band_lo: 49.4,
+        durable_band_hi: 59.6
+      }),
+      row({ date: '2026-02-03', durable_base: 30.4, sharpness: 8.2 }),
+      row({ date: '2026-04-12', durable_base: null, sharpness: null }),
+      row({ date: '2026-05-08', durable_base: 36, sharpness: 10 })
+    ])
+
+    expect(snapshot).toMatchObject({
+      start: { date: '2026-02-03' },
+      now: { date: '2026-07-10' },
+      sinceLabel: 'Feb',
+      currentBand: { lo: 49.4, hi: 59.6 }
+    })
+    expect(snapshot?.start.value).toBeCloseTo(38.6)
+    expect(snapshot?.now.value).toBeCloseTo(54.3)
+    expect(snapshot?.change).toBeCloseTo(15.7)
+  })
+
+  it('returns a stable unavailable band and null snapshot when no index is valid', () => {
+    expect(
+      zone2TrajectorySnapshot([
+        row({ date: '2026-02-03', durable_base: 30, sharpness: 8 }),
+        row({ date: '2026-07-10', durable_base: 42, sharpness: 12 })
+      ])?.currentBand
+    ).toBeNull()
+    expect(zone2TrajectorySnapshot([row({ durable_base: null, sharpness: null })])).toBeNull()
+    expect(zone2TrajectorySnapshot([])).toBeNull()
+  })
+
+  it('normalizes inverted confidence bounds on the latest row', () => {
+    expect(
+      zone2TrajectorySnapshot([
+        row({ date: '2026-02-03', durable_base: 30, sharpness: 8 }),
+        row({
+          date: '2026-07-10',
+          durable_base: 42,
+          sharpness: 12,
+          durable_band_lo: 60,
+          durable_band_hi: 48
+        })
+      ])?.currentBand
+    ).toEqual({ lo: 48, hi: 60 })
   })
 })

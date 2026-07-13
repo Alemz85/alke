@@ -1,4 +1,5 @@
 import { config as loadEnv } from 'dotenv'
+import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { app, shell, screen, BrowserWindow, ipcMain } from 'electron'
@@ -29,6 +30,7 @@ import {
   type GymBodyPart,
   type GymSessionPatch,
   type GymTemplatePatch,
+  type Injury,
   type NewGoal,
   type NewGymSession,
   type NewGymTemplate,
@@ -36,10 +38,23 @@ import {
 } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
+import { executeOfflineWrite } from './offlineWriteHandlers'
+import { OfflineWriteService } from './offlineWriteService'
 import { registerTileScheme, setupTileProtocol } from './tiles'
 
 // Privileged-scheme registration must happen before app.whenReady().
 registerTileScheme()
+
+const offlineWrites = new OfflineWriteService(
+  join(app.getPath('userData'), 'offline-write-queue.json'),
+  (operation) => executeOfflineWrite(db, operation),
+  (status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(IPC_CHANNELS.offlineQueueStatus, status)
+    }
+  },
+  randomUUID
+)
 
 // HEALTH_APP_DISPLAY=external places the window on a non-primary display
 // (used by automated test launches so they stay off the main monitor).
@@ -113,6 +128,9 @@ function registerIpcHandlers(): void {
     db.getWorkouts(fromIso, toIso)
   )
   ipcMain.handle(IPC_CHANNELS.getWorkoutDetail, (_event, id: string) => db.getWorkoutDetail(id))
+  ipcMain.handle(IPC_CHANNELS.getWorkoutPlaces, (_event, workoutIds: string[]) =>
+    db.getWorkoutPlaces(workoutIds)
+  )
   ipcMain.handle(IPC_CHANNELS.getSwimSets, (_event, fromIso: string, toIso: string) =>
     db.getSwimSets(fromIso, toIso)
   )
@@ -136,15 +154,37 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.getInjuries, () => db.getInjuries())
   ipcMain.handle(IPC_CHANNELS.getInjuryLog, (_event, injuryId: string) => db.getInjuryLog(injuryId))
-  ipcMain.handle(IPC_CHANNELS.addInjuryLog, (_event, entry: NewInjuryLog) => db.addInjuryLog(entry))
-  ipcMain.handle(IPC_CHANNELS.getInjuryPlan, (_event, injuryId: string) => db.getInjuryPlan(injuryId))
+  ipcMain.handle(IPC_CHANNELS.addInjuryLog, (_event, entry: NewInjuryLog) =>
+    offlineWrites.run('addInjuryLog', [entry])
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteInjuryLog, (_event, id: number) =>
+    offlineWrites.run('deleteInjuryLog', [id])
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.updateInjuryStatus,
+    (_event, injuryId: string, status: Injury['status']) =>
+      offlineWrites.run('updateInjuryStatus', [injuryId, status])
+  )
+  ipcMain.handle(IPC_CHANNELS.getInjuryPlan, (_event, injuryId: string) =>
+    db.getInjuryPlan(injuryId)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.updateInjuryPlanStart,
+    (_event, injuryId: string, planStartedAt: string) =>
+      offlineWrites.run('updateInjuryPlanStart', [injuryId, planStartedAt])
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.updateInjuryStartedAt,
+    (_event, injuryId: string, startedAt: string) =>
+      offlineWrites.run('updateInjuryStartedAt', [injuryId, startedAt])
+  )
   ipcMain.handle(IPC_CHANNELS.getInjuryPlanChecks, (_event, injuryId: string, fromDate: string) =>
     db.getInjuryPlanChecks(injuryId, fromDate)
   )
   ipcMain.handle(
     IPC_CHANNELS.setPlanItemCheck,
     (_event, itemId: string, doneDate: string, done: boolean) =>
-      db.setPlanItemCheck(itemId, doneDate, done)
+      offlineWrites.run('setPlanItemCheck', [itemId, doneDate, done])
   )
   ipcMain.handle(IPC_CHANNELS.getExercises, () => db.getExercises())
   ipcMain.handle(IPC_CHANNELS.addExercise, (_event, name: string, bodyPart: GymBodyPart | null) =>
@@ -152,21 +192,40 @@ function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC_CHANNELS.getGymTemplates, () => db.getGymTemplates())
   ipcMain.handle(IPC_CHANNELS.addGymTemplate, (_event, template: NewGymTemplate) =>
-    db.addGymTemplate(template)
+    offlineWrites.run('addGymTemplate', [template])
   )
   ipcMain.handle(IPC_CHANNELS.updateGymTemplate, (_event, id: string, patch: GymTemplatePatch) =>
-    db.updateGymTemplate(id, patch)
+    offlineWrites.run('updateGymTemplate', [id, patch])
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteGymTemplate, (_event, id: string) =>
+    offlineWrites.run('deleteGymTemplate', [id])
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.createGymTemplateVersion,
+    (_event, baseTemplateId: string, template: NewGymTemplate) =>
+      offlineWrites.run('createGymTemplateVersion', [baseTemplateId, template])
+  )
+  ipcMain.handle(IPC_CHANNELS.getGymTemplateVersions, (_event, familyId: string) =>
+    db.getGymTemplateVersions(familyId)
+  )
+  ipcMain.handle(IPC_CHANNELS.startGymTemplateRun, (_event, templateId: string) =>
+    offlineWrites.run('startGymTemplateRun', [templateId])
+  )
+  ipcMain.handle(IPC_CHANNELS.completeGymTemplateRun, (_event, templateId: string) =>
+    offlineWrites.run('completeGymTemplateRun', [templateId])
   )
   ipcMain.handle(IPC_CHANNELS.getGymSessions, (_event, fromIso: string, toIso: string) =>
     db.getGymSessions(fromIso, toIso)
   )
   ipcMain.handle(IPC_CHANNELS.addGymSession, (_event, session: NewGymSession) =>
-    db.addGymSession(session)
+    offlineWrites.run('addGymSession', [session])
   )
   ipcMain.handle(IPC_CHANNELS.updateGymSession, (_event, id: string, patch: GymSessionPatch) =>
-    db.updateGymSession(id, patch)
+    offlineWrites.run('updateGymSession', [id, patch])
   )
-  ipcMain.handle(IPC_CHANNELS.deleteGymSession, (_event, id: string) => db.deleteGymSession(id))
+  ipcMain.handle(IPC_CHANNELS.deleteGymSession, (_event, id: string) =>
+    offlineWrites.run('deleteGymSession', [id])
+  )
   ipcMain.handle(IPC_CHANNELS.getGoals, () => db.getGoals())
   ipcMain.handle(IPC_CHANNELS.getGoalProgress, (_event, goalId: string) =>
     db.getGoalProgress(goalId)
@@ -178,6 +237,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.buildGoalMetric, (_event, goalId: string) =>
     chat.buildGoalMetric(goalId)
   )
+  ipcMain.handle(IPC_CHANNELS.getProteinLog, (_event, fromDate: string, toDate: string) =>
+    db.getProteinLog(fromDate, toDate)
+  )
+  ipcMain.handle(IPC_CHANNELS.addProtein, (_event, date: string, grams: number) =>
+    offlineWrites.run('addProtein', [date, grams])
+  )
+  ipcMain.handle(IPC_CHANNELS.setProtein, (_event, date: string, grams: number) =>
+    offlineWrites.run('setProtein', [date, grams])
+  )
+  ipcMain.handle(IPC_CHANNELS.getOfflineQueueStatus, () => offlineWrites.status())
+  ipcMain.handle(IPC_CHANNELS.retryOfflineQueue, async () => {
+    await offlineWrites.retryFailed()
+    await offlineWrites.flush()
+    return offlineWrites.status()
+  })
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getLastIngestAt, () => db.getLastIngestAt())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
@@ -185,11 +259,22 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.chatStatus, () => chat.checkClaude())
   ipcMain.handle(IPC_CHANNELS.chatListSessions, () => db.listChatSessions())
   ipcMain.handle(IPC_CHANNELS.chatGetSession, (_event, id: string) => db.getChatSession(id))
-  ipcMain.handle(IPC_CHANNELS.chatSend, (event, sessionId: string | null, message: string) => {
+  ipcMain.handle(IPC_CHANNELS.chatPickAttachments, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) throw new Error('no window for chat send')
-    return chat.sendMessage(win, sessionId, message)
+    if (!win) throw new Error('no window for attachment picker')
+    return chat.pickChatAttachments(win)
   })
+  ipcMain.handle(IPC_CHANNELS.chatValidateAttachments, (_event, paths: unknown) =>
+    chat.validateChatAttachments(paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.chatSend,
+    (event, sessionId: string | null, message: string, attachmentPaths: unknown) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) throw new Error('no window for chat send')
+      return chat.sendMessage(win, sessionId, message, attachmentPaths)
+    }
+  )
 }
 
 app.whenReady().then(() => {
@@ -202,6 +287,9 @@ app.whenReady().then(() => {
   setupTileProtocol()
   registerIpcHandlers()
   createWindow()
+
+  void offlineWrites.flush()
+  setInterval(() => { void offlineWrites.flush() }, 30_000)
 
   void refreshDockBadge()
   setInterval(refreshDockBadge, DOCK_BADGE_REFRESH_MS)

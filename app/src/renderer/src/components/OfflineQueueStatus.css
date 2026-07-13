@@ -1,0 +1,22 @@
+.offline-queue-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 40px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.offline-queue-status--failed {
+  color: var(--color-flag-text);
+}
+
+.offline-queue-retry {
+  padding-left: var(--space-xs);
+  border-left: 1px solid var(--color-hairline);
+  color: var(--color-text-secondary);
+}
+
+.offline-queue-retry-icon {
+  color: var(--color-text-tertiary);
+}

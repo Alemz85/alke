@@ -7,6 +7,31 @@
   gap: var(--space-md);
 }
 
+/* Column-header bar: same grid template as a row so labels align to the cells,
+   but it sits outside the scrolling rows and never reacts to hover/click. */
+.session-list-header {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr 0.8fr 0.8fr 0.6fr 0.7fr;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0 var(--space-xxs) var(--space-xs);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.session-list-col-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.session-list-col-label--num {
+  text-align: right;
+}
+
 .session-list-rows {
   display: flex;
   flex-direction: column;
@@ -14,7 +39,7 @@
 
 .session-list-row {
   display: grid;
-  grid-template-columns: 1.4fr 1.2fr 0.8fr 0.8fr 0.6fr;
+  grid-template-columns: 1.4fr 1.2fr 0.8fr 0.8fr 0.6fr 0.7fr;
   align-items: center;
   gap: var(--space-sm);
   width: 100%;
@@ -49,7 +74,20 @@
 }
 
 .session-list-cell--datetime {
-  color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  white-space: normal;
+  overflow: visible;
+}
+
+.session-list-date {
+  color: var(--color-text);
+}
+
+.session-list-time {
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
 }
 
 .session-list-cell--modality {
@@ -60,13 +98,27 @@
 
 .session-list-modality-icon {
   flex-shrink: 0;
-  color: var(--color-text-secondary);
+  color: inherit; /* takes the cell's environment accent (water/indoor/outdoor) */
 }
 
 .session-list-cell--duration,
 .session-list-cell--distance,
-.session-list-cell--trimp {
+.session-list-cell--trimp,
+.session-list-cell--avghr {
   text-align: right;
+}
+
+.session-list-cell--avghr {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  color: var(--color-text-secondary);
+}
+
+.session-list-avghr-icon {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
 }
 
 .session-list-pagination {
@@ -108,11 +160,16 @@
 }
 
 @media (max-width: 700px) {
-  .session-list-row {
+  .session-list-row,
+  .session-list-header {
     grid-template-columns: 1.6fr 1.2fr 0.8fr;
   }
   .session-list-cell--distance,
-  .session-list-cell--trimp {
+  .session-list-cell--trimp,
+  .session-list-cell--avghr,
+  .session-list-col-label:nth-child(4),
+  .session-list-col-label:nth-child(5),
+  .session-list-col-label:nth-child(6) {
     display: none;
   }
 }

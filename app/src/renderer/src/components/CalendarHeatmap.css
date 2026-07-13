@@ -26,6 +26,27 @@
   color: var(--color-text);
 }
 
+/* Positioning context for the month/year picker popover. */
+.calendar-heatmap-title-wrap {
+  position: relative;
+}
+
+/* When the title is a jump button it keeps the heading look but gains a subtle
+   interactive affordance (hover tint). Background/border reset from button UA. */
+.calendar-heatmap-title--button {
+  background: none;
+  border: none;
+  padding: 2px 8px;
+  margin-left: -8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.calendar-heatmap-title--button:hover {
+  background: var(--color-surface-hover);
+}
+
 .calendar-heatmap-nav {
   display: flex;
   gap: var(--space-xs);

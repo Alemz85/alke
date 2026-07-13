@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { SwimSet, WorkoutHrSample } from '@shared/types'
 import {
+  activeTimePercent,
   bestEfforts,
+  buildSetComposition,
   clusterStructure,
   detectSprintSets,
   dpsMPerCycle,
@@ -179,6 +181,44 @@ describe('clusterStructure', () => {
   })
 })
 
+describe('buildSetComposition', () => {
+  it('groups distances to 5m, orders them shortest-first, and totals contributed distance', () => {
+    const rows = buildSetComposition([
+      ...Array.from({ length: 3 }, (_, i) =>
+        set({ set_index: i + 1, distance_m: 198.2 })
+      ),
+      ...Array.from({ length: 9 }, (_, i) =>
+        set({ set_index: i + 4, distance_m: 51.1 })
+      ),
+      set({ set_index: 13, distance_m: 99.1 })
+    ])
+
+    expect(rows.map(({ distanceM, count, contributedDistanceM }) => ({
+      distanceM,
+      count,
+      contributedDistanceM
+    }))).toEqual([
+      { distanceM: 50, count: 9, contributedDistanceM: 450 },
+      { distanceM: 100, count: 1, contributedDistanceM: 100 },
+      { distanceM: 200, count: 3, contributedDistanceM: 600 }
+    ])
+  })
+
+  it('uses a D3 linear scale so bar length represents contributed distance', () => {
+    const rows = buildSetComposition([
+      ...Array.from({ length: 9 }, (_, i) => set({ set_index: i + 1, distance_m: 50 })),
+      ...Array.from({ length: 3 }, (_, i) => set({ set_index: i + 10, distance_m: 200 }))
+    ])
+
+    expect(rows[0].barPercent).toBeCloseTo(75)
+    expect(rows[1].barPercent).toBe(100)
+  })
+
+  it('returns no rows when there are no detected sets', () => {
+    expect(buildSetComposition([])).toEqual([])
+  })
+})
+
 describe('sessionFadePct', () => {
   it('compares second-half mean pace to first-half', () => {
     const sets = [
@@ -274,6 +314,30 @@ describe('detectSprintSets', () => {
     const sets = [...mains, zeroDistance, ...sprints]
     const detected = detectSprintSets(sets)
     expect(detected).toHaveLength(5)
+  })
+})
+
+describe('activeTimePercent', () => {
+  it('divides summed active set time by total workout duration', () => {
+    const sets = [
+      set({ set_index: 1, duration_s: 60 }),
+      set({ set_index: 2, duration_s: 60 }),
+      set({ set_index: 3, duration_s: 60 })
+    ]
+    // 180s active / 240s total session -> 75%
+    expect(activeTimePercent(sets, 240)).toBeCloseTo(75)
+  })
+  it('returns null when workout duration is missing or zero', () => {
+    const sets = [set({ set_index: 1, duration_s: 60 })]
+    expect(activeTimePercent(sets, null)).toBeNull()
+    expect(activeTimePercent(sets, 0)).toBeNull()
+  })
+  it('returns null when there are no detected sets', () => {
+    expect(activeTimePercent([], 600)).toBeNull()
+  })
+  it('is not clamped to 100 when active time exceeds workout duration', () => {
+    const sets = [set({ set_index: 1, duration_s: 120 })]
+    expect(activeTimePercent(sets, 60)).toBeCloseTo(200)
   })
 })
 

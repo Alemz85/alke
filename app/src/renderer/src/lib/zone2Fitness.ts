@@ -78,6 +78,68 @@ export function zone2IndexValue(
   return (row.durable_base ?? 0) + (row.sharpness ?? 0)
 }
 
+export interface Zone2TrajectorySnapshot {
+  start: { date: string; value: number }
+  now: { date: string; value: number }
+  change: number
+  sinceLabel: string
+  currentBand: { lo: number; hi: number } | null
+}
+
+const SHORT_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
+]
+
+/**
+ * The trajectory's always-visible summary, derived independently from its chart.
+ * Rows are sorted because the API contract does not promise ordering; same-day
+ * recomputations use the newest `computed_at`, matching latestZone2Row.
+ */
+export function zone2TrajectorySnapshot(rows: Zone2Fitness[]): Zone2TrajectorySnapshot | null {
+  const valid = rows
+    .map((row) => ({ row, value: zone2IndexValue(row) }))
+    .filter(
+      (entry): entry is { row: Zone2Fitness; value: number } =>
+        entry.value != null && Number.isFinite(entry.value)
+    )
+    .sort((a, b) =>
+      a.row.date === b.row.date
+        ? (a.row.computed_at ?? '').localeCompare(b.row.computed_at ?? '')
+        : a.row.date.localeCompare(b.row.date)
+    )
+
+  if (valid.length === 0) return null
+
+  const start = valid[0]
+  const now = valid[valid.length - 1]
+  const lo = now.row.durable_band_lo
+  const hi = now.row.durable_band_hi
+  const currentBand =
+    lo != null && hi != null && Number.isFinite(lo) && Number.isFinite(hi)
+      ? { lo: Math.min(lo, hi), hi: Math.max(lo, hi) }
+      : null
+  const monthIndex = Number(start.row.date.slice(5, 7)) - 1
+
+  return {
+    start: { date: start.row.date, value: start.value },
+    now: { date: now.row.date, value: now.value },
+    change: now.value - start.value,
+    sinceLabel: SHORT_MONTHS[monthIndex] ?? start.row.date.slice(5, 7),
+    currentBand
+  }
+}
+
 /**
  * The latest row by calendar date. Rows may arrive unsorted; ties broken by
  * `computed_at` when present. Returns null for an empty array.
@@ -181,12 +243,11 @@ function addDaysKey(dateKey: string, n: number): string {
 // questions (this is the fix for the build marker landing 2 days late and the
 // "eases" marker being loud-when-fresh / silent-when-detrained):
 //
-//   BUILD WINDOW — a session-to-session CADENCE, so it is anchored at the LAST
-//     SESSION + row.build_interval_days (the B-scaled cadence the job stored).
-//     Anchoring at the row date would forgive the days already elapsed since the
-//     last session and permit a gap of twice the cadence. Rendered as a 2-day
-//     band (the 24–48h build window), clamped forward so it is never in the past;
-//     if the deadline has passed, the window is today→tomorrow and copy says due.
+//   BUILD WINDOW — the literal interval from 24h through 48h after the LAST
+//     SESSION timestamp. It is never clamped forward: an elapsed window stays on
+//     the dates when it actually occurred, while copy reports that it is overdue.
+//     build_interval_days still supplies the model-derived dose copy, but does
+//     not redefine a UI band labelled "24–48h".
 //
 //   EASES / HOLD — FROM-TODAY durable-erosion projections, so they anchor at the
 //     ROW date (its state already embeds the gap). They appear ONLY in the
@@ -220,11 +281,10 @@ export type Zone2Phase = 'building' | 'maintenance' | 'unknown'
 
 export interface Zone2CalendarGuidance {
   phase: Zone2Phase
-  /** The 2-day build WINDOW (the 24–48h cadence band), anchored at the last
-   *  session + the stored cadence and clamped forward so it is never in the past.
-   *  Null when there is no cadence to place. */
+  /** Calendar dates intersecting the literal +24h to +48h window after the last
+   *  qualifying session. Null without both a session timestamp and stored cadence. */
   buildWindow: { start: string; end: string } | null
-  /** True when the build-cadence deadline is already due/overdue (train now). */
+  /** True once the literal +48h build window has closed. */
   buildOverdue: boolean
   /** Maintenance phase only: first day the durable base erodes past the band
    *  ("YYYY-MM-DD"), else null. Anchored at the ROW date (a from-today projection). */
@@ -261,7 +321,18 @@ export function formatGuidanceDate(dateKey: string): string {
   const dt = new Date(Date.UTC(y, m - 1, d))
   const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]
   const month = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
   ][dt.getUTCMonth()]
   return `${weekday} ${d} ${month}`
 }
@@ -271,41 +342,74 @@ export function formatGuidanceDate(dateKey: string): string {
 function buildDoseCopy(buildIntervalDays: number): string {
   const n = Math.max(1, Math.round(buildIntervalDays))
   const perWeek = 7 / n
-  const perWeekLabel = perWeek >= 1 ? Math.round(perWeek * 10) / 10 : Math.round(perWeek * 100) / 100
+  const perWeekLabel =
+    perWeek >= 1 ? Math.round(perWeek * 10) / 10 : Math.round(perWeek * 100) / 100
   return `Build · a Zone 2 session every ~${n} day${n === 1 ? '' : 's'} (≈${perWeekLabel}/wk) at Zone 2 intensity.`
 }
 
 /**
- * Forward-looking Zone-2 coaching dates from the model's own stored horizons +
- * session history (for copy only). PURE — fixed `today`, deterministic.
+ * Zone-2 coaching dates from the model's stored erosion horizons plus exact
+ * session history. PURE when `nowIso` is supplied.
  *
- * Every marker date traces directly to a horizon column stored on the row
- * (warn_after_days / maintain_horizon_days / build_interval_days), anchored at
- * the ROW'S DATE. The renderer performs no projection math and reintroduces no
- * fixed offsets. A null horizon omits its marker; a horizon that resolves to
- * today-or-earlier is shown honestly as "already easing", clamped to today for
- * display only.
+ * The build marker is the literal +24h to +48h interval after the latest Zone 2
+ * workout. Erosion and hold markers trace to their model horizon columns and
+ * remain anchored at the model row date.
  *
- * `sessionDates` are Zone-2 session day keys ("YYYY-MM-DD"), any order, dupes ok
- * — used only for `lastSession`/`sessions7d` copy, never as an anchor.
- * `today` is the reference "YYYY-MM-DD" (never mutated).
+ * `sessionStarts` are ISO workout timestamps, any order, duplicates tolerated.
+ * Date-only values remain accepted for older callers and tests. `today` is the
+ * reference local date key; `timezone` controls calendar projection.
  */
 export function zone2CalendarGuidance(
   row:
-    | Pick<Zone2Fitness, 'date' | 'warn_after_days' | 'maintain_horizon_days' | 'build_interval_days'>
+    | Pick<
+        Zone2Fitness,
+        'date' | 'warn_after_days' | 'maintain_horizon_days' | 'build_interval_days'
+      >
     | null
     | undefined,
-  sessionDates: string[],
-  today: string
+  sessionStarts: string[],
+  today: string,
+  timezone = 'UTC',
+  nowIso?: string
 ): Zone2CalendarGuidance {
-  // Most-recent session date (clamp anything in the future to at most today so a
-  // stray future-dated row can't push it out) — copy only, never an anchor.
-  let lastSession: string | null = null
-  for (const raw of sessionDates) {
-    if (!raw) continue
-    const d = raw > today ? today : raw
-    if (lastSession == null || d > lastSession) lastSession = d
+  const fallbackNow = Date.parse(`${today}T23:59:59.999Z`)
+  const parsedNow = nowIso ? Date.parse(nowIso) : fallbackNow
+  const nowMs = Number.isFinite(parsedNow) ? parsedNow : fallbackNow
+
+  const localKey = (timestampMs: number): string => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).formatToParts(new Date(timestampMs))
+      const part = (type: Intl.DateTimeFormatPartTypes): string =>
+        parts.find((candidate) => candidate.type === type)?.value ?? ''
+      return `${part('year')}-${part('month')}-${part('day')}`
+    } catch {
+      return new Date(timestampMs).toISOString().slice(0, 10)
+    }
   }
+
+  // Date-only values remain supported for deterministic tests/legacy callers;
+  // production passes full workout instants. Noon avoids accidental day shifts.
+  const parseStart = (raw: string): number =>
+    Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00.000Z` : raw)
+
+  const validStarts = sessionStarts
+    .map(parseStart)
+    .filter((value) => Number.isFinite(value) && value <= nowMs)
+  const sessionDates = validStarts.map(localKey)
+
+  // Most-recent real session instant. Future-dated rows are ignored rather than
+  // coerced onto today, so bad source data cannot invent a current anchor.
+  let lastSessionAt: number | null = null
+  let lastSession: string | null = null
+  for (const start of validStarts) {
+    if (lastSessionAt == null || start > lastSessionAt) lastSessionAt = start
+  }
+  if (lastSessionAt != null) lastSession = localKey(lastSessionAt)
 
   const sessions7d = trailing7Count(sessionDates, today)
   const markers: Record<string, Zone2CalendarMarker> = {}
@@ -325,10 +429,9 @@ export function zone2CalendarGuidance(
 
   if (!row) return empty('Not enough data yet to place a build window.')
 
-  // ── BUILD WINDOW (a 2-day 24–48h band). The stored cadence is a
-  // session-to-session interval, so it is anchored at the LAST SESSION (falling
-  // back to today when none is on record). Clamped forward: the window always
-  // ends at least tomorrow and never starts in the past. ──
+  // ── BUILD WINDOW. Literal [last session + 24h, last session + 48h), projected
+  // onto every local calendar day it intersects. The half-open end prevents a
+  // window closing exactly at midnight from incorrectly marking the next day. ──
   const cadence =
     row.build_interval_days != null && Number.isFinite(row.build_interval_days)
       ? Math.max(0, row.build_interval_days)
@@ -336,20 +439,22 @@ export function zone2CalendarGuidance(
   const buildDose = cadence != null ? buildDoseCopy(cadence as number) : null
   let buildWindow: { start: string; end: string } | null = null
   let buildOverdue = false
-  if (cadence != null) {
-    const anchor = lastSession ?? today
-    const dueRaw = addDaysKey(anchor, cadence) // fractional deadline, rounded to a day
-    buildOverdue = dueRaw <= today
-    const end = maxKey(addDaysKey(today, 1), dueRaw) // deadline, at least tomorrow
-    const start = maxKey(today, addDaysKey(end, -1)) // 2-day window, never before today
+  if (cadence != null && lastSessionAt != null) {
+    const windowStartMs = lastSessionAt + 24 * 60 * 60 * 1000
+    const windowEndMs = lastSessionAt + 48 * 60 * 60 * 1000
+    buildOverdue = nowMs >= windowEndMs
+    const start = localKey(windowStartMs)
+    const end = localKey(windowEndMs - 1)
     buildWindow = { start, end }
     const range = `${formatGuidanceDate(start)}–${formatGuidanceDate(end)}`
     const label = buildOverdue
       ? `Due now — train today to keep building. ${buildDose ?? ''}`.trim()
       : `Build window · train ${range} to keep building. ${buildDose ?? ''}`.trim()
-    // Both cells carry the build marker (the whole band is "on-cadence").
-    markers[start] = { kind: 'build', label }
-    markers[end] = { kind: 'build', label }
+    let markerDate = start
+    while (markerDate <= end) {
+      markers[markerDate] = { kind: 'build', label }
+      markerDate = addDaysKey(markerDate, 1)
+    }
   }
 
   // ── PHASE. warn_after_days (the durable-erosion-vs-band "eases" horizon) is
@@ -357,8 +462,7 @@ export function zone2CalendarGuidance(
   // BUILDING phase, where only the build window is shown. A present horizon means
   // a base worth protecting: the MAINTENANCE phase adds eases + hold markers,
   // anchored at the ROW date (from-today projections). ──
-  const maintenance =
-    row.warn_after_days != null && Number.isFinite(row.warn_after_days)
+  const maintenance = row.warn_after_days != null && Number.isFinite(row.warn_after_days)
   const phase: Zone2Phase = maintenance ? 'maintenance' : 'building'
 
   let easesFrom: string | null = null

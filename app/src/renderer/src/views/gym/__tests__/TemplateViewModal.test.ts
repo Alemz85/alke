@@ -1,0 +1,53 @@
+import { createElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import type { GymTemplate } from '@shared/types'
+import { TemplateViewModal } from '../TemplateViewModal'
+
+describe('TemplateViewModal', () => {
+  it('keeps exercise-specific instructions visible below the exercise name', () => {
+    const template: GymTemplate = {
+      id: 'template-a',
+      name: 'Full Body A',
+      notes: 'Use controlled working sets.',
+      archived: false,
+      default_rest_s: null,
+      family_id: 'template-a-family',
+      version: 1,
+      is_current: true,
+      runs: [],
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: null,
+      items: [{
+        id: 'item-a',
+        template_id: 'template-a',
+        exercise_id: 'exercise-a',
+        exercise_name: 'Goblet Squat',
+        position: 0,
+        target_sets: 3,
+        target_reps: 10,
+        target_weight_kg: null,
+        rest_after_s: null,
+        note: 'Use an 8–12 rep range and leave 2 reps in reserve.'
+      }]
+    }
+
+    const queryClient = new QueryClient()
+    const markup = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(TemplateViewModal, {
+          template,
+          usageCount: 0,
+          onEdit: () => undefined,
+          onClose: () => undefined
+        })
+      )
+    )
+
+    expect(markup).toContain('Goblet Squat')
+    expect(markup).toContain('Use an 8–12 rep range and leave 2 reps in reserve.')
+  })
+})

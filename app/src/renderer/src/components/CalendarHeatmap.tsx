@@ -1,10 +1,11 @@
-import type { ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { DayBucket } from '../hooks/sessionsCompute'
 import { durationStepIndex } from '../hooks/sessionsCompute'
 import { calendarDayLabel } from '../lib/calendarDayLabel'
 import { buildMonthGrid, MONTH_NAMES, WEEKDAY_LABELS, type YMD } from '../hooks/sessionsDate'
 import { modalityToDomain } from './modalityAccent'
+import { MonthYearPicker } from './MonthYearPicker'
 import './CalendarHeatmap.css'
 
 /** A forward-looking coaching annotation for a single day cell (Zone 2 tab). */
@@ -34,6 +35,12 @@ export interface CalendarHeatmapProps {
    * ("Swim · 44m", "Gym · 1h 45m"). Opt-in — the Zone 2 calendar leaves it off.
    */
   showDayLabel?: boolean
+  /**
+   * When provided, the month title becomes a button that opens a year/month
+   * picker so the user can jump straight to any month. Opt-in — views that
+   * don't pass it keep a plain, non-interactive title.
+   */
+  onJumpToMonth?: (year: number, month: number) => void
 }
 
 export function CalendarHeatmap({
@@ -45,17 +52,63 @@ export function CalendarHeatmap({
   onPrevMonth,
   onNextMonth,
   markers,
-  showDayLabel = false
+  showDayLabel = false,
+  onJumpToMonth
 }: CalendarHeatmapProps): ReactElement {
   const cells = buildMonthGrid(year, month)
   const todayKey = `${today.year.toString().padStart(4, '0')}-${today.month.toString().padStart(2, '0')}-${today.day.toString().padStart(2, '0')}`
 
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const titleWrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!pickerOpen) return
+    function onDocMouseDown(e: MouseEvent): void {
+      if (titleWrapRef.current && !titleWrapRef.current.contains(e.target as Node)) {
+        setPickerOpen(false)
+      }
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [pickerOpen])
+
+  const titleText = `${MONTH_NAMES[month - 1]} ${year}`
+
   return (
     <div className="calendar-heatmap">
       <div className="calendar-heatmap-header">
-        <h3 className="calendar-heatmap-title">
-          {MONTH_NAMES[month - 1]} {year}
-        </h3>
+        {onJumpToMonth ? (
+          <div className="calendar-heatmap-title-wrap" ref={titleWrapRef}>
+            <button
+              type="button"
+              className="calendar-heatmap-title calendar-heatmap-title--button"
+              onClick={() => setPickerOpen((o) => !o)}
+              aria-haspopup="dialog"
+              aria-expanded={pickerOpen}
+            >
+              {titleText}
+            </button>
+            {pickerOpen && (
+              <MonthYearPicker
+                year={year}
+                month={month}
+                onSelect={(y, m) => {
+                  onJumpToMonth(y, m)
+                  setPickerOpen(false)
+                }}
+              />
+            )}
+          </div>
+        ) : (
+          <h3 className="calendar-heatmap-title">{titleText}</h3>
+        )}
         <div className="calendar-heatmap-nav">
           <button
             type="button"

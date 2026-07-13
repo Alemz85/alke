@@ -51,6 +51,32 @@ export function isoWeekStart(ymd: string): string {
   return toYMD(d)
 }
 
+/** Plan week on `dateYMD`: 0 before start, 1-based after start, null for legacy plans. */
+export function currentPlanWeek(planStartedAt: string | null, dateYMD: string): number | null {
+  if (planStartedAt == null) return null
+  const elapsed = daysBetween(planStartedAt, dateYMD)
+  return elapsed < 0 ? 0 : Math.floor(elapsed / 7) + 1
+}
+
+/** Calendar date on which an item's cumulative plan phase becomes accountable. */
+export function phaseStartYMD(
+  item: Pick<RecoveryPlanItem, 'start_week'>,
+  planStartedAt: string | null
+): string | null {
+  if (planStartedAt == null) return null
+  return shiftYMD(planStartedAt, 7 * (Math.max(1, item.start_week ?? 1) - 1))
+}
+
+/** Legacy plans without a start date treat every active item as already due. */
+export function isPlanItemAccountable(
+  item: Pick<RecoveryPlanItem, 'start_week'>,
+  planStartedAt: string | null,
+  dateYMD: string
+): boolean {
+  const starts = phaseStartYMD(item, planStartedAt)
+  return starts == null || starts <= dateYMD
+}
+
 // ── daily pain resolution ──────────────────────────────────────────────────
 // A day's effective pain is the MAX pain logged that day: "fine at 18:00, flare
 // at night → flare day". All flare stats plot and count on day-maxes, so a day
@@ -179,66 +205,118 @@ function targetedItems(items: RecoveryPlanItem[]): RecoveryPlanItem[] {
 }
 
 /**
- * Percentage of weekly targets met over a trailing `days` window, averaged
- * across active targeted items and rounded. null when no such items exist.
+ * Dose that the plan author considers therapeutically acceptable. The plan's
+ * green threshold is authoritative when present; older plans fall back to the
+ * requested weekly target.
+ */
+function adherenceDose(item: RecoveryPlanItem): number {
+  return item.green_min ?? (item.weekly_target as number)
+}
+
+/** Count distinct checked days, insulating the score from duplicate rows. */
+function checkedDays(
+  checks: PlanItemCheck[],
+  itemId: string,
+  fromYMD: string,
+  toYMD: string
+): number {
+  return new Set(
+    checks
+      .filter((c) => {
+        const d = c.done_date.slice(0, 10)
+        return c.item_id === itemId && d >= fromYMD && d <= toYMD
+      })
+      .map((c) => c.done_date.slice(0, 10))
+  ).size
+}
+
+/** Aggregate adherence is intentionally shown in coarse five-point bands. */
+function adherenceBand(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value / 5) * 5))
+}
+
+function accountableWindow(
+  item: Pick<RecoveryPlanItem, 'start_week'>,
+  planStartedAt: string | null,
+  fromYMD: string,
+  toYMD: string
+): { fromYMD: string; days: number } | null {
+  const starts = phaseStartYMD(item, planStartedAt)
+  if (starts != null && starts > toYMD) return null
+  const accountableFrom = starts != null && starts > fromYMD ? starts : fromYMD
+  return { fromYMD: accountableFrom, days: daysBetween(accountableFrom, toYMD) + 1 }
+}
+
+/**
+ * Percentage of acceptable rehab dose met over a trailing `days` window,
+ * averaged equally across active targeted exercises. The green efficacy
+ * threshold is the denominator when available; older plans use weekly_target.
+ * Activity clearance, habits and constraints remain visible but unscored.
  *
- * expected = weekly_target * (days/7); per-item score = min(1, done/expected);
- * result = mean(scores) * 100.
+ * Duplicate checks on one item/day count once. The aggregate is returned in
+ * five-point bands to avoid suggesting precision the plan cannot support.
  */
 export function adherencePct(
   items: RecoveryPlanItem[],
   checks: PlanItemCheck[],
   todayYMD: string,
-  days: number
+  days: number,
+  planStartedAt: string | null = null
 ): number | null {
   const targeted = targetedItems(items)
   if (targeted.length === 0) return null
 
-  const fromExclusive = shiftYMD(todayYMD, -days)
-  const inWindow = (c: PlanItemCheck): boolean => {
-    const d = c.done_date.slice(0, 10)
-    return d > fromExclusive && d <= todayYMD
-  }
+  const fromInclusive = shiftYMD(todayYMD, -(days - 1))
 
   let sum = 0
+  let accountableCount = 0
   for (const item of targeted) {
-    const expected = (item.weekly_target as number) * (days / 7)
-    const done = checks.filter((c) => c.item_id === item.id && inWindow(c)).length
+    const window = accountableWindow(item, planStartedAt, fromInclusive, todayYMD)
+    if (window == null) continue
+    const expected = adherenceDose(item) * (window.days / 7)
+    const done = checkedDays(checks, item.id, window.fromYMD, todayYMD)
     sum += Math.min(1, expected === 0 ? 0 : done / expected)
+    accountableCount++
   }
-  return Math.round((sum / targeted.length) * 100)
+  return accountableCount === 0 ? null : adherenceBand((sum / accountableCount) * 100)
 }
 
 /**
  * Weekly adherence % for the trailing `weeks` ISO weeks (oldest → newest), for
- * the sparkline underlay. Each entry is a whole ISO week; pct is the average
- * per-item completion (done/weekly_target, capped at 1) across targeted items.
+ * the sparkline underlay. Completed weeks use the full acceptable dose. The
+ * current week uses the whole-number dose expected by the elapsed weekday, so
+ * Friday is not compared with seven completed days. This is a pace indicator,
+ * not a prediction of final adherence.
  */
 export function weeklyAdherence(
   items: RecoveryPlanItem[],
   checks: PlanItemCheck[],
   todayYMD: string,
-  weeks: number
-): Array<{ weekStart: string; pct: number }> {
+  weeks: number,
+  planStartedAt: string | null = null
+): Array<{ weekStart: string; pct: number | null }> {
   const targeted = targetedItems(items)
   const currentWeekStart = isoWeekStart(todayYMD)
-  const out: Array<{ weekStart: string; pct: number }> = []
+  const out: Array<{ weekStart: string; pct: number | null }> = []
 
   for (let i = weeks - 1; i >= 0; i--) {
     const weekStart = shiftYMD(currentWeekStart, -7 * i)
     const weekEnd = shiftYMD(weekStart, 6)
-    let pct = 0
+    const isCurrent = weekStart === currentWeekStart
+    let pct: number | null = targeted.length === 0 ? 0 : null
     if (targeted.length > 0) {
       let sum = 0
+      let accountableCount = 0
+      const scoreEnd = isCurrent ? todayYMD : weekEnd
       for (const item of targeted) {
-        const target = item.weekly_target as number
-        const done = checks.filter((c) => {
-          const d = c.done_date.slice(0, 10)
-          return c.item_id === item.id && d >= weekStart && d <= weekEnd
-        }).length
+        const window = accountableWindow(item, planStartedAt, weekStart, scoreEnd)
+        if (window == null) continue
+        const target = adherenceDose(item) * (window.days / 7)
+        const done = checkedDays(checks, item.id, window.fromYMD, scoreEnd)
         sum += Math.min(1, target === 0 ? 0 : done / target)
+        accountableCount++
       }
-      pct = Math.round((sum / targeted.length) * 100)
+      if (accountableCount > 0) pct = adherenceBand((sum / accountableCount) * 100)
     }
     out.push({ weekStart, pct })
   }
@@ -257,11 +335,23 @@ export function weeklyProgress(
   if (item.weekly_target == null || item.weekly_target <= 0) return null
   const weekStart = isoWeekStart(todayYMD)
   const weekEnd = shiftYMD(weekStart, 6)
-  const done = checks.filter((c) => {
-    const d = c.done_date.slice(0, 10)
-    return c.item_id === item.id && d >= weekStart && d <= weekEnd
-  }).length
+  const done = checkedDays(checks, item.id, weekStart, weekEnd)
   return { done, target: item.weekly_target }
+}
+
+/** Human-readable progress that never frames a future phase as currently due. */
+export function weeklyProgressStatus(
+  item: RecoveryPlanItem,
+  checks: PlanItemCheck[],
+  todayYMD: string,
+  planStartedAt: string | null = null
+): string | null {
+  const progress = weeklyProgress(item, checks, todayYMD)
+  if (progress == null) return null
+  if (!isPlanItemAccountable(item, planStartedAt, todayYMD)) {
+    return progress.done > 0 ? `${progress.done} done early` : null
+  }
+  return `${progress.done}/${progress.target} this week`
 }
 
 /**
@@ -273,9 +363,15 @@ export function weeklyProgress(
 export function dayScore(
   items: RecoveryPlanItem[],
   checks: PlanItemCheck[],
-  dateYMD: string
+  dateYMD: string,
+  planStartedAt: string | null = null
 ): { done: number; total: number } {
-  const exercises = items.filter((i) => i.active && i.kind === 'exercise')
+  const exercises = items.filter(
+    (i) =>
+      i.active &&
+      i.kind === 'exercise' &&
+      isPlanItemAccountable(i, planStartedAt, dateYMD)
+  )
   const total = exercises.length
   if (total === 0) return { done: 0, total: 0 }
   const exerciseIds = new Set(exercises.map((i) => i.id))
@@ -356,10 +452,10 @@ export interface WeekMatrixRow {
   /** e.g. "Jun 29 – Jul 5" */
   label: string
   /** One entry per active item, in the order the items were passed. */
-  perItem: Array<{ itemId: string; done: number; target: number | null }>
+  perItem: Array<{ itemId: string; done: number; target: number | null; accountable: boolean }>
   /**
-   * Mean capped completion (done/target, max 1) across targeted EXERCISE items
-   * only, as a rounded percentage. null when no targeted exercise items exist.
+   * Mean capped completion against each item's acceptable efficacy dose across
+   * targeted EXERCISE items only, in five-point bands. null when none exist.
    */
   overallPct: number | null
 }
@@ -367,42 +463,54 @@ export interface WeekMatrixRow {
 /**
  * Per-item weekly done-counts for the trailing `weeks` PAST ISO weeks — the
  * current week is excluded — newest first. Inactive items are skipped.
+ * Rows never precede the ISO week the recovery plan started in: once the
+ * walk-back reaches that week, generation stops even if `weeks` asked for
+ * more. Without a `planStartedAt`, all `weeks` are generated (legacy plans).
  */
 export function weeklyMatrix(
   items: RecoveryPlanItem[],
   checks: PlanItemCheck[],
   todayYMD: string,
-  weeks: number
+  weeks: number,
+  planStartedAt: string | null = null
 ): WeekMatrixRow[] {
   const active = items.filter((i) => i.active)
   const targeted = active.filter(
     (i) => i.kind === 'exercise' && i.weekly_target != null && i.weekly_target > 0
   )
   const currentWeekStart = isoWeekStart(todayYMD)
+  const planStartWeek = planStartedAt != null ? isoWeekStart(planStartedAt) : null
   const rows: WeekMatrixRow[] = []
 
   for (let i = 1; i <= weeks; i++) {
     const weekStart = shiftYMD(currentWeekStart, -7 * i)
+    if (planStartWeek != null && weekStart < planStartWeek) break
     const weekEnd = shiftYMD(weekStart, 6)
     const doneFor = (itemId: string): number =>
-      checks.filter((c) => {
-        const d = c.done_date.slice(0, 10)
-        return c.item_id === itemId && d >= weekStart && d <= weekEnd
-      }).length
+      checkedDays(checks, itemId, weekStart, weekEnd)
 
     const perItem = active.map((item) => ({
       itemId: item.id,
       done: doneFor(item.id),
-      target: item.weekly_target
+      target: item.weekly_target,
+      accountable: accountableWindow(item, planStartedAt, weekStart, weekEnd) != null
     }))
 
     let overallPct: number | null = null
     if (targeted.length > 0) {
       let sum = 0
+      let accountableCount = 0
       for (const item of targeted) {
-        sum += Math.min(1, doneFor(item.id) / (item.weekly_target as number))
+        const window = accountableWindow(item, planStartedAt, weekStart, weekEnd)
+        if (window == null) continue
+        const expected = adherenceDose(item) * (window.days / 7)
+        const done = checkedDays(checks, item.id, window.fromYMD, weekEnd)
+        sum += Math.min(1, expected === 0 ? 0 : done / expected)
+        accountableCount++
       }
-      overallPct = Math.round((sum / targeted.length) * 100)
+      if (accountableCount > 0) {
+        overallPct = adherenceBand((sum / accountableCount) * 100)
+      }
     }
 
     rows.push({
@@ -414,6 +522,20 @@ export function weeklyMatrix(
     })
   }
   return rows
+}
+
+/**
+ * How many PAST ISO weeks (excluding the current week) exist between the
+ * plan-start week and today — the ceiling `weeklyMatrix` walk-back can ever
+ * fill. Without a `planStartedAt`, there is no floor: callers should treat
+ * this as "unbounded" (e.g. keep paging by a fixed page size) rather than 0.
+ */
+export function maxWeeksAvailable(todayYMD: string, planStartedAt: string | null): number | null {
+  if (planStartedAt == null) return null
+  const currentWeekStart = isoWeekStart(todayYMD)
+  const planStartWeek = isoWeekStart(planStartedAt)
+  const weeks = Math.floor(daysBetween(planStartWeek, currentWeekStart) / 7)
+  return Math.max(0, weeks)
 }
 
 // ── unified timeline ─────────────────────────────────────────────────────────

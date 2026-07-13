@@ -271,7 +271,13 @@ def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, li
 def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     import pandas as pd
 
-    from metrics.insights import compute_correlations, ef_dlm, weight_series, zscore_trailing
+    from metrics.insights import (
+        compute_correlations,
+        discover_adjusted_insights,
+        ef_dlm,
+        weight_series,
+        zscore_trailing,
+    )
 
     # per-day performance: EF (swim-only) / decoupling / HRR60 per day
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
@@ -334,6 +340,14 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     correlations = compute_correlations(zscore_trailing(frame))
     db.replace_insight_correlations(sb, correlations)
     print(f"insight_correlations: {len(correlations)} pairs")
+
+    finder = discover_adjusted_insights(frame)
+    db.upsert_insight_model(sb, finder)
+    print(
+        "insight_models: daily_adjusted_finder "
+        f"({finder['diagnostics']['signal_count']} signals, "
+        f"{finder['diagnostics']['watch_count']} watch)"
+    )
 
     model = ef_dlm(frame)
     if model is not None:
