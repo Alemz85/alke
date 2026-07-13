@@ -1,5 +1,6 @@
 import { config as loadEnv } from 'dotenv'
 import { randomUUID } from 'crypto'
+import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { app, shell, screen, BrowserWindow, ipcMain } from 'electron'
@@ -18,6 +19,27 @@ if (envPath) {
   console.log(`[env] loaded credentials from ${envPath}`)
 } else {
   console.log(`[env] no .env found in any candidate location: ${envCandidates.join(', ')}`)
+}
+
+// A packaged app launched from Finder/Dock (LaunchServices) does not inherit the user's
+// shell PATH the way a terminal-launched `npm run dev` does — so a `claude` CLI installed
+// via Homebrew/nvm (added to PATH by .zprofile/.zshrc) is invisible to chat.ts's spawn/execFile
+// calls, which read process.env.PATH. Import the real PATH from a login shell once at startup.
+if (app.isPackaged && process.platform !== 'win32') {
+  try {
+    const loginShell = process.env.SHELL || '/bin/zsh'
+    const output = execFileSync(loginShell, ['-ilc', 'echo -n "__PATH__$PATH__PATH__"'], {
+      encoding: 'utf8',
+      timeout: 10_000
+    })
+    const match = output.match(/__PATH__(.*)__PATH__/s)
+    if (match) {
+      process.env.PATH = match[1]
+      console.log('[path] imported PATH from login shell for packaged app')
+    }
+  } catch (error) {
+    console.log(`[path] could not import PATH from login shell: ${(error as Error).message}`)
+  }
 }
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
