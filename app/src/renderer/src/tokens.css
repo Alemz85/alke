@@ -183,6 +183,14 @@
   /* Motion */
   --motion-hover: 150ms ease-out;
   --motion-chart: 300ms ease;
+  /* Entrance/exit choreography: ease-out (fast settle, no bounce/elastic) for
+     enters, a quicker curve for exits. Transform + opacity only, never layout
+     properties. Reduced-motion is neutralized globally in global.css. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-backdrop: 190ms;
+  --motion-entrance: 260ms;
+  --motion-exit: 150ms;
 
   /* Focus ring */
   --focus-ring-color: rgba(255, 255, 255, 0.4);

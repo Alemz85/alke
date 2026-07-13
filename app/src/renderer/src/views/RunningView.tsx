@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import type { Workout } from '@shared/types'
 import { ChartCard, EmptyState, MetricCard, RecentSessionsCard } from '../components'
+import { HeroNumber } from '../components/HeroNumber'
 import { addDays, isoWeekKey, isoWeekStart, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 import { CHART, chartTooltipStyle } from '../lib/chartTheme'
 import { buildNumericAxis } from '../lib/cardioChartScales'
@@ -249,9 +250,11 @@ export function RunningView({
         <div className="running-overview-top">
           <div className="running-lifetime-intro">
             <span className="running-section-kicker">Lifetime distance</span>
-            <strong className="running-lifetime-distance tabular-nums">
-              {formatDistance(lifetime.distanceKm)}
-            </strong>
+            <HeroNumber
+              value={lifetime.distanceKm}
+              format={formatDistance}
+              className="running-lifetime-distance"
+            />
             <span className="running-lifetime-caption">Across every recorded run</span>
           </div>
           <div className="running-lifetime-facts">

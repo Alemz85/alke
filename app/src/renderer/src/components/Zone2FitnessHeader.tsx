@@ -37,6 +37,7 @@ import {
   zone2IndexValue,
   zone2Meters
 } from '../lib/zone2Fitness'
+import { HeroNumber } from './HeroNumber'
 import { Zone2Trajectory } from './Zone2Trajectory'
 import './Zone2FitnessHeader.css'
 
@@ -366,15 +367,11 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
             <div className="z2f-score-block">
               <span className="z2f-field-label">Current index</span>
               <div className="z2f-score-line">
-                <span
-                  className={
-                    evidenceOk
-                      ? 'z2f-index tabular-nums'
-                      : 'z2f-index z2f-index--stale tabular-nums'
-                  }
-                >
-                  {indexRounded ?? '—'}
-                </span>
+                <HeroNumber
+                  value={indexRounded}
+                  format={(n) => Math.round(n).toString()}
+                  className={evidenceOk ? 'z2f-index' : 'z2f-index z2f-index--stale'}
+                />
                 <span className="z2f-index-total">/ 100</span>
               </div>
               <dl className="z2f-score-meta">

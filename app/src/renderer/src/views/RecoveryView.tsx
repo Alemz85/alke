@@ -17,8 +17,9 @@ import {
 } from 'recharts'
 import { quantile } from 'd3-array'
 import { TabHeader } from './TabHeader'
-import { ChartCard, ChipFilter, EmptyState, FlagBanner, HeroMetric, MetricCard } from '../components'
+import { ChartCard, ChipFilter, EmptyState, FlagBanner, MetricCard } from '../components'
 import type { ChipRange } from '../components'
+import { HeroNumber } from '../components/HeroNumber'
 import {
   RANGE_DAYS,
   useRecoveryComputedDaily,
@@ -303,13 +304,29 @@ export function RecoveryView(): ReactElement {
       )}
 
       <section className="recovery-hero" aria-label="Last night recovery summary">
-        <HeroMetric
-          eyebrow="RECOVERY · LAST NIGHT"
-          value={latestSleepMinutes === null ? EM_DASH : fmtHoursMinutes(latestSleepMinutes)}
-          delta={heroCaption}
-          deltaPositive={sleepDeltaMin !== null && sleepDeltaMin >= 0}
-          domain="recovery"
-        />
+        <div className="hero-metric">
+          <div className="hero-metric-eyebrow hero-metric-eyebrow--recovery">
+            RECOVERY · LAST NIGHT
+          </div>
+          <div className="hero-metric-row">
+            <HeroNumber
+              value={latestSleepMinutes}
+              format={(n) => fmtHoursMinutes(n)}
+              className="hero-metric-value"
+            />
+          </div>
+          {heroCaption && (
+            <div
+              className={
+                sleepDeltaMin !== null && sleepDeltaMin >= 0
+                  ? 'hero-metric-delta hero-metric-delta--recovery'
+                  : 'hero-metric-delta hero-metric-delta--neutral'
+              }
+            >
+              {heroCaption}
+            </div>
+          )}
+        </div>
 
         <div className="recovery-hero-details">
           <div className="recovery-hero-window">

@@ -11,6 +11,19 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  transform-origin: top left;
+  animation: popover-in var(--motion-exit) var(--ease-out-quart) both;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .month-year-picker-yearrow {

@@ -1,0 +1,7 @@
+/* Presentational only — the count-up target inherits its parent's typography
+   (hero size/weight/color live on the caller's own class, e.g. .z2f-index,
+   .running-lifetime-distance, .hero-metric-value). This class only pins
+   tabular figures so the digit width never jitters mid-count. */
+.hero-number {
+  font-variant-numeric: tabular-nums;
+}
