@@ -28,8 +28,9 @@ supabase/.branches/
 .idea/
 .vscode/
 
-# Claude local settings
+# Claude local settings + bundled skills mirror (regenerable tooling, not app code)
 .claude/settings.local.json
+.claude/skills/
 metrics/.venv/
 
 # Cross-tool agent skills mirror (redundant copy of .claude/skills for non-Claude
