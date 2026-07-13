@@ -1202,25 +1202,30 @@ select.gym-input {
   transition: width var(--motion-hover);
 }
 
+/* Fatigue is one continuum ("how loaded is this muscle right now"), so it
+   stays inside the load family end to end — intensity (opacity), not hue,
+   carries fresh -> fatigued. Borrowing aerobic/recovery/sessions hues here
+   would misuse those domains' meaning for an unrelated reading. */
 .gym-mv-group--fresh .gym-mv-bar:not(.gym-mv-bar--prev) {
-  background: var(--color-zone2);
+  opacity: 0.45;
 }
 
 .gym-mv-group--ready .gym-mv-bar:not(.gym-mv-bar--prev) {
-  background: var(--color-aerobic);
+  opacity: 0.7;
 }
 
 .gym-mv-group--loaded .gym-mv-bar:not(.gym-mv-bar--prev) {
-  background: var(--color-sessions);
+  opacity: 0.88;
 }
 
 .gym-mv-group--fatigued .gym-mv-bar:not(.gym-mv-bar--prev) {
-  background: var(--color-recovery);
+  opacity: 1;
 }
 
 .gym-mv-sets {
   font-size: var(--type-body-sm-size);
-  color: var(--color-text);
+  font-weight: 600;
+  color: var(--color-load-text);
   text-align: right;
 }
 
@@ -1250,36 +1255,43 @@ select.gym-input {
   flex-shrink: 0;
 }
 
+/* Same load-family ramp as .gym-mv-bar above: fresh -> fatigued reads by
+   saturation/weight within one hue, never by borrowing another domain. */
 .gym-mv-fatigue--fresh {
-  color: var(--color-zone2);
+  color: var(--color-text-secondary);
 }
 
 .gym-mv-fatigue--fresh .gym-mv-fatigue-dot {
-  background: var(--color-zone2);
+  background: var(--color-load);
+  opacity: 0.45;
 }
 
 .gym-mv-fatigue--ready {
-  color: var(--color-aerobic-text);
+  color: var(--color-load-text);
 }
 
 .gym-mv-fatigue--ready .gym-mv-fatigue-dot {
-  background: var(--color-aerobic);
+  background: var(--color-load);
+  opacity: 0.7;
 }
 
 .gym-mv-fatigue--loaded {
-  color: var(--color-sessions-text);
+  color: var(--color-load-text);
+  font-weight: 600;
 }
 
 .gym-mv-fatigue--loaded .gym-mv-fatigue-dot {
-  background: var(--color-sessions);
+  background: var(--color-load);
+  opacity: 0.88;
 }
 
 .gym-mv-fatigue--fatigued {
-  color: var(--color-recovery-text);
+  color: var(--color-load-text);
+  font-weight: 600;
 }
 
 .gym-mv-fatigue--fatigued .gym-mv-fatigue-dot {
-  background: var(--color-recovery);
+  background: var(--color-load);
 }
 
 .gym-mv-muscles {
@@ -1385,7 +1397,7 @@ select.gym-input {
 }
 
 .gym-str-score {
-  color: var(--color-text);
+  color: var(--color-load-text);
   font-family: var(--font-display);
   font-size: var(--type-heading-lg-size);
   font-weight: var(--type-heading-lg-weight);
@@ -1427,7 +1439,7 @@ select.gym-input {
 }
 
 .gym-str-level-current {
-  background: var(--color-zone1);
+  background: var(--color-load);
 }
 
 .gym-str-level-reference {
@@ -1483,8 +1495,8 @@ select.gym-input {
 }
 
 .gym-str-pill--current {
-  background: var(--color-surface-hover);
-  color: var(--color-text-secondary);
+  background: var(--color-load-dim);
+  color: var(--color-load-text);
 }
 
 .gym-str-pill--peak {
@@ -1518,7 +1530,7 @@ select.gym-input {
 }
 
 .gym-str-detail-score {
-  color: var(--color-text);
+  color: var(--color-load-text);
   font-family: var(--font-display);
   font-size: var(--type-heading-sm-size);
   font-weight: var(--type-heading-sm-weight);

@@ -27,37 +27,47 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xxs);
+  gap: 2px;
 }
 
 .chat-new-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-xs);
-  height: 44px;
+  height: 40px;
   padding: 0 var(--space-md);
-  margin-bottom: var(--space-sm);
+  margin-bottom: var(--space-md);
   border: none;
   border-radius: var(--radius-full);
-  background: var(--color-surface-elevated);
-  color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-on-emphasis);
   font-family: var(--font-body);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.24px;
+  font-size: var(--type-button-md-size);
+  font-weight: var(--type-button-md-weight);
+  letter-spacing: var(--type-button-md-letter-spacing);
   cursor: pointer;
+  transition: background var(--motion-hover);
 }
 
 .chat-new-btn:hover {
-  background: var(--color-surface-hover);
+  background: var(--color-emphasis-pressed);
+}
+
+.chat-session-empty {
+  margin: var(--space-sm) var(--space-sm) 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
 }
 
 .chat-session-row {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  padding: var(--space-xs) var(--space-sm);
+  gap: 3px;
+  padding: 9px var(--space-sm);
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
@@ -66,15 +76,30 @@
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+  transition: background var(--motion-hover);
 }
 
 .chat-session-row:hover {
   background: var(--color-surface-hover);
 }
 
+.chat-session-row:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
 .chat-session-row--active {
   background: var(--color-surface-elevated);
   color: var(--color-text);
+}
+
+.chat-session-row--active:hover {
+  background: var(--color-surface-elevated);
+}
+
+.chat-session-row--active .chat-session-title {
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 .chat-session-row--static {
@@ -88,6 +113,14 @@
   width: 100%;
 }
 
+.chat-session-active-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-recovery);
+}
+
 .chat-session-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -95,6 +128,7 @@
   max-width: 100%;
   flex: 1;
   min-width: 0;
+  color: var(--color-text-secondary);
 }
 
 .chat-session-date {
@@ -172,11 +206,12 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-lg);
   padding-bottom: var(--space-lg);
 }
 
 .chat-hint {
+  max-width: 68ch;
   color: var(--color-text-tertiary);
   font-family: var(--font-body);
   font-size: 15px;
@@ -199,17 +234,18 @@
 }
 
 .chat-assistant {
+  max-width: 68ch;
   font-family: var(--font-body);
   font-size: 15px;
   line-height: 1.5;
   letter-spacing: 0.16px;
   color: var(--color-text);
-  white-space: pre-wrap;
+  white-space: normal;
 }
 
 .chat-user-bubble {
   align-self: flex-end;
-  max-width: 80%;
+  max-width: min(68ch, 80%);
   background: var(--color-surface-elevated);
   border-radius: var(--radius-md);
   padding: 12px 16px;
@@ -230,6 +266,8 @@
 .chat-error {
   color: var(--color-text);
   background: var(--color-surface-hover);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
   font-family: var(--font-body);
   font-size: 13px;
   white-space: pre-wrap;
@@ -251,6 +289,11 @@
   font-size: 13px;
   cursor: pointer;
   padding: 0;
+  transition: color var(--motion-hover);
+}
+
+.chat-tool-toggle:hover {
+  color: var(--color-text-secondary);
 }
 
 .chat-tool-chevron {
@@ -282,7 +325,7 @@
   justify-content: center;
   gap: var(--space-xs);
   pointer-events: none;
-  border: 2px solid var(--color-aerobic);
+  border: 1px solid var(--color-aerobic);
   border-radius: var(--radius-md);
   background: var(--color-aerobic-dim);
   color: var(--color-text-secondary);
@@ -297,8 +340,13 @@
   background: var(--color-surface);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md);
-  padding: var(--space-xs);
+  padding: var(--space-sm);
   min-height: 52px;
+  transition: border-color var(--motion-hover);
+}
+
+.chat-input-well:focus-within {
+  border-color: var(--color-text-disabled);
 }
 
 .chat-input-row {
@@ -312,7 +360,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xxs);
-  padding: var(--space-xxs) var(--space-xxs) 0;
+  padding: 0 0 var(--space-xxs);
 }
 
 .chat-attachment-chip {
@@ -346,6 +394,9 @@
   border: none;
   color: var(--color-text-tertiary);
   cursor: pointer;
+  transition:
+    background var(--motion-hover),
+    color var(--motion-hover);
 }
 
 .chat-attachment-remove {
@@ -389,6 +440,14 @@
   max-height: 160px;
 }
 
+.chat-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.chat-input:disabled {
+  color: var(--color-text-tertiary);
+}
+
 .chat-send {
   width: 36px;
   height: 36px;
@@ -401,6 +460,11 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.chat-send:not(:disabled):hover {
+  background: var(--color-emphasis-pressed);
 }
 
 .chat-send:disabled {
@@ -411,6 +475,10 @@
 .chat-stop {
   background: var(--color-surface-elevated);
   color: var(--color-text);
+}
+
+.chat-stop:hover {
+  background: var(--color-surface-hover);
 }
 
 .chat-assistant-block {
@@ -466,8 +534,12 @@
 }
 
 /* rendered markdown inside assistant messages */
-.chat-assistant {
-  white-space: normal;
+.chat-assistant > :first-child {
+  margin-top: 0;
+}
+
+.chat-assistant > :last-child {
+  margin-bottom: 0;
 }
 
 .chat-assistant p {
@@ -479,14 +551,14 @@
 .chat-assistant h3 {
   font-family: var(--font-display);
   font-weight: 500;
-  margin: var(--space-md) 0 var(--space-xs);
+  margin: var(--space-lg) 0 var(--space-xs);
   font-size: 18px;
   color: var(--color-text);
 }
 
 .chat-assistant table {
   border-collapse: collapse;
-  margin: var(--space-sm) 0;
+  margin: var(--space-md) 0;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -514,4 +586,20 @@
 .chat-assistant ol {
   margin: 0 0 var(--space-sm);
   padding-left: var(--space-lg);
+}
+
+.chat-assistant li {
+  margin-bottom: var(--space-xxs);
+}
+
+.chat-assistant li:last-child {
+  margin-bottom: 0;
+}
+
+.chat-assistant li > p {
+  margin-bottom: var(--space-xxs);
+}
+
+.chat-assistant strong {
+  font-weight: 600;
 }

@@ -90,12 +90,23 @@
   white-space: nowrap;
 }
 
-.injury-card--active .injury-badge-status {
-  color: var(--color-text);
-}
-
+/* Severity tint: mild stays neutral (a badge alone is enough signal),
+   moderate/severe escalate through the same caution/concern accents used
+   for pain and adherence elsewhere in this view. Label text never changes. */
 .injury-badge-severity {
   text-transform: capitalize;
+}
+
+.injury-severity--mild {
+  color: var(--color-text-tertiary);
+}
+
+.injury-severity--moderate {
+  color: var(--color-sessions-text);
+}
+
+.injury-severity--severe {
+  color: var(--color-flag-text);
 }
 
 .injury-body-area {
@@ -143,14 +154,14 @@
 .injury-plan-week {
   padding-left: var(--space-xs);
   border-left: 1px solid var(--color-divider-soft);
-  color: var(--color-accent);
+  color: var(--color-text-secondary);
   font-size: var(--type-caption-size);
   font-weight: 600;
 }
 
 .injury-plan-date-field { display:flex; align-items:center; gap:var(--space-xs); font-size:var(--type-caption-size); }
 .injury-plan-date-field input { border:0; background:transparent; color:var(--color-text); font:inherit; color-scheme:dark; }
-.injury-plan-date-error { color:var(--color-danger); font-size:var(--type-caption-size); }
+.injury-plan-date-error { color:var(--color-flag-text); font-size:var(--type-caption-size); }
 
 /* ── stat row ────────────────────────────────────────────────────────────── */
 .injury-stat-row {
@@ -188,13 +199,42 @@
   color: var(--color-text);
 }
 
+/* Pain-number tint (stat row, log feed, adherence table): 0–3 stays plain
+   text, 4–6 reads as caution, 7–10 as concern. The digit is always present;
+   color only adds a faster read. */
+.injury-pain--low {
+  color: var(--color-text);
+}
+
+.injury-pain--mid {
+  color: var(--color-sessions-text);
+}
+
+.injury-pain--high {
+  color: var(--color-flag-text);
+}
+
 .injury-trend {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xxs);
   text-transform: capitalize;
-  color: var(--color-text-secondary);
   font-size: var(--type-body-md-size);
+}
+
+/* Trend direction: pain falling is the good outcome (aerobic), pain rising
+   is the bad one (flag) — note the arrow semantics are inverted from a
+   typical "up is good" chart. Flat stays neutral. */
+.injury-trend--improving {
+  color: var(--color-aerobic-text);
+}
+
+.injury-trend--worsening {
+  color: var(--color-flag-text);
+}
+
+.injury-trend--stable {
+  color: var(--color-text-tertiary);
 }
 
 /* ── sparkline ───────────────────────────────────────────────────────────── */
@@ -345,11 +385,14 @@
 }
 
 /* Separated section at the very bottom of the full view — deliberately far
-   from routine actions (Mark as healed / Feeling fine / Log flare-up) so it
-   is never fired by accident. */
+   from routine actions (Mark as healed / Feeling fine / Log flare-up), and
+   set apart as its own inset panel (full border, not a colored stripe) so
+   it reads as a distinct, deliberate zone without borrowing accent color. */
 .injury-danger-zone {
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-divider-soft);
+  padding: var(--space-md);
+  border: 1px solid var(--color-divider-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .injury-danger-hint {
@@ -496,6 +539,24 @@
   margin-top: var(--space-xl);
 }
 
+.injury-section-head {
+  margin: 0 0 var(--space-sm);
+}
+
+/* Uppercase tertiary eyebrow over a display-weight title — the same
+   two-tier heading pattern used across the app's other tabs, so each
+   section reads as a distinct instrument reading rather than a label. */
+.injury-section-eyebrow {
+  display: block;
+  margin-bottom: var(--space-xxs);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
 .injury-section-title {
   font-family: var(--font-display);
   font-size: var(--type-heading-sm-size);
@@ -503,7 +564,7 @@
   line-height: var(--type-heading-sm-line-height);
   letter-spacing: var(--type-heading-sm-letter-spacing);
   color: var(--color-text);
-  margin: 0 0 var(--space-sm);
+  margin: 0;
 }
 
 /* ── recovery plan list (inside modal) ───────────────────────────────────── */
@@ -818,6 +879,15 @@
   font-weight: 600;
 }
 
+/* Pain pill background follows the same tint as the digit, at -dim strength. */
+.injury-adh-pain.injury-pain--mid {
+  background: var(--color-sessions-dim);
+}
+
+.injury-adh-pain.injury-pain--high {
+  background: var(--color-flag-dim);
+}
+
 .injury-adh-score {
   white-space: nowrap;
 }
@@ -976,13 +1046,20 @@
 }
 
 .injury-note-row {
-  padding-bottom: var(--space-sm);
+  padding: var(--space-xs) var(--space-xs) var(--space-sm);
+  margin: 0 calc(var(--space-xs) * -1);
   border-bottom: 1px solid var(--color-divider-soft);
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-hover);
+}
+
+.injury-note-row:hover {
+  background: var(--color-surface-hover);
 }
 
 .injury-note-row:last-child {
   border-bottom: none;
-  padding-bottom: 0;
+  padding-bottom: var(--space-xs);
 }
 
 .injury-note-meta {
@@ -1067,6 +1144,15 @@
   font-size: 11px;
   font-weight: 600;
   color: var(--color-text-secondary);
+}
+
+/* Pain pill background follows the same tint as the digit, at -dim strength. */
+.injury-log-pain.injury-pain--mid {
+  background: var(--color-sessions-dim);
+}
+
+.injury-log-pain.injury-pain--high {
+  background: var(--color-flag-dim);
 }
 
 .injury-tag {

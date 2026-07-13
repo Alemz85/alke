@@ -22,6 +22,8 @@ import {
 } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { EmptyState } from '../components'
+import { BadgeDomain } from '../components/BadgeDomain'
+import type { Domain } from '../components/domain'
 import { RecoveryPlanDetail } from '../components/RecoveryPlanDetail'
 import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 import {
@@ -60,11 +62,36 @@ const STATUS_LABEL: Record<Injury['status'], string> = {
   resolved: 'Resolved'
 }
 
+// Status is a claim about trajectory, so it borrows the same domain accents
+// as the rest of the app: resolved reads as healed (aerobic), recovering as
+// in-progress (sessions), active as the ongoing concern (flag).
+const STATUS_DOMAIN: Record<Injury['status'], Domain> = {
+  active: 'flag',
+  recovering: 'sessions',
+  resolved: 'aerobic'
+}
+
 const CONTEXT_LABEL: Record<InjuryNoteContext, string> = {
   during_workout: 'During workout',
   post_workout: 'Post-workout',
   at_rest: 'At rest',
   on_waking: 'On waking'
+}
+
+/** Severity tint: mild reads as neutral, moderate/severe escalate through the
+ *  same warn/alert accents used everywhere else pain and adherence appear. */
+function severityClass(severity: Injury['severity']): string {
+  if (severity === 'severe') return 'injury-severity--severe'
+  if (severity === 'moderate') return 'injury-severity--moderate'
+  return 'injury-severity--mild'
+}
+
+/** Pain-number tint: 0–3 neutral, 4–6 caution, 7–10 concern. Always paired
+ *  with the digit itself — color never stands alone for meaning. */
+function painClass(pain: number): string {
+  if (pain >= 7) return 'injury-pain--high'
+  if (pain >= 4) return 'injury-pain--mid'
+  return 'injury-pain--low'
 }
 
 type InjuryQuerySnapshot = [QueryKey, unknown]
@@ -146,14 +173,34 @@ function useInjuryData(injuryId: string, enabled: boolean, todayYMD: string): In
 
 // ── stat pieces ───────────────────────────────────────────────────────────────
 
+/** Pain decreasing = improving = good (down arrow, aerobic). Pain increasing
+ *  = worsening = bad (up arrow, flag). Flat stays neutral tertiary text. */
 function TrendPill({ trend }: { trend: FlareStats['trend'] }): ReactElement {
   if (trend == null) return <span className="injury-stat-value">—</span>
   const Icon = trend === 'improving' ? ArrowDownRight : trend === 'worsening' ? ArrowUpRight : Minus
+  const cls =
+    trend === 'improving'
+      ? 'injury-trend--improving'
+      : trend === 'worsening'
+        ? 'injury-trend--worsening'
+        : 'injury-trend--stable'
   return (
-    <span className="injury-stat-value injury-trend">
+    <span className={`injury-stat-value injury-trend ${cls}`}>
       <Icon size={14} strokeWidth={2} />
       {trend}
     </span>
+  )
+}
+
+/** Section heading used throughout the full view: uppercase tertiary eyebrow
+ *  over a display-weight title, so the page reads as an instrument with
+ *  clear stops rather than a flat scroll of stacked cards. */
+function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }): ReactElement {
+  return (
+    <div className="injury-section-head">
+      <span className="injury-section-eyebrow">{eyebrow}</span>
+      <h4 className="injury-section-title">{title}</h4>
+    </div>
   )
 }
 
@@ -183,7 +230,13 @@ function StatRow({
         {stats.perWeek30d == null ? '—' : `${stats.perWeek30d.toFixed(1)}/wk`}
       </StatCell>
       <StatCell label="Avg intensity">
-        {stats.avgIntensity30d == null ? '—' : `${stats.avgIntensity30d.toFixed(1)}/10`}
+        {stats.avgIntensity30d == null ? (
+          '—'
+        ) : (
+          <span className={`injury-stat-value tabular-nums ${painClass(stats.avgIntensity30d)}`}>
+            {stats.avgIntensity30d.toFixed(1)}/10
+          </span>
+        )}
       </StatCell>
       <StatCell label="Trend">
         <TrendPill trend={stats.trend} />
@@ -230,7 +283,9 @@ function usePainSeries(
 
 const CHART_TERTIARY = 'var(--color-text-tertiary)'
 const CHART_GRID = 'var(--color-divider-soft)'
-const CHART_LINE = 'var(--color-text-secondary)'
+// Pain is the flagged metric in this view: the line takes the flag accent so
+// a glance at the chart reads the same as a glance at the pain digits.
+const CHART_LINE = 'var(--color-flag)'
 const CHART_UNDERLAY = 'var(--color-zone-neutral-1)'
 
 const tooltipStyle = {
@@ -1114,7 +1169,7 @@ function ThisWeekTable({
                 <td className="injury-adh-date tabular-nums">
                   <span>{formatDateShort(ymd)}</span>
                   {pain != null && pain >= 1 && (
-                    <span className="injury-adh-pain tabular-nums">{pain}/10</span>
+                    <span className={`injury-adh-pain tabular-nums ${painClass(pain)}`}>{pain}/10</span>
                   )}
                 </td>
                 <td className="injury-adh-score">
@@ -1358,7 +1413,9 @@ function NotesFeed({ log }: { log: InjuryLogEntry[] }): ReactElement | null {
               <span className="injury-log-source">{sourceLabel(n.source)}</span>
               <span className="injury-note-date tabular-nums">{formatDateShort(n.entry_date)}</span>
               {n.pain_level != null && n.pain_level >= 1 && (
-                <span className="injury-log-pain tabular-nums">{n.pain_level}/10</span>
+                <span className={`injury-log-pain tabular-nums ${painClass(n.pain_level)}`}>
+                  {n.pain_level}/10
+                </span>
               )}
               {n.context?.map((c) => (
                 <span key={c} className="injury-tag">
@@ -1399,8 +1456,12 @@ function InjuryHeader({
     <div className="injury-card-header">
       <h3 className="injury-name">{injury.name}</h3>
       <div className="injury-badges">
-        <span className="badge injury-badge-status">{STATUS_LABEL[injury.status]}</span>
-        {injury.severity && <span className="badge injury-badge-severity">{injury.severity}</span>}
+        <BadgeDomain domain={STATUS_DOMAIN[injury.status]} label={STATUS_LABEL[injury.status]} />
+        {injury.severity && (
+          <span className={`badge injury-badge-severity ${severityClass(injury.severity)}`}>
+            {injury.severity}
+          </span>
+        )}
         {injury.body_area && <span className="injury-body-area">{injury.body_area}</span>}
       </div>
       {showSince && <span className="injury-since">since {formatDate(injury.started_at)}</span>}
@@ -1570,7 +1631,7 @@ function InjuryFullView({
 
       {series.length > 0 && (
         <section className="injury-section">
-          <h4 className="injury-section-title">Pain &amp; adherence</h4>
+          <SectionTitle eyebrow="Trend" title="Pain & adherence" />
           <PainChart data={series} tall />
         </section>
       )}
@@ -1578,7 +1639,7 @@ function InjuryFullView({
       {plan.some((i) => i.active && (i.kind === 'exercise' || i.kind === 'activity')) && (
         <>
           <section className="injury-section">
-            <h4 className="injury-section-title">This week</h4>
+            <SectionTitle eyebrow="Current" title="This week" />
             <ThisWeekTable
               plan={plan}
               checks={checks}
@@ -1590,7 +1651,7 @@ function InjuryFullView({
           </section>
 
           <section className="injury-section">
-            <h4 className="injury-section-title">Past weeks</h4>
+            <SectionTitle eyebrow="History" title="Past weeks" />
             <PastWeeksTable
               plan={plan}
               checks={checks}
@@ -1603,7 +1664,7 @@ function InjuryFullView({
 
       {log.length > 0 && (
         <section className="injury-section">
-          <h4 className="injury-section-title">Logs</h4>
+          <SectionTitle eyebrow="Record" title="Logs" />
           <NotesFeed log={log} />
         </section>
       )}
@@ -1611,7 +1672,7 @@ function InjuryFullView({
       {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
 
       <section className="injury-section injury-danger-zone">
-        <h4 className="injury-section-title">Danger zone</h4>
+        <SectionTitle eyebrow="Irreversible" title="Danger zone" />
         <p className="injury-danger-hint">
           Permanently deletes this injury and all of its logs, recovery plan and checks. This
           cannot be undone — use “Mark as healed” instead if you just want to close it out.

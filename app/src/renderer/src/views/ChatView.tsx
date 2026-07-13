@@ -270,21 +270,25 @@ export function ChatView(): ReactElement {
             <Plus size={16} strokeWidth={1.5} /> New analysis
           </button>
           <div className="chat-session-list">
-            {sessions.map((s) => (
-              <SessionRow
-                key={s.id}
-                session={s}
-                active={s.id === activeId}
-                onOpen={() => void openSession(s.id)}
-                onRenamed={() =>
-                  void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
-                }
-                onDeleted={() => {
-                  void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
-                  if (s.id === activeId) newAnalysis()
-                }}
-              />
-            ))}
+            {sessions.length === 0 ? (
+              <p className="chat-session-empty">No conversations yet</p>
+            ) : (
+              sessions.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeId}
+                  onOpen={() => void openSession(s.id)}
+                  onRenamed={() =>
+                    void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+                  }
+                  onDeleted={() => {
+                    void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
+                    if (s.id === activeId) newAnalysis()
+                  }}
+                />
+              ))
+            )}
           </div>
         </aside>
 
@@ -513,6 +517,7 @@ function SessionRow({
       onClick={onOpen}
     >
       <span className="chat-session-row-top">
+        {active && <span className="chat-session-active-dot" aria-hidden="true" />}
         <span className="chat-session-title">{session.title ?? 'Untitled analysis'}</span>
         <span className="chat-session-actions">
           <span

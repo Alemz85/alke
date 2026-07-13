@@ -1,6 +1,8 @@
-/* Profile — neutral chrome only, per DESIGN.md: goals/profile get no new
-   accent color family. Signal comes from text weight, hairlines and neutral
-   pills, exactly like Injuries. */
+/* Profile — chrome (headings, cards, modals, tabs) stays neutral, matching
+   DESIGN.md's "color on data only" law. Accent color is reserved for goal
+   status (BadgeDomain: active=aerobic, on_hold=sessions, completed=recovery,
+   abandoned=neutral), metric progress fill (--color-load) and metric delta
+   direction (aerobic=improving, flag=regressing). */
 
 .profile-loading,
 .profile-error {
@@ -272,6 +274,30 @@
   white-space: normal;
 }
 
+/* Archive status: a tiny domain-tinted dot, deliberately quieter than the
+   active grid's BadgeDomain chip — the archive should read as settled, not
+   compete for attention. */
+.profile-archive-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.profile-archive-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.profile-archive-dot--completed {
+  background: var(--color-recovery);
+}
+
+.profile-archive-dot--abandoned {
+  background: var(--color-text-tertiary);
+}
+
 /* ── goal grid + card ────────────────────────────────────────────────────── */
 .profile-goal-grid {
   display: grid;
@@ -349,15 +375,8 @@
   white-space: nowrap;
 }
 
-.profile-goal-status--active {
-  color: var(--color-text);
-}
-
-.profile-goal-status--on_hold {
-  color: var(--color-text-secondary);
-}
-
-.profile-goal-status--completed,
+/* Abandoned has no accent domain (quiet, set-aside) — an inline neutral
+   chip using the shared .badge base instead of BadgeDomain. */
 .profile-goal-status--abandoned {
   color: var(--color-text-tertiary);
 }
@@ -380,6 +399,28 @@
   color: var(--color-text-tertiary);
 }
 
+/* "Active for X · since …" — only the leading status word is tinted to match
+   the badge domain; the rest of the meta line stays neutral tertiary. */
+.profile-since-word {
+  font-weight: 600;
+}
+
+.profile-since-word--active {
+  color: var(--color-aerobic-text);
+}
+
+.profile-since-word--on_hold {
+  color: var(--color-sessions-text);
+}
+
+.profile-since-word--completed {
+  color: var(--color-recovery-text);
+}
+
+.profile-since-word--abandoned {
+  color: var(--color-text-tertiary);
+}
+
 /* ── shared thin progress bar (time elapsed / metric-to-target) ────────────── */
 .profile-goal-bar {
   width: 100%;
@@ -394,6 +435,18 @@
   background: var(--color-text-tertiary);
   border-radius: var(--radius-full);
   transition: width var(--motion-hover);
+}
+
+/* Progress toward a target (time elapsed, metric-to-target) reads as
+   achievement — --color-load, not neutral gray. */
+.profile-goal-bar-fill--load {
+  background: var(--color-load);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-goal-bar-fill {
+    transition: none;
+  }
 }
 
 .profile-goal-desc {
@@ -467,8 +520,16 @@
   color: var(--color-text-secondary);
 }
 
-.profile-goal-metric-delta {
+.profile-goal-metric-delta--neutral {
   color: var(--color-text-tertiary);
+}
+
+.profile-goal-metric-delta--improving {
+  color: var(--color-aerobic-text);
+}
+
+.profile-goal-metric-delta--regressing {
+  color: var(--color-flag-text);
 }
 
 .profile-goal-metric-desc {
@@ -483,6 +544,12 @@
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
+}
+
+/* Agent actively building the metric — a quiet in-progress tint, not a full
+   accent wash (sessions = caution/in-progress domain). */
+.profile-metric-empty--in-progress {
+  color: var(--color-sessions-text);
 }
 
 /* ── goal actions ────────────────────────────────────────────────────────── */

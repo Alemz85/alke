@@ -18,7 +18,8 @@ import {
 } from 'recharts'
 import type { Goal, GoalPatch, GoalProgressPoint, NewGoal, UserConfigPatch, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
-import { ButtonSoft, EmptyState, MetricCard } from '../components'
+import { BadgeDomain, ButtonSoft, EmptyState, MetricCard } from '../components'
+import type { Domain } from '../components/domain'
 import {
   achievements,
   metricProgress,
@@ -302,12 +303,13 @@ function GoalMetricBlock({
     }
   })
 
-  // Pending state: no metric yet, and nothing has failed.
+  // Pending state: no metric yet, and nothing has failed. A subtle
+  // in-progress tint (not a full accent wash) marks the agent still working.
   if (goal.metric_sql == null) {
     if (buildMutation.isPending) {
       return (
         <div className="profile-goal-metric profile-goal-metric--pending">
-          <p className="profile-metric-empty">
+          <p className="profile-metric-empty profile-metric-empty--in-progress">
             Agent is designing the metric — this can take a few minutes.
           </p>
         </div>
@@ -333,6 +335,14 @@ function GoalMetricBlock({
   const points = progressQuery.data ?? []
   const { latest, delta, pctToTarget } = metricProgress(goal, points)
 
+  // Delta direction relative to the goal's target: 'up' goals improve when
+  // the metric rises above baseline, 'down' goals improve when it falls.
+  let deltaClass = 'profile-goal-metric-delta--neutral'
+  if (delta != null && goal.metric_direction != null && delta !== 0) {
+    const improving = goal.metric_direction === 'up' ? delta > 0 : delta < 0
+    deltaClass = improving ? 'profile-goal-metric-delta--improving' : 'profile-goal-metric-delta--regressing'
+  }
+
   return (
     <div className="profile-goal-metric">
       <div className="profile-goal-metric-head">
@@ -352,7 +362,7 @@ function GoalMetricBlock({
           {goal.metric_target != null ? goal.metric_target.toLocaleString() : '—'}
           {goal.metric_unit ? ` ${goal.metric_unit}` : ''}
           {delta != null && (
-            <span className="profile-goal-metric-delta">
+            <span className={`profile-goal-metric-delta ${deltaClass}`}>
               {' '}
               ({delta >= 0 ? '+' : ''}
               {delta.toLocaleString()} vs baseline)
@@ -363,7 +373,7 @@ function GoalMetricBlock({
 
       {pctToTarget != null && (
         <div className="profile-goal-bar" role="progressbar" aria-valuenow={pctToTarget} aria-valuemin={0} aria-valuemax={100}>
-          <div className="profile-goal-bar-fill" style={{ width: `${pctToTarget}%` }} />
+          <div className="profile-goal-bar-fill profile-goal-bar-fill--load" style={{ width: `${pctToTarget}%` }} />
         </div>
       )}
 
@@ -389,17 +399,45 @@ const STATUS_LABEL: Record<Goal['status'], string> = {
   abandoned: 'Abandoned'
 }
 
+/** Goal status → accent domain. Abandoned has no accent (quiet, set-aside)
+ *  and falls back to an inline neutral chip instead of BadgeDomain. */
+const STATUS_DOMAIN: Record<Exclude<Goal['status'], 'abandoned'>, Domain> = {
+  active: 'aerobic',
+  on_hold: 'sessions',
+  completed: 'recovery'
+}
+
+function GoalStatusBadge({ status }: { status: Goal['status'] }): ReactElement {
+  if (status === 'abandoned') {
+    return <span className="badge profile-goal-status--abandoned">{STATUS_LABEL[status]}</span>
+  }
+  return <BadgeDomain domain={STATUS_DOMAIN[status]} label={STATUS_LABEL[status]} />
+}
+
 function GoalHead({ goal }: { goal: Goal }): ReactElement {
   return (
     <div className="profile-goal-head">
       <h3 className="profile-goal-title">{goal.title}</h3>
       <div className="profile-goal-badges">
-        <span className={`badge profile-goal-status profile-goal-status--${goal.status}`}>
-          {STATUS_LABEL[goal.status]}
-        </span>
+        <GoalStatusBadge status={goal.status} />
         {goal.created_by === 'chat' && <span className="profile-goal-via">via chat</span>}
       </div>
     </div>
+  )
+}
+
+/** Splits "Active for 3 days · since" into the leading status word (tinted to
+ *  match the badge domain) and the rest (neutral) — labels stay identical,
+ *  only the status word carries color. */
+function SinceText({ goal, text }: { goal: Goal; text: string }): ReactElement {
+  const [word, ...rest] = text.split(' ')
+  const domainClass =
+    goal.status === 'abandoned' ? 'profile-since-word--abandoned' : `profile-since-word--${goal.status}`
+  return (
+    <>
+      <span className={`profile-since-word ${domainClass}`}>{word}</span>
+      {rest.length > 0 ? ` ${rest.join(' ')}` : ''}
+    </>
   )
 }
 
@@ -410,7 +448,7 @@ function GoalMeta({ goal, now }: { goal: Goal; now: Date }): ReactElement {
     <>
       <div className="profile-goal-meta">
         <span className="tabular-nums">
-          {since.text} {formatDate(since.anchorYMD)}
+          <SinceText goal={goal} text={since.text} /> {formatDate(since.anchorYMD)}
         </span>
         {goal.duration_days != null ? (
           <span className="tabular-nums">
@@ -423,7 +461,7 @@ function GoalMeta({ goal, now }: { goal: Goal; now: Date }): ReactElement {
 
       {goal.duration_days != null && tp.pct != null && (
         <div className="profile-goal-bar profile-goal-bar--time">
-          <div className="profile-goal-bar-fill" style={{ width: `${tp.pct}%` }} />
+          <div className="profile-goal-bar-fill profile-goal-bar-fill--load" style={{ width: `${tp.pct}%` }} />
         </div>
       )}
     </>
@@ -815,14 +853,19 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
 
 type GoalTabKey = 'active' | 'archive'
 
-/** Compact archive row — mirrors InjuriesView's history table. */
+/** Compact archive row — mirrors InjuriesView's history table. Quiet by
+ *  design: a small domain-tinted dot instead of a full badge chip, so the
+ *  archive doesn't compete visually with the active grid. */
 function GoalArchiveRow({ goal, now, onOpen }: { goal: Goal; now: Date; onOpen: () => void }): ReactElement {
   const since = sinceLabel(goal, now)
+  const dotClass =
+    goal.status === 'abandoned' ? 'profile-archive-dot--abandoned' : `profile-archive-dot--${goal.status}`
   return (
     <tr className="profile-archive-row" onClick={onOpen}>
       <td>{goal.title}</td>
       <td>
-        <span className={`badge profile-goal-status profile-goal-status--${goal.status}`}>
+        <span className="profile-archive-status">
+          <span className={`profile-archive-dot ${dotClass}`} aria-hidden="true" />
           {STATUS_LABEL[goal.status]}
         </span>
       </td>
