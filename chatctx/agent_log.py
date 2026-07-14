@@ -13,6 +13,8 @@ Subcommands:
   resolve  <id>                                           mark an entry resolved (sets resolved_at)
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json

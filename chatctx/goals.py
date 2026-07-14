@@ -20,6 +20,8 @@ Subcommands:
   progress    <id> [--tail N]            print the newest N progress points
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

@@ -71,6 +71,8 @@ any open run in the family onto the new version (reassigns template_id) so
 an active run survives a plan upgrade.
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json

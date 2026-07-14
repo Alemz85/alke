@@ -22,6 +22,8 @@ Subcommands:
   check      <item_id> [--date ..]         mark a plan item done for a day (source=chat)
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
