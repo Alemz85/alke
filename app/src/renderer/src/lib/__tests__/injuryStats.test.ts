@@ -29,6 +29,8 @@ function entry(partial: Partial<InjuryLogEntry> & { entry_date: string }): Injur
   return {
     id: 1,
     injury_id: 'inj-1',
+    entry_end_date: null,
+    date_precision: 'day',
     noted_at: null,
     source: 'user',
     note: '',

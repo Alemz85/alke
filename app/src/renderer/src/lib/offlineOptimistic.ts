@@ -16,6 +16,9 @@ export function makeOptimisticInjuryLog(
     id,
     injury_id: input.injury_id,
     entry_date: input.entry_date ?? fallbackDate,
+    // App quick logs are always single-day, day-precision readings.
+    entry_end_date: null,
+    date_precision: 'day',
     noted_at: nowIso,
     source: 'user',
     note: input.note,

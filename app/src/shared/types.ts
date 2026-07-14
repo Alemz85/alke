@@ -178,10 +178,21 @@ export interface Injury {
 export const INJURY_CONTEXTS = ['during_workout', 'post_workout', 'at_rest', 'on_waking'] as const
 export type InjuryNoteContext = (typeof INJURY_CONTEXTS)[number]
 
+// A log entry can describe a single day or a SPAN. date_precision governs how
+// both endpoints are read/rendered so an approximate date ("~2025") is never
+// shown as a precise one.
+export const INJURY_DATE_PRECISIONS = ['day', 'month', 'year'] as const
+export type InjuryDatePrecision = (typeof INJURY_DATE_PRECISIONS)[number]
+
 export interface InjuryLogEntry {
   id: number
   injury_id: string
+  // Start of the period the note is about (single day when entry_end_date is null).
   entry_date: string
+  // Inclusive end of the period; null = a single-day note.
+  entry_end_date: string | null
+  // How coarse entry_date/entry_end_date are: exact day, a month, or a year.
+  date_precision: InjuryDatePrecision
   noted_at: string | null
   source: string | null
   note: string

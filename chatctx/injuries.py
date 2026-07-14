@@ -12,7 +12,7 @@ Subcommands:
   show       <injury_id>                   show one injury, notes, and phase-aware plan
   add        --name ... [options]          create an injury, prints its id
   update     <id> [options]                patch an injury (only given fields)
-  note       <injury_id> --note ... [opts] append a dated progress note
+  note       <injury_id> --note ... [opts] append a dated (or spanned) progress note
   notes      <injury_id>                   list an injury's notes, newest first
   plan-list  <injury_id>                   list an injury's recovery plan items
   plan-apply <injury_id> --file plan.json  validate and idempotently apply a complete plan
@@ -36,6 +36,35 @@ import zoneinfo
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 VALID_CONTEXTS = ("during_workout", "post_workout", "at_rest", "on_waking")
 VALID_PLAN_KINDS = ("exercise", "activity", "habit", "constraint")
+VALID_PRECISIONS = ("day", "month", "year")
+
+
+def parse_ymd(value: str, label: str) -> str:
+    """Accept a YYYY-MM-DD date or exit; returns it unchanged for chaining."""
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        sys.exit(f"invalid {label} {value!r} — expected YYYY-MM-DD")
+    return value
+
+
+def format_period(start: str | None, end: str | None, precision: str | None) -> str:
+    """Render a note's when only as precisely as it is known: a year, a month,
+    a day, or a "start → end" span."""
+    precision = precision or "day"
+
+    def fmt(value: str | None) -> str:
+        if not value:
+            return ""
+        text = value[:10]
+        if precision == "year":
+            return text[:4]
+        if precision == "month":
+            return text[:7]
+        return text
+
+    a, b = fmt(start), fmt(end)
+    return f"{a} → {b}" if b and b != a else a
 
 
 def current_plan_week(plan_started_at: str | None, today: str) -> int | None:
@@ -156,8 +185,22 @@ def cmd_note(args) -> None:
     body = {"injury_id": args.injury_id, "note": args.note, "source": args.source}
     if args.pain is not None:
         body["pain_level"] = args.pain
-    if args.date is not None:
-        body["entry_date"] = args.date
+
+    start = parse_ymd(args.date, "--date") if args.date is not None else None
+    end = parse_ymd(args.until, "--until") if args.until is not None else None
+    if end is not None:
+        # A span needs a known start to be coherent and orderable; default it to
+        # today when only an end was given.
+        if start is None:
+            start = user_today()
+        if end < start:
+            sys.exit(f"invalid --until {end!r} — must be on or after the start ({start})")
+        body["entry_end_date"] = end
+    if start is not None:
+        body["entry_date"] = start
+    if args.precision is not None:
+        body["date_precision"] = args.precision
+
     if args.context is not None:
         tags = [t.strip() for t in args.context.split(",") if t.strip()]
         invalid = [t for t in tags if t not in VALID_CONTEXTS]
@@ -167,24 +210,26 @@ def cmd_note(args) -> None:
     if args.workout is not None:
         body["workout_id"] = args.workout
     _request("POST", "injury_notes", body=body, prefer="return=minimal")
-    print(f"logged note on injury {args.injury_id}")
+    span = f" ({start} → {end})" if end is not None else ""
+    print(f"logged note on injury {args.injury_id}{span}")
 
 
 def cmd_notes(args) -> None:
     rows = _request("GET", "injury_notes", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "entry_date,source,pain_level,note",
+        "select": "entry_date,entry_end_date,date_precision,source,pain_level,note",
         "order": "entry_date.desc,noted_at.desc",
     })
     if not rows:
         print("_no notes_")
         return
-    print("| date | source | pain | note |")
+    print("| when | source | pain | note |")
     print("| --- | --- | --- | --- |")
     for r in rows:
         pain = "" if r.get("pain_level") is None else r["pain_level"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
-        print(f"| {r.get('entry_date') or ''} | {r.get('source') or ''} | {pain} | {note} |")
+        when = format_period(r.get("entry_date"), r.get("entry_end_date"), r.get("date_precision"))
+        print(f"| {when} | {r.get('source') or ''} | {pain} | {note} |")
 
 
 def cmd_show(args) -> None:
@@ -200,7 +245,7 @@ def cmd_show(args) -> None:
     plan_week = current_plan_week(injury.get("plan_started_at"), user_today())
     notes = _request("GET", "injury_notes", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "entry_date,source,pain_level,note",
+        "select": "entry_date,entry_end_date,date_precision,source,pain_level,note",
         "order": "entry_date.desc,noted_at.desc",
     })
     items = _request("GET", "recovery_plan_items", params={
@@ -223,12 +268,13 @@ def cmd_show(args) -> None:
     if not notes:
         print("_no notes_")
     else:
-        print("| date | source | pain | note |")
+        print("| when | source | pain | note |")
         print("| --- | --- | --- | --- |")
         for row in notes:
             pain = "" if row.get("pain_level") is None else row["pain_level"]
             note = (row.get("note") or "").replace("|", "\\|").replace("\n", " ")
-            print(f"| {row.get('entry_date') or ''} | {row.get('source') or ''} | {pain} | {note} |")
+            when = format_period(row.get("entry_date"), row.get("entry_end_date"), row.get("date_precision"))
+            print(f"| {when} | {row.get('source') or ''} | {pain} | {note} |")
 
     print("\n## Recovery plan items")
     if not items:
@@ -570,7 +616,10 @@ def main() -> None:
     p_note.add_argument("injury_id")
     p_note.add_argument("--note", required=True)
     p_note.add_argument("--pain", type=int, choices=range(0, 11), metavar="0-10")
-    p_note.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
+    p_note.add_argument("--date", help="YYYY-MM-DD (defaults to today); the START of a span")
+    p_note.add_argument("--until", help="YYYY-MM-DD — end of a span; --date (or today) is the start")
+    p_note.add_argument("--precision", choices=list(VALID_PRECISIONS),
+                        help="how coarse the date(s) are (default day) — use 'year' for ~2025")
     p_note.add_argument("--source", default="chat", choices=["chat", "user"])
     p_note.add_argument("--context", help="comma-separated: " + ",".join(VALID_CONTEXTS))
     p_note.add_argument("--workout", help="workout id this note relates to")

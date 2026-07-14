@@ -2,8 +2,8 @@
 
 Four tables track historical + active injuries, each with a progress log and a recovery plan:
 
-- `injuries(id, name, body_area, status, severity, started_at, plan_started_at, resolved_at, summary, recovery_plan, created_at, updated_at)` — `started_at` is injury onset; `plan_started_at` is the separately editable start of the current structured plan. `status` is one of `active`/`recovering`/`resolved`; `severity` is one of `mild`/`moderate`/`severe` (nullable); `summary` covers what it is, mechanism, and context; `recovery_plan` is a SHORT markdown "approach" paragraph, AI-maintained (see maintenance note below — the actionable plan itself lives in `recovery_plan_items`, not here).
-- `injury_notes(id, injury_id, entry_date, noted_at, source, note, pain_level, context, workout_id)` — dated progress notes per injury, `pain_level` 0–10 (nullable), `source` is `chat` (you) or `user`, indexed by `(injury_id, entry_date desc)`. `context` is a text array tagging when it happened — valid values `during_workout`/`post_workout`/`at_rest`/`on_waking` (nullable); `workout_id` optionally links to the specific `workouts` row (nullable, `ON DELETE SET NULL`).
+- `injuries(id, name, body_area, status, severity, started_at, plan_started_at, resolved_at, summary, recovery_plan, created_at, updated_at)` — `started_at` is injury onset; `plan_started_at` is the separately editable start of the current structured plan. `status` is one of `active`/`recovering`/`resolved`; `severity` is one of `mild`/`moderate`/`severe` (nullable); `summary` is the injury's TIMELESS identity — what it is, mechanism, what reproduces/relieves it, what it excludes, diagnostic status — and carries no dates, progression, frequency-over-time, or current-state (those live in the log; see "Summary vs. log" below); `recovery_plan` is a SHORT markdown "approach" paragraph, AI-maintained (see maintenance note below — the actionable plan itself lives in `recovery_plan_items`, not here).
+- `injury_notes(id, injury_id, entry_date, entry_end_date, date_precision, noted_at, source, note, pain_level, context, workout_id)` — dated progress notes per injury, `pain_level` 0–10 (nullable), `source` is `chat` (you) or `user`, indexed by `(injury_id, entry_date desc)`. `entry_date` is the day, or the START of a span; `entry_end_date` (nullable) is the inclusive end — set it when a note covers a PERIOD rather than a single day (a months-long recurring pattern, a multi-week quiet stretch). `date_precision` (`day`/`month`/`year`, default `day`) says how coarse those dates are, so an approximate onset is stored and shown as `2025`, never `2025-01-01`. `context` is a text array tagging when it happened — valid values `during_workout`/`post_workout`/`at_rest`/`on_waking` (nullable); `workout_id` optionally links to the specific `workouts` row (nullable, `ON DELETE SET NULL`).
 - `recovery_plan_items(id, injury_id, name, kind, start_week, weekly_target, green_min, yellow_min, target_sets, target_reps, steps, note, active, exercise_id, created_at, updated_at)` — the canonical plan used by both Injury and Gym. `start_week` is the cumulative plan week in which the item first becomes adherence-accountable. A catalog-linked single exercise uses `target_sets`/`target_reps`. An off-catalog composite routine uses `steps`, an array of `{name, sets, reps, duration_seconds, distance_m, per_side, note}` entries, so stretches and mobility work remain tabular and readable rather than being buried in prose.
 - `plan_item_checks(id, item_id, done_date, source, created_at)` — one row per day a plan item was done, unique on `(item_id, done_date)`; `source` is `user`/`chat`/`gym`.
 
@@ -14,7 +14,7 @@ python3 injuries.py list
 python3 injuries.py show <injury_id>
 python3 injuries.py add --name ".." [--body-area ".."] [--status active|recovering|resolved] [--severity mild|moderate|severe] [--started YYYY-MM-DD] [--summary ".."] [--recovery-plan ".."]
 python3 injuries.py update <id> [--status ..] [--severity ..] [--resolved YYYY-MM-DD] [--plan-started YYYY-MM-DD] [--recovery-plan ".."] [--summary ".."] [--name ".."] [--body-area ".."]
-python3 injuries.py note <injury_id> --note ".." [--pain 0-10] [--date YYYY-MM-DD] [--context during_workout,post_workout] [--workout <workout_id>]
+python3 injuries.py note <injury_id> --note ".." [--pain 0-10] [--date YYYY-MM-DD] [--until YYYY-MM-DD] [--precision day|month|year] [--context during_workout,post_workout] [--workout <workout_id>]
 python3 injuries.py notes <injury_id>
 python3 injuries.py plan-list <injury_id>
 node recovery_plan_contract.mjs template > /tmp/recovery-plan.json
@@ -30,11 +30,24 @@ It writes only to `injuries`, `injury_notes`, `recovery_plan_items`, and `plan_i
 
 When to act, without being asked:
 
-- The user mentions pain, a flare-up, or a setback → log a dated entry (`injuries.py note`) on the relevant injury, creating it first with `injuries.py add` if it isn't logged yet. If they say WHEN it happened relative to activity, pass `--context` (and `--workout <id>` if you can identify the specific workout from the DB).
+- The user mentions pain, a flare-up, or a setback → log a dated entry (`injuries.py note`) on the relevant injury, creating it first with `injuries.py add` if it isn't logged yet. If they say WHEN it happened relative to activity, pass `--context` (and `--workout <id>` if you can identify the specific workout from the DB). If they narrate a HISTORY (multiple events, phases, or a "for the last few months…" pattern) rather than a single moment, decompose it into several backdated entries — see "Summary vs. log" below — instead of one lumped note or a paragraph in the summary.
 - The user reports a milestone (pain-free streak, return to a movement, cleared threshold) → log an entry.
 - The user says they did their rehab work → `check` the matching `recovery_plan_items` item(s) (look them up with `plan-list` first if unsure of the id).
 - You notice a risk pattern in the data itself (fast ramp, ACWR spike, load on a compromised area) → log an entry on the affected injury describing what you observed, even if the user hasn't said anything.
-- After any of the above, or when the picture has meaningfully changed, refresh that injury's `recovery_plan` (and `summary` if the picture itself changed) via `injuries.py update` so it stays current rather than stale.
+- After any of the above, or when the picture has meaningfully changed, refresh that injury's `recovery_plan` via `injuries.py update` so it stays current rather than stale. Only touch `summary` when the injury's timeless identity actually changed (a new provocation, a corrected mechanism, a revised diagnostic status) — how it's *doing* is a log entry, not a summary edit.
+
+### Summary vs. log — keep the timeline out of the description
+
+The `summary` says what the injury IS, timelessly: location, what reproduces and relieves it, what it excludes, diagnostic status. It must not accumulate a course-of-injury narrative. Everything time-bound — the onset story, frequency phases, individual flares, progress checkpoints, and the current state — belongs in the **log** (`injury_notes`), where it stays dated and where the most recent entry reads as the current picture instead of being buried in a growing paragraph.
+
+When the user narrates a history, DECOMPOSE it into the log rather than dumping it into the summary:
+
+- One entry per distinct phase or event, **backdated** with `--date` to when it actually happened. Use `--until` when the fact covers a PERIOD (a months-long recurring pattern, a multi-week quiet stretch), so `entry_date → entry_end_date` is a real span, not a point.
+- Use `--precision year` or `--precision month` whenever the date is genuinely approximate. Never store `2025-01-01` for "sometime in 2025" and let it render as a precise day — fabricated precision is the exact failure this tool exists to avoid. If you don't know the day, log the coarse thing honestly, and if onset is only known to the year put that year on `started_at` while keeping the year out of the summary prose.
+- Give the CURRENT state its own recent entry (e.g. a `--until today` span at `--pain 0` for "no recurrence since the flare settled"). That entry is what a later reader should weight most, so it must be legible as a log row, not a clause at the end of a summary.
+- Don't restate the same fact in both places. If it has a date, it's a note; if it's timeless, it's the summary.
+
+Worked example — a wrist-pain entry whose summary had swallowed a year of history decomposes to a timeless summary (where it is, what reproduces/relieves it, what it excludes, "working hypothesis, not clinically confirmed") plus four log rows: a `2024 → early 2025` entry at `--precision year` for the recurring pattern, a `2025-03-10` flare entry, a `2025-03-14` "≈50% better, no longer tender" entry, and a `2025-03-14 → today` span at `--pain 0` for "no recurrence since". `started_at` = 2024.
 
 Maintaining the recovery plan — it now lives in **two parts**, kept separate:
 

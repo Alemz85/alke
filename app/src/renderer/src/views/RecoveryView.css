@@ -198,3 +198,22 @@
   color: var(--color-text-tertiary);
   padding: 0 var(--space-xs);
 }
+
+/* Custom VO2max scatter tooltip (replaces the default one that crashed on the
+   date payload item). Matches the shared TOOLTIP_STYLE surface + radius. */
+.recovery-scatter-tooltip {
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+.recovery-scatter-tooltip-label {
+  color: var(--color-text-secondary);
+  margin-bottom: 2px;
+}
+
+.recovery-scatter-tooltip-value {
+  color: var(--color-text);
+}

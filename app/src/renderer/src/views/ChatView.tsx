@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, MouseEvent, ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Activity,
   ArrowUp,
   Check,
   ChevronRight,
@@ -112,6 +113,15 @@ export function ChatView(): ReactElement {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [messages, stream])
+
+  // Grow the composer to fit what's typed (up to the CSS max-height, past which
+  // it scrolls internally). Reset to 'auto' first so it can also shrink back.
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [input])
 
   async function openSession(id: string): Promise<void> {
     const session = await window.api.chatGetSession(id)
@@ -306,124 +316,157 @@ export function ChatView(): ReactElement {
             </div>
           )}
           <div className="chat-messages" ref={scrollRef}>
-            {messages.length === 0 && stream.length === 0 && (
-              <>
-                <p className="chat-hint">
-                  Ask anything about your data — &ldquo;summarize my last 2 weeks&rdquo;, &ldquo;is
-                  my swim efficiency improving?&rdquo;. Answers are computed live from the database.
-                </p>
-                <div className="chat-suggestions">
-                  {SUGGESTED_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      className="chip chat-suggestion-chip"
-                      onClick={() => sendSuggestion(prompt)}
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {messages.map((m, i) =>
-              m.role === 'user' ? (
-                <div key={i} className="chat-user-bubble">
-                  {m.content}
-                </div>
-              ) : (
-                <div key={i} className="chat-assistant-block">
-                  <CopyButton text={m.content} />
-                  <div className="chat-assistant">
-                    <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+            <div className="chat-thread">
+              {messages.length === 0 && stream.length === 0 && (
+                <div className="chat-empty">
+                  <span className="chat-empty-mark" aria-hidden="true">
+                    <Activity size={22} strokeWidth={1.75} />
+                  </span>
+                  <h2 className="chat-empty-title">What do you want to understand?</h2>
+                  <p className="chat-empty-sub">
+                    Ask about your training, recovery, or trends. Every answer is computed live
+                    from your own data.
+                  </p>
+                  <div className="chat-suggestions">
+                    {SUGGESTED_PROMPTS.map((prompt) => (
+                      <button
+                        key={prompt}
+                        className="chip chat-suggestion-chip"
+                        onClick={() => sendSuggestion(prompt)}
+                      >
+                        {prompt}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              )
-            )}
-            {stream.map((b, i) =>
-              b.kind === 'tool' ? (
-                <ToolLine key={`s${i}`} name={b.name ?? 'tool'} detail={b.text} />
-              ) : (
-                <div key={`s${i}`} className="chat-assistant">
-                  <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
+              )}
+
+              {messages.map((m, i) =>
+                m.role === 'user' ? (
+                  <div key={i} className="chat-turn chat-turn--user">
+                    <div className="chat-user-bubble">{m.content}</div>
+                  </div>
+                ) : (
+                  <div key={i} className="chat-turn chat-turn--assistant">
+                    <span className="chat-avatar" aria-hidden="true">
+                      <Activity size={15} strokeWidth={2} />
+                    </span>
+                    <div className="chat-assistant-block">
+                      <CopyButton text={m.content} />
+                      <div className="chat-assistant">
+                        <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                      </div>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {stream.length > 0 && (
+                <div className="chat-turn chat-turn--assistant">
+                  <span className="chat-avatar" aria-hidden="true">
+                    <Activity size={15} strokeWidth={2} />
+                  </span>
+                  <div className="chat-stream">
+                    {stream.map((b, i) =>
+                      b.kind === 'tool' ? (
+                        <ToolLine key={`s${i}`} name={b.name ?? 'tool'} detail={b.text} />
+                      ) : (
+                        <div key={`s${i}`} className="chat-assistant">
+                          <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
+                        </div>
+                      )
+                    )}
+                  </div>
                 </div>
-              )
-            )}
-            {busy && stream.length === 0 && <div className="chat-thinking">analyzing…</div>}
-            {error && <div className="chat-error">{error}</div>}
+              )}
+
+              {busy && stream.length === 0 && (
+                <div className="chat-turn chat-turn--assistant">
+                  <span className="chat-avatar chat-avatar--pulsing" aria-hidden="true">
+                    <Activity size={15} strokeWidth={2} />
+                  </span>
+                  <div className="chat-thinking">Analyzing your data…</div>
+                </div>
+              )}
+
+              {error && <div className="chat-error">{error}</div>}
+            </div>
           </div>
 
-          <div className="chat-input-well">
-            {attachments.length > 0 && (
-              <div className="chat-attachments" aria-label="Attached files">
-                {attachments.map((attachment) => (
-                  <span
-                    className="chat-attachment-chip"
-                    key={attachment.path}
-                    title={attachment.path}
-                  >
-                    <Paperclip size={13} strokeWidth={1.7} aria-hidden="true" />
-                    <span className="chat-attachment-name">{attachment.name}</span>
-                    <button
-                      type="button"
-                      className="chat-attachment-remove"
-                      onClick={() =>
-                        setAttachments((current) =>
-                          current.filter(({ path }) => path !== attachment.path)
-                        )
-                      }
-                      disabled={busy}
-                      aria-label={`Remove ${attachment.name}`}
+          <div className="chat-composer">
+            <div className="chat-input-well">
+              {attachments.length > 0 && (
+                <div className="chat-attachments" aria-label="Attached files">
+                  {attachments.map((attachment) => (
+                    <span
+                      className="chat-attachment-chip"
+                      key={attachment.path}
+                      title={attachment.path}
                     >
-                      <X size={12} strokeWidth={2} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="chat-input-row">
-              <button
-                type="button"
-                className="chat-attach-btn"
-                onClick={() => void pickAttachments()}
-                disabled={busy || attachments.length >= MAX_CHAT_ATTACHMENTS}
-                aria-label={`Attach files (${attachments.length} of ${MAX_CHAT_ATTACHMENTS})`}
-                title="Attach files"
-              >
-                <Paperclip size={18} strokeWidth={1.6} />
-              </button>
-              <textarea
-                ref={textareaRef}
-                className="chat-input"
-                rows={1}
-                placeholder="Ask about your training, recovery, trends…"
-                value={input}
-                disabled={busy}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    void send()
-                  }
-                }}
-              />
-              {busy ? (
-                <button
-                  className="chat-send chat-stop"
-                  onClick={() => void stop()}
-                  aria-label="Stop"
-                >
-                  <Square size={14} fill="currentColor" />
-                </button>
-              ) : (
-                <button
-                  className="chat-send"
-                  onClick={() => void send()}
-                  disabled={!input.trim() && attachments.length === 0}
-                  aria-label="Send"
-                >
-                  <ArrowUp size={18} strokeWidth={2} />
-                </button>
+                      <Paperclip size={13} strokeWidth={1.7} aria-hidden="true" />
+                      <span className="chat-attachment-name">{attachment.name}</span>
+                      <button
+                        type="button"
+                        className="chat-attachment-remove"
+                        onClick={() =>
+                          setAttachments((current) =>
+                            current.filter(({ path }) => path !== attachment.path)
+                          )
+                        }
+                        disabled={busy}
+                        aria-label={`Remove ${attachment.name}`}
+                      >
+                        <X size={12} strokeWidth={2} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
               )}
+              <div className="chat-input-row">
+                <button
+                  type="button"
+                  className="chat-attach-btn"
+                  onClick={() => void pickAttachments()}
+                  disabled={busy || attachments.length >= MAX_CHAT_ATTACHMENTS}
+                  aria-label={`Attach files (${attachments.length} of ${MAX_CHAT_ATTACHMENTS})`}
+                  title="Attach files"
+                >
+                  <Paperclip size={18} strokeWidth={1.6} />
+                </button>
+                <textarea
+                  ref={textareaRef}
+                  className="chat-input"
+                  rows={1}
+                  placeholder="Ask about your training, recovery, trends…"
+                  value={input}
+                  disabled={busy}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      void send()
+                    }
+                  }}
+                />
+                {busy ? (
+                  <button
+                    className="chat-send chat-stop"
+                    onClick={() => void stop()}
+                    aria-label="Stop"
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button
+                    className="chat-send"
+                    onClick={() => void send()}
+                    disabled={!input.trim() && attachments.length === 0}
+                    aria-label="Send"
+                  >
+                    <ArrowUp size={18} strokeWidth={2} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -524,7 +524,7 @@ const INJURY_COLUMNS =
   'id, name, body_area, status, severity, started_at, plan_started_at, resolved_at, summary, recovery_plan, created_at, updated_at'
 
 const INJURY_LOG_COLUMNS =
-  'id, injury_id, entry_date, noted_at, source, note, pain_level, context, workout_id'
+  'id, injury_id, entry_date, entry_end_date, date_precision, noted_at, source, note, pain_level, context, workout_id'
 
 const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
 
@@ -633,12 +633,19 @@ export async function addInjuryLog(
   // One log per day, highest pain wins: a same-day entry only supersedes the
   // existing one when its pain is >= the day's current pain. Corrections that
   // lower the reading are made by deleting the log, not by re-logging.
+  //
+  // The merge is scoped to this app's own single-day quick logs (source 'user',
+  // no span). Chat-authored notes and period spans are exempt — they can share a
+  // date with a quick log without being clobbered, matching the partial unique
+  // index injury_notes_user_daily_unique.
   const entryDate = entry.entry_date ?? new Date().toISOString().slice(0, 10)
   const { data: dayRow, error: dayError } = await supabase
     .from('injury_notes')
     .select('id, pain_level')
     .eq('injury_id', entry.injury_id)
     .eq('entry_date', entryDate)
+    .eq('source', 'user')
+    .is('entry_end_date', null)
     .maybeSingle()
   if (dayError) throw new Error(`addInjuryLog (day lookup): ${dayError.message}`)
 

@@ -24,22 +24,56 @@ if (envPath) {
 // A packaged app launched from Finder/Dock (LaunchServices) does not inherit the user's
 // shell PATH the way a terminal-launched `npm run dev` does — so a `claude` CLI installed
 // via Homebrew/nvm (added to PATH by .zprofile/.zshrc) is invisible to chat.ts's spawn/execFile
-// calls, which read process.env.PATH. Import the real PATH from a login shell once at startup.
+// calls, which read process.env.PATH. Rebuild a usable PATH at startup, two ways:
+//   1. Import the real PATH from a login + interactive shell (sources both .zprofile and
+//      .zshrc, where Homebrew/nvm/etc. add their bin dirs).
+//   2. Union in well-known CLI install dirs, so detection still works if the shell import
+//      is blocked or the user's shell config is unusual.
 if (app.isPackaged && process.platform !== 'win32') {
+  hydratePackagedAppPath()
+}
+
+function hydratePackagedAppPath(): void {
+  const dirs = (process.env.PATH ?? '').split(':').filter(Boolean)
+  const add = (dir: string): void => {
+    if (dir && !dirs.includes(dir)) dirs.push(dir)
+  }
+
   try {
     const loginShell = process.env.SHELL || '/bin/zsh'
-    const output = execFileSync(loginShell, ['-ilc', 'echo -n "__PATH__$PATH__PATH__"'], {
-      encoding: 'utf8',
-      timeout: 10_000
-    })
-    const match = output.match(/__PATH__(.*)__PATH__/s)
+    // The delimiter MUST brace ${PATH}: a bare `$PATH__END__` is parsed as the (unset)
+    // variable `PATH__END__` — the bug in the previous version that left PATH empty.
+    // Distinct begin/end markers let us ignore any interactive-shell banner noise.
+    const output = execFileSync(
+      loginShell,
+      ['-ilc', 'printf %s "__CLAUDE_PATH_BEGIN__${PATH}__CLAUDE_PATH_END__"'],
+      { encoding: 'utf8', timeout: 10_000 }
+    )
+    const match = output.match(/__CLAUDE_PATH_BEGIN__([\s\S]*?)__CLAUDE_PATH_END__/)
     if (match) {
-      process.env.PATH = match[1]
+      for (const dir of match[1].split(':')) add(dir)
       console.log('[path] imported PATH from login shell for packaged app')
+    } else {
+      console.log('[path] login-shell PATH marker not found; using fallback dirs only')
     }
   } catch (error) {
     console.log(`[path] could not import PATH from login shell: ${(error as Error).message}`)
   }
+
+  // Fallback CLI locations: Apple-silicon & Intel Homebrew, pipx/user installs, Bun, Volta.
+  // Nonexistent dirs are harmless — the OS just skips them during binary resolution.
+  const home = process.env.HOME ?? ''
+  for (const dir of [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    home && `${home}/.local/bin`,
+    home && `${home}/.bun/bin`,
+    home && `${home}/.volta/bin`
+  ]) {
+    add(dir)
+  }
+
+  process.env.PATH = dirs.join(':')
 }
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -109,6 +143,11 @@ function createWindow(): void {
       sandbox: false
     }
   })
+
+  // Default to a maximized window (fills the display's work area — not
+  // fullscreen, so the menu bar and margins stay). Skipped for the external
+  // test-launch path, which pins a fixed 1440×900 on the secondary monitor.
+  if (!position) mainWindow.maximize()
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

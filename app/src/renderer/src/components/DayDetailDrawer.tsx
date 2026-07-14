@@ -80,6 +80,12 @@ export function DayDetailDrawer({
 
 // One {label, value} cell in the organized stat box (day-drawer-session-stats-block).
 // `icon` renders before the value (e.g. the Heart glyph on HR stats).
+interface StatSpec {
+  label: string
+  value: ReactNode
+  icon?: ReactNode
+}
+
 function StatCell({
   label,
   value,
@@ -145,6 +151,64 @@ function SessionCard({
   const swimActiveTimePct =
     swimSets.length > 0 ? activeTimePercent(swimSets, workout.duration_s) : null
 
+  // Two ordered groups so the box reads top-down: the human, at-a-glance
+  // numbers first (duration, distance, pace, rest, HR), the modeled/technical
+  // ones below (TRIMP, EF, decoupling, set counts). Each group is one grid row.
+  const heartIcon = (
+    <Heart size={14} strokeWidth={1.75} className="day-drawer-session-stat-hr-icon" />
+  )
+  const avgHr = swimSummary ? workout.avg_hr : isStrength ? gymAvgHr : null
+
+  const basicStats: StatSpec[] = [
+    { label: 'Duration', value: formatDuration(workout.duration_s ?? 0) }
+  ]
+  if (distanceKm) basicStats.push({ label: 'Distance', value: `${distanceKm} km` })
+  if (swimSummary) {
+    basicStats.push({
+      label: 'Avg set pace',
+      value:
+        swimSummary.avgPaceSecPer100m !== null
+          ? `${formatClock(swimSummary.avgPaceSecPer100m)} /100m`
+          : EM_DASH
+    })
+    basicStats.push({
+      label: 'Rest',
+      value:
+        swimSummary.medianRestS !== null ? `~${Math.round(swimSummary.medianRestS)}s` : EM_DASH
+    })
+  }
+  if (swimSummary || isStrength) {
+    basicStats.push({
+      label: 'Avg HR',
+      value: avgHr != null ? Math.round(avgHr) : EM_DASH,
+      icon: avgHr != null ? heartIcon : undefined
+    })
+  }
+
+  const technicalStats: StatSpec[] = [
+    { label: 'TRIMP', value: trimp != null ? Math.round(trimp) : EM_DASH }
+  ]
+  if (!isStrength) {
+    technicalStats.push({ label: 'EF', value: ef != null ? ef.toFixed(2) : EM_DASH })
+    technicalStats.push({
+      label: 'Decoupling',
+      value: decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH
+    })
+  }
+  if (swimSummary) {
+    technicalStats.push({ label: 'Detected sets', value: swimSummary.nSets })
+    technicalStats.push({
+      label: 'Active time',
+      value: swimActiveTimePct !== null ? `${Math.round(swimActiveTimePct)}%` : EM_DASH
+    })
+  }
+  if (isStrength) {
+    technicalStats.push({
+      label: 'Max HR',
+      value: gymMaxHr != null ? Math.round(gymMaxHr) : EM_DASH
+    })
+  }
+
   return (
     <div className="day-drawer-session">
       <div className="day-drawer-session-header">
@@ -159,62 +223,15 @@ function SessionCard({
 
       <div className="day-drawer-session-stats-block">
         <div className="day-drawer-session-stats">
-          <StatCell label="Duration" value={formatDuration(workout.duration_s ?? 0)} />
-          {distanceKm && <StatCell label="Distance" value={`${distanceKm} km`} />}
-          <StatCell label="TRIMP" value={trimp != null ? Math.round(trimp) : EM_DASH} />
-          {!isStrength && (
-            <StatCell label="EF" value={ef != null ? ef.toFixed(2) : EM_DASH} />
-          )}
-          {!isStrength && (
-            <StatCell
-              label="Decoupling"
-              value={decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH}
-            />
-          )}
-          {isStrength && (
-            <StatCell
-              label="Max HR"
-              value={gymMaxHr != null ? Math.round(gymMaxHr) : EM_DASH}
-            />
-          )}
-          {isStrength && (
-            <StatCell
-              label="Avg HR"
-              value={gymAvgHr != null ? Math.round(gymAvgHr) : EM_DASH}
-            />
-          )}
+          {basicStats.map((s) => (
+            <StatCell key={s.label} label={s.label} value={s.value} icon={s.icon} />
+          ))}
         </div>
-
-        {swimSummary && (
+        {technicalStats.length > 0 && (
           <div className="day-drawer-session-stats">
-            <StatCell
-              label="Avg set pace"
-              value={
-                swimSummary.avgPaceSecPer100m !== null
-                  ? `${formatClock(swimSummary.avgPaceSecPer100m)} /100m`
-                  : EM_DASH
-              }
-            />
-            <StatCell
-              label="Rest"
-              value={
-                swimSummary.medianRestS !== null ? `~${Math.round(swimSummary.medianRestS)}s` : EM_DASH
-              }
-            />
-            <StatCell label="Detected sets" value={swimSummary.nSets} />
-            <StatCell
-              label="Active time"
-              value={swimActiveTimePct !== null ? `${Math.round(swimActiveTimePct)}%` : EM_DASH}
-            />
-            <StatCell
-              label="Avg HR"
-              value={workout.avg_hr !== null ? Math.round(workout.avg_hr) : EM_DASH}
-              icon={
-                workout.avg_hr !== null ? (
-                  <Heart size={14} strokeWidth={1.75} className="day-drawer-session-stat-hr-icon" />
-                ) : undefined
-              }
-            />
+            {technicalStats.map((s) => (
+              <StatCell key={s.label} label={s.label} value={s.value} icon={s.icon} />
+            ))}
           </div>
         )}
       </div>

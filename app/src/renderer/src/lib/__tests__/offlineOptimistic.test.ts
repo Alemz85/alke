@@ -50,6 +50,8 @@ describe('offline optimistic cache helpers', () => {
       id: -1,
       injury_id: 'injury-1',
       entry_date: '2026-07-13',
+      entry_end_date: null,
+      date_precision: 'day',
       noted_at: '2026-07-13T12:00:00Z',
       source: 'user',
       note: 'Feeling fine',

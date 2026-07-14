@@ -196,7 +196,7 @@ function App(): ReactElement {
   return (
     <div className="app-shell">
       <Sidebar active={activeTab} onSelect={handleSelectTab} />
-      <main className="content-area">
+      <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
         <div className="content-area-inner">
           <div className="content-area-toolbar">
             <OfflineQueueStatus

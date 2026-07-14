@@ -85,6 +85,20 @@
   gap: var(--space-xl);
 }
 
+/* The Chat tab runs its own internal scroll regions (the message thread and the
+   sessions list), so the outer content column must NOT scroll — otherwise the
+   sessions sidebar and header scroll away with the thread. Pin the inner column
+   to the viewport height and let the chat view flex to fill it. */
+.content-area--chat {
+  overflow: hidden;
+}
+
+.content-area--chat .content-area-inner {
+  height: 100%;
+  min-height: 0;
+  padding-bottom: var(--space-xl);
+}
+
 @media (max-width: 759px) {
   .content-area-inner {
     padding: var(--space-xl) var(--space-md) var(--space-xl);

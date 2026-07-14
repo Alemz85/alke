@@ -9,8 +9,8 @@
 }
 
 .day-drawer {
-  width: 760px;
-  max-width: min(92vw, 760px);
+  width: 880px;
+  max-width: min(92vw, 880px);
   height: 100%;
   background: var(--color-surface-elevated);
   border-left: 1px solid var(--color-hairline);

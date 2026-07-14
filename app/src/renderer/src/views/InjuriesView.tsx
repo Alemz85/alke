@@ -1,6 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query'
-import { ArrowLeft, ArrowUpRight, ArrowDownRight, CalendarDays, Check, Minus, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  ArrowDownRight,
+  CalendarDays,
+  Check,
+  Minus,
+  Trash2,
+  X
+} from 'lucide-react'
 import {
   ComposedChart,
   Bar,
@@ -14,6 +23,7 @@ import {
 import {
   INJURY_CONTEXTS,
   type Injury,
+  type InjuryDatePrecision,
   type InjuryLogEntry,
   type InjuryNoteContext,
   type NewInjuryLog,
@@ -124,6 +134,24 @@ function formatDateShort(ymd: string): string {
   const d = new Date(`${ymd}T00:00:00`)
   if (Number.isNaN(d.getTime())) return ymd
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** One endpoint of a log period, rendered only as precisely as it is known. */
+function formatLogDate(ymd: string, precision: InjuryDatePrecision): string {
+  const d = new Date(`${ymd.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ymd
+  if (precision === 'year') return d.toLocaleDateString(undefined, { year: 'numeric' })
+  if (precision === 'month') return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short' })
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** A log entry's when: a single date, or "start – end" for a span. */
+function formatLogPeriod(entry: InjuryLogEntry): string {
+  const precision = entry.date_precision ?? 'day'
+  const start = formatLogDate(entry.entry_date, precision)
+  if (!entry.entry_end_date) return start
+  const end = formatLogDate(entry.entry_end_date, precision)
+  return end === start ? start : `${start} – ${end}`
 }
 
 function sourceLabel(source: string | null): string {
@@ -773,7 +801,7 @@ function StartedAtControl({
           disabled={readOnly}
           onClick={() => setEditing(true)}
         >
-          {injury.started_at ? `Injury started ${formatDateShort(injury.started_at)}` : 'Set injury start'}
+          {injury.started_at ? `Injury started ${formatDate(injury.started_at)}` : 'Set injury start'}
         </button>
       )}
       {mutation.isError && <span className="injury-plan-date-error">Could not update date</span>}
@@ -956,9 +984,11 @@ function InjuryDeleteControl({ injuryId, onDeleted }: { injuryId: string; onDele
       ) : (
         <button
           type="button"
-          className="injury-btn injury-action-btn injury-action-btn--danger-ghost"
+          className="injury-delete-btn"
           onClick={handleClick}
+          title="Permanently deletes this injury and its logs, plan and checks"
         >
+          <Trash2 size={14} strokeWidth={1.6} aria-hidden="true" />
           Delete injury
         </button>
       )}
@@ -1411,7 +1441,11 @@ function NotesFeed({ log }: { log: InjuryLogEntry[] }): ReactElement | null {
           <li key={n.id} className="injury-note-row">
             <div className="injury-note-meta">
               <span className="injury-log-source">{sourceLabel(n.source)}</span>
-              <span className="injury-note-date tabular-nums">{formatDateShort(n.entry_date)}</span>
+              <span
+                className={`injury-note-date tabular-nums${n.entry_end_date ? ' injury-note-date--span' : ''}`}
+              >
+                {formatLogPeriod(n)}
+              </span>
               {n.pain_level != null && n.pain_level >= 1 && (
                 <span className={`injury-log-pain tabular-nums ${painClass(n.pain_level)}`}>
                   {n.pain_level}/10
@@ -1671,14 +1705,9 @@ function InjuryFullView({
 
       {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
 
-      <section className="injury-section injury-danger-zone">
-        <SectionTitle eyebrow="Irreversible" title="Danger zone" />
-        <p className="injury-danger-hint">
-          Permanently deletes this injury and all of its logs, recovery plan and checks. This
-          cannot be undone — use “Mark as healed” instead if you just want to close it out.
-        </p>
+      <div className="injury-delete-footer">
         <InjuryDeleteControl injuryId={injury.id} onDeleted={onBack} />
-      </section>
+      </div>
 
       {planOpen && (
         <RecoveryPlanModal

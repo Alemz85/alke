@@ -3,7 +3,36 @@ from argparse import Namespace
 import json
 
 import chatctx.injuries as injuries
-from chatctx.injuries import cmd_plan_apply, cmd_show, current_plan_week, validate_plan_document
+from chatctx.injuries import (
+    cmd_note,
+    cmd_plan_apply,
+    cmd_show,
+    current_plan_week,
+    format_period,
+    validate_plan_document,
+)
+
+
+def note_args(**overrides):
+    args = {
+        "injury_id": "injury-1", "note": "…", "source": "chat", "pain": None,
+        "date": None, "until": None, "precision": None, "context": None, "workout": None,
+    }
+    args.update(overrides)
+    return Namespace(**args)
+
+
+def capture_note_body(monkeypatch, args, today="2026-07-14"):
+    captured = {}
+
+    def request(method, path, **kwargs):
+        captured.update(method=method, path=path, body=kwargs.get("body"))
+        return []
+
+    monkeypatch.setattr(injuries, "_request", request)
+    monkeypatch.setattr(injuries, "user_today", lambda: today)
+    cmd_note(args)
+    return captured["body"]
 
 
 def exercise(**overrides):
@@ -45,6 +74,48 @@ def test_validation_requires_start_week():
 def test_validation_accepts_more_than_eight_items():
     items = [exercise(name=f"Exercise {index}") for index in range(10)]
     assert len(validate_plan_document({"approach": "Comprehensive.", "items": items})) == 10
+
+
+def test_format_period_renders_only_known_precision():
+    assert format_period("2025-03-10", None, "day") == "2025-03-10"
+    assert format_period("2025-03-10", None, "month") == "2025-03"
+    assert format_period("2025-01-01", None, "year") == "2025"
+    assert format_period("2025-01-01", "2026-03-01", "year") == "2025 → 2026"
+    assert format_period("2025-03-14", "2025-04-28", "day") == "2025-03-14 → 2025-04-28"
+    # An end that collapses to the same rendered value shows as a single date.
+    assert format_period("2026-05-01", "2026-05-20", "month") == "2026-05"
+    assert format_period(None, None, None) == ""
+
+
+def test_note_records_span_and_precision(monkeypatch):
+    body = capture_note_body(monkeypatch, note_args(
+        note="Quiet since", pain=0, date="2025-03-14", until="2025-04-28", precision="day"))
+    assert body["entry_date"] == "2025-03-14"
+    assert body["entry_end_date"] == "2025-04-28"
+    assert body["date_precision"] == "day"
+    assert body["pain_level"] == 0
+
+
+def test_note_span_without_start_defaults_to_today(monkeypatch):
+    body = capture_note_body(monkeypatch, note_args(until="2026-08-01"))
+    assert body["entry_date"] == "2026-07-14"
+    assert body["entry_end_date"] == "2026-08-01"
+
+
+def test_note_single_day_stays_span_free(monkeypatch):
+    body = capture_note_body(monkeypatch, note_args(date="2026-07-10", pain=3))
+    assert "entry_end_date" not in body
+    assert "date_precision" not in body
+
+
+def test_note_rejects_backwards_span(monkeypatch):
+    with pytest.raises(SystemExit, match="on or after"):
+        capture_note_body(monkeypatch, note_args(date="2026-07-10", until="2026-07-01"))
+
+
+def test_note_rejects_malformed_date(monkeypatch):
+    with pytest.raises(SystemExit, match="expected YYYY-MM-DD"):
+        capture_note_body(monkeypatch, note_args(date="last may"))
 
 
 def test_current_plan_week_uses_seven_day_phases():

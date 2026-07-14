@@ -63,6 +63,33 @@ const TOOLTIP_STYLE = {
 const TOOLTIP_LABEL_STYLE = { color: 'var(--color-text-secondary)' }
 const TOOLTIP_ITEM_STYLE = { fontVariantNumeric: 'tabular-nums' as const }
 
+// A ScatterChart runs the default Tooltip formatter over *every* payload item,
+// including the category X value — here a date string. The old
+// `formatter={(v) => v.toFixed(1)}` threw "toFixed is not a function" on that
+// string, crashing the renderer to black on hover. This custom content reads
+// the datum directly and only ever formats the numeric reading.
+function Vo2Tooltip({
+  active,
+  payload,
+  timezone
+}: {
+  active?: boolean
+  payload?: Array<{ payload?: { date: string; vo2max: number } }>
+  timezone: string | null | undefined
+}): ReactElement | null {
+  if (!active || !payload || payload.length === 0) return null
+  const point = payload[0]?.payload
+  if (!point) return null
+  return (
+    <div className="recovery-scatter-tooltip">
+      <div className="recovery-scatter-tooltip-label">{fmtLocalDate(point.date, timezone)}</div>
+      <div className="recovery-scatter-tooltip-value tabular-nums">
+        {point.vo2max.toFixed(1)} mL/kg/min
+      </div>
+    </div>
+  )
+}
+
 export function RecoveryView(): ReactElement {
   const [sleepRange, setSleepRange] = useState<ChipRange>('30d')
   const [bedtimeRange, setBedtimeRange] = useState<ChipRange>('30d')
@@ -837,11 +864,8 @@ export function RecoveryView(): ReactElement {
                     />
                     <ZAxis range={[36, 36]} />
                     <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      labelStyle={TOOLTIP_LABEL_STYLE}
-                      itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
-                      formatter={(value: number) => [`${value.toFixed(1)} mL/kg/min`, 'VO₂max']}
+                      cursor={{ stroke: 'var(--color-divider-soft)', strokeWidth: 1 }}
+                      content={<Vo2Tooltip timezone={timezone} />}
                     />
                     <Scatter data={vo2ChartData} fill="var(--color-recovery)" />
                   </ScatterChart>
