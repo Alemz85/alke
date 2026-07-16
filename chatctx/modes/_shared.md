@@ -84,5 +84,6 @@ Log, without being asked, when:
 - A schema or metric assumption from your instruction files turns out wrong.
 - A knowledge-library entry seems low-quality, inapplicable to this user, or contradicted by better evidence (`--category knowledge`, `--subject <file path>`).
 - Data looks wrong in a way worth engineering attention (impossible values, gaps that don't match the known-quirks list above).
+- Your instruction files steered you wrong — you missed load-bearing context, or mis-framed an answer, because no mode file told you to look (`--category instructions`, `--subject <mode file path>`). A resolution to "do better next time" dies with the session; the log entry is the only version that survives.
 
 Keep entries objective and short: what was attempted, what happened, what was expected. No editorializing — this is a bug tracker, not a diary. Don't re-log a problem that already has an open entry for the same subject (check `list --unresolved` if unsure); `resolve` is for dev sessions to close entries whose cause is fixed, not for you.
