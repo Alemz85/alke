@@ -1,0 +1,168 @@
+.hr-cardio-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxl);
+}
+
+.hr-cardio-overview {
+  overflow: hidden;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+}
+
+.hr-cardio-overview-top {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.15fr) minmax(0, 2fr);
+  align-items: stretch;
+}
+
+.hr-cardio-lifetime-intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xl);
+}
+
+.hr-cardio-section-kicker,
+.hr-cardio-lifetime-fact span,
+.hr-cardio-period-label,
+.hr-cardio-period-facts span {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.hr-cardio-lifetime-value {
+  color: var(--color-aerobic-text);
+  font-family: var(--font-display);
+  font-size: clamp(var(--type-heading-lg-size), 3.5vw, 48px);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: 1;
+  letter-spacing: -0.6px;
+}
+
+.hr-cardio-lifetime-caption {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+.hr-cardio-lifetime-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.hr-cardio-lifetime-fact {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-lg);
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.hr-cardio-lifetime-fact:first-child {
+  border-left: 0;
+}
+
+.hr-cardio-lifetime-fact strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-cardio-period-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.hr-cardio-period-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  padding: var(--space-lg) var(--space-xl);
+}
+
+.hr-cardio-period-summary + .hr-cardio-period-summary {
+  border-left: 1px solid var(--color-divider-soft);
+}
+
+.hr-cardio-period-label {
+  color: var(--color-text-secondary);
+}
+
+.hr-cardio-period-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.hr-cardio-period-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.hr-cardio-period-facts strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  line-height: var(--type-body-md-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hr-cardio-chart-unit {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+@media (max-width: 1100px) {
+  .hr-cardio-overview-top,
+  .hr-cardio-period-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hr-cardio-lifetime-facts {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+
+  .hr-cardio-period-summary + .hr-cardio-period-summary {
+    border-top: 1px solid var(--color-divider-soft);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .hr-cardio-view {
+    gap: var(--space-xl);
+  }
+
+  .hr-cardio-lifetime-facts,
+  .hr-cardio-period-facts {
+    grid-template-columns: 1fr;
+  }
+}

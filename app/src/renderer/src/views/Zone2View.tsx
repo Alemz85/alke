@@ -38,7 +38,9 @@ import { EM_DASH, formatPace100 } from '../lib/format'
 import { groupByWorkout, summarizeSession } from '../lib/swimSets'
 import { fastest100, fastest25, monthlyAvgPace } from '../lib/swimTrends'
 import { weekLabel } from '../lib/weekLabel'
+import { HrCardioView } from './HrCardioView'
 import { RunningView } from './RunningView'
+import { WalkingView } from './WalkingView'
 import './Zone2View.css'
 
 const AEROBIC = CHART.aerobic
@@ -66,7 +68,7 @@ function isCardio(type: string | null): boolean {
   return !!type && !/strength|core|other/.test(type)
 }
 
-function hasZones(w: Workout): boolean {
+export function hasZones(w: Workout): boolean {
   return w.computed?.time_in_zones != null
 }
 
@@ -118,13 +120,13 @@ function SwimChartKey({
 
 // --- shared chart bodies (reused by Summary and modality views) ---
 
-interface WeeklyBarsProps {
+export interface WeeklyBarsProps {
   data: { week: string; key: string; minutes: number }[]
   targetMin?: number
 }
 
 /** Weekly Z2 minutes bar chart. Target line drawn only when `targetMin` given. */
-function WeeklyZ2Bars({ data, targetMin }: WeeklyBarsProps): ReactElement {
+export function WeeklyZ2Bars({ data, targetMin }: WeeklyBarsProps): ReactElement {
   const axis = buildNumericAxis([...data.map((row) => row.minutes), targetMin], {
     includeZero: true,
     tickCount: 4
@@ -169,7 +171,7 @@ function WeeklyZ2Bars({ data, targetMin }: WeeklyBarsProps): ReactElement {
   )
 }
 
-interface TizBar {
+export interface TizBar {
   date: string
   z1: number
   z2: number
@@ -179,7 +181,7 @@ interface TizBar {
 }
 
 /** Stacked time-in-zones bars. */
-function TimeInZonesStacks({ data }: { data: TizBar[] }): ReactElement {
+export function TimeInZonesStacks({ data }: { data: TizBar[] }): ReactElement {
   const axis = buildNumericAxis(
     data.map((row) => row.z1 + row.z2 + row.z3 + row.z4 + row.z5),
     { includeZero: true, tickCount: 4 }
@@ -441,7 +443,7 @@ function DecouplingScatter({ data }: { data: DecouplingPoint[] }): ReactElement 
  * current week — zero-filled for weeks with no Z2, not just weeks that
  * happen to have data. Monday-anchored, per isoWeekKey.
  */
-function weeklyZ2(
+export function weeklyZ2(
   workouts: Workout[],
   timezone: string | null,
   count: number
@@ -466,7 +468,7 @@ function weeklyZ2(
 }
 
 /** Time-in-zones stacked-bar rows for the last `count` sessions (already filtered). */
-function tizRows(workouts: Workout[], timezone: string | null, count: number): TizBar[] {
+export function tizRows(workouts: Workout[], timezone: string | null, count: number): TizBar[] {
   return workouts
     .filter(hasZones)
     .sort((a, b) => a.start_at.localeCompare(b.start_at))
@@ -510,22 +512,38 @@ export function Zone2View({ onOpenSessions }: Zone2ViewProps): ReactElement {
     queryFn: () => window.api.getUserConfig(),
     staleTime: 60_000
   })
+  // ~400 days: enough for the walking tab's 90d daily chart, 26-week chart,
+  // and 30d baseline all with margin, plus a full trailing year for context.
+  const dailyMetricsFrom = useMemo(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 400)
+    return d.toISOString().slice(0, 10)
+  }, [])
+  const dailyMetricsQuery = useQuery({
+    queryKey: ['zone2', 'dailyMetrics', dailyMetricsFrom],
+    queryFn: () => window.api.getDailyMetrics(dailyMetricsFrom, new Date().toISOString().slice(0, 10)),
+    staleTime: 60_000
+  })
   const timezone = configQuery.data?.timezone ?? null
   const weeklyTargetMin = configQuery.data?.zone2_weekly_target_min ?? 90
   const workouts = useMemo(() => workoutsQuery.data ?? [], [workoutsQuery.data])
+  const dailyMetrics = useMemo(() => dailyMetricsQuery.data ?? [], [dailyMetricsQuery.data])
 
   const [view, setView] = useState<ViewKey>('summary')
 
   // A modality tab represents recorded history, not HR availability. Imported
   // runs without zone data must remain navigable; each view owns its HR state.
+  // Walking is additionally present whenever daily_metrics has any step data,
+  // even with zero explicit walk workouts — steps alone justify the tab.
   const presentModalities = useMemo(() => {
     const present = new Set<CardioModalityKey>()
     for (const w of workouts) {
       const key = cardioModalityOf(w.type)
       if (key) present.add(key)
     }
+    if (dailyMetrics.some((m) => m.steps != null)) present.add('walking')
     return CARDIO_MODALITIES.filter((m) => present.has(m.key)).map((m) => m.key)
-  }, [workouts])
+  }, [workouts, dailyMetrics])
 
   // If the selected modality vanishes (data reload), fall back to Summary.
   const activeView: ViewKey =
@@ -638,6 +656,21 @@ export function Zone2View({ onOpenSessions }: Zone2ViewProps): ReactElement {
       ) : activeView === 'running' ? (
         <RunningView
           workouts={workouts.filter((workout) => cardioModalityOf(workout.type) === 'running')}
+          timezone={timezone}
+          onOpenSessions={onOpenSessions}
+        />
+      ) : activeView === 'walking' ? (
+        <WalkingView
+          workouts={workouts.filter((workout) => cardioModalityOf(workout.type) === 'walking')}
+          dailyMetrics={dailyMetrics}
+          timezone={timezone}
+          onOpenSessions={onOpenSessions}
+        />
+      ) : activeView === 'cycling' || activeView === 'rowing' ? (
+        <HrCardioView
+          modalityKey={activeView}
+          label={cardioModalityByKey(activeView).label}
+          workouts={workouts.filter((workout) => cardioModalityOf(workout.type) === activeView)}
           timezone={timezone}
           onOpenSessions={onOpenSessions}
         />
