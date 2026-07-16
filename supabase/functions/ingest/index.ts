@@ -48,14 +48,43 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+/**
+ * Constant-time string comparison. Deno has no built-in timingSafeEqual, so
+ * this compares full byte length regardless of where (or whether) a mismatch
+ * occurs, accumulating differences with bitwise OR rather than an early
+ * `return false` on the first mismatched byte — an early exit is exactly
+ * what would leak the token length/prefix via response-time timing.
+ * Length mismatches are folded into the same constant-time comparison
+ * (against a same-length dummy) instead of short-circuiting, so a wrong
+ * length can't be distinguished by timing either.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  const length = Math.max(aBytes.length, bBytes.length);
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < length; i++) {
+    const x = i < aBytes.length ? aBytes[i] : 0;
+    const y = i < bBytes.length ? bBytes[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
 function checkAuth(req: Request): boolean {
   const expected = Deno.env.get("INGEST_TOKEN");
   if (!expected) return false;
   const headerToken = req.headers.get("x-ingest-token");
-  if (headerToken === expected) return true;
+  if (headerToken !== null && timingSafeEqual(headerToken, expected)) {
+    return true;
+  }
   const url = new URL(req.url);
   const queryToken = url.searchParams.get("token");
-  return queryToken === expected;
+  if (queryToken !== null && timingSafeEqual(queryToken, expected)) {
+    return true;
+  }
+  return false;
 }
 
 /** Reads the request body while enforcing MAX_BODY_BYTES without buffering unbounded data. */
@@ -168,6 +197,13 @@ Deno.serve(async (req: Request) => {
       return workoutRow;
     });
 
+    // This upsert is all-or-nothing: one bad row in the batch fails the whole
+    // POST (and HAE will retry the same batch, so it can 500 forever until
+    // the offending row is dealt with). Accepted tradeoff for a single-user
+    // tool with clean, own-device data — the raw payload is already durably
+    // stored above in raw_payloads regardless, so nothing is lost while this
+    // is diagnosed. Revisit (e.g. per-row upsert with partial success) if a
+    // poisoned batch ever actually recurs.
     const { data: upserted, error: upsertErr } = await supabase
       .from("workouts")
       .upsert(rows, { onConflict: "external_id" })
@@ -190,6 +226,15 @@ Deno.serve(async (req: Request) => {
     );
 
     // --- HR samples: bulk insert, skip rows that already exist -------
+    // ignoreDuplicates: true means first-write-wins forever for any given
+    // (workout_id, offset_s) — a re-delivered sample never overwrites what's
+    // already stored. This is intentional, not an oversight: HR corrections
+    // effectively don't happen (the watch doesn't revise past readings), so
+    // there's nothing to reconcile, and rewriting thousands of sample rows
+    // per re-delivery would be pure churn for no behavior change. Contrast
+    // with the daily_metrics merge below, which DOES reason about
+    // completeness (e.g. sleep aggregates can shrink/grow across re-syncs
+    // and picking the more-complete one matters).
     const hrRows: { workout_id: string; offset_s: number; bpm: number }[] = [];
     for (const w of parsed.workouts) {
       const workoutId = idByExternalId.get(w.external_id);
@@ -348,6 +393,9 @@ Deno.serve(async (req: Request) => {
       mergeDailyMetric(existingByDate.get(incoming.date) ?? null, incoming)
     );
 
+    // Same all-or-nothing tradeoff as the workout upsert above: one bad row
+    // aborts the whole batch. Accepted for the same reason (single-user,
+    // own-device data; raw_payloads already has the evidence).
     const { error: dailyUpsertErr } = await supabase
       .from("daily_metrics")
       .upsert(mergedRows, { onConflict: "date" });

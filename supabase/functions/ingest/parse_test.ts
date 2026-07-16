@@ -416,20 +416,24 @@ Deno.test("converts distance units: km, mi, yd, m, unknown->m", () => {
   assertEquals(unknown.distance_m, 2);
 });
 
-Deno.test("infers duration as minutes when seconds value would be implausibly small and no start/end", () => {
+Deno.test("infers duration-only (no start/end) as SECONDS, matching real HAE payloads", () => {
+  // Real payloads have shown bare `duration` values (e.g. 1869.8, 3736.8)
+  // matching end-start exactly when both were also present -- i.e. duration
+  // is in seconds in this HAE version, not minutes.
   const payload = {
     data: {
       workouts: [
         {
-          id: "no-dates",
+          id: "no-end",
           name: "Elliptical",
-          duration: 30, // no start/end to compare -> treat as minutes -> 1800s
+          start: "2026-07-08 07:00:00 +0200", // start required (NOT NULL guard); no end -> bare duration
+          duration: 1869.8, // seconds, rounded
         },
       ],
     },
   };
   const result = parseIngestPayload(payload);
-  assertEquals(result.workouts[0].duration_s, 1800);
+  assertEquals(result.workouts[0].duration_s, 1870);
 });
 
 Deno.test("drops HR samples before workout start (negative offset)", () => {
@@ -583,6 +587,98 @@ Deno.test("ignores unknown metric names gracefully without throwing", () => {
   );
 });
 
+Deno.test("maps walking_running_distance (km->m, summed per date) and flights_climbed (summed, integer)", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "walking_running_distance",
+          units: "km",
+          data: [
+            { date: "2026-07-08 08:00:00 +0200", qty: 5.2 },
+            { date: "2026-07-08 18:00:00 +0200", qty: 0.975 },
+          ],
+        },
+        {
+          name: "flights_climbed",
+          units: "count",
+          data: [
+            { date: "2026-07-08 08:00:00 +0200", qty: 8 },
+            { date: "2026-07-08 18:00:00 +0200", qty: 2 },
+          ],
+        },
+        // Include one known metric so a dailyMetrics row actually exists to
+        // inspect (an all-unknown payload would produce zero rows).
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 54 }],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 1);
+  const dm = result.dailyMetrics[0];
+  // (5.2 + 0.975) km * 1000 -> meters, summed across the two same-date entries.
+  assertAlmostEquals(dm.walking_running_distance_m!, 6175, 0.0001);
+  assertEquals(dm.flights_climbed, 10); // 8 + 2, summed and rounded to an integer
+  // The known metric alongside them still parses normally.
+  assertEquals(dm.resting_hr, 54);
+});
+
+Deno.test("walking_running_distance defaults to meters (unitless/unknown units assumed meters)", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "walking_running_distance",
+          units: "m",
+          data: [{ date: "2026-07-09 08:00:00 +0200", qty: 850 }],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics[0].walking_running_distance_m, 850);
+});
+
+Deno.test("documents current behavior: daily heart_rate metric's Avg/Min/Max shape (no qty) is ignored, not null-poisoned", () => {
+  // The daily `heart_rate` metric (distinct from resting_heart_rate) arrives
+  // shaped like { Avg, Min, Max } per entry with no `qty` field -- the same
+  // shape workout-level heartRateData samples use. heart_rate has no
+  // FIELD_MAP.metricNameToColumn entry, so today it's skipped by the
+  // `if (!column) continue` unknown-metric-name path before qty is even
+  // read; this test locks in that it produces no row/column at all rather
+  // than a row with a null value from a failed qty read.
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "heart_rate",
+          units: "bpm",
+          data: [
+            { date: "2026-07-08 09:00:00 +0200", Avg: 72.5, Min: 60, Max: 110 },
+          ],
+        },
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 54 }],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 1);
+  const dm = result.dailyMetrics[0] as unknown as Record<string, unknown>;
+  assertEquals(dm.heart_rate, undefined);
+  assertEquals(dm.resting_hr, 54);
+});
+
 Deno.test("daily metric date uses the LOCAL date part of the sample timestamp, not UTC", () => {
   // 23:30 +0200 local is still 2026-07-08 local, but 21:30 UTC -> still July 8 UTC too;
   // pick a case where UTC date would differ from local date.
@@ -703,7 +799,13 @@ Deno.test("converts weight_body_mass from lb to kg when units say lb", () => {
   assertAlmostEquals(dm.weight_kg!, 172.84 * 0.45359237, 0.0001);
 });
 
-Deno.test("maps state_of_mind metric into jsonb", () => {
+Deno.test("state_of_mind metric name is unmapped (column dropped) and ignored gracefully", () => {
+  // state_of_mind never received a single value across ingest history and had
+  // no reader anywhere in the app; the daily_metrics column was dropped
+  // (migration 20260716120100_drop_state_of_mind.sql). It's no longer in
+  // FIELD_MAP.metricNameToColumn, so it now falls into the generic
+  // unknown-metric-name path -- this locks in that receiving it doesn't 500
+  // the batch (writing to a dropped column would).
   const payload = {
     data: {
       metrics: [
@@ -716,15 +818,20 @@ Deno.test("maps state_of_mind metric into jsonb", () => {
             labels: ["happy"],
           }],
         },
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 54 }],
+        },
       ],
       workouts: [],
     },
   };
   const result = parseIngestPayload(payload);
-  assertEquals(result.dailyMetrics[0].state_of_mind, {
-    valence: 0.5,
-    labels: ["happy"],
-  });
+  assertEquals(result.dailyMetrics.length, 1);
+  const dm = result.dailyMetrics[0] as unknown as Record<string, unknown>;
+  assertEquals(dm.state_of_mind, undefined);
+  assertEquals(dm.resting_hr, 54);
 });
 
 // ---------------------------------------------------------------------------
@@ -747,10 +854,16 @@ Deno.test("non-object payload throws a ParseError", () => {
 });
 
 Deno.test("missing fields on a workout become null rather than throwing", () => {
-  const payload = { data: { workouts: [{ id: "bare-1" }] } };
-  const result = parseIngestPayload(payload);
-  const w = result.workouts[0];
-  assertEquals(w.start_at, null);
+  // A workout with no type/start at all is dropped (NOT NULL guard), never
+  // thrown on — the minimal keepable workout carries name + start and nulls
+  // everywhere else.
+  const bare = parseIngestPayload({ data: { workouts: [{ id: "bare-1" }] } });
+  assertEquals(bare.workouts, []);
+
+  const payload = {
+    data: { workouts: [{ id: "bare-2", name: "Run", start: "2026-07-08 07:00:00 +0200" }] },
+  };
+  const w = parseIngestPayload(payload).workouts[0];
   assertEquals(w.end_at, null);
   assertEquals(w.duration_s, null);
   assertEquals(w.distance_m, null);
@@ -796,6 +909,37 @@ Deno.test("mergeDailyMetric: no existing row -> incoming values pass through", (
   const merged = mergeDailyMetric(null, incoming);
   assertEquals(merged.resting_hr, 52);
   assertEquals(merged.steps, null);
+});
+
+Deno.test("mergeDailyMetric: walking_running_distance_m and flights_climbed merge like steps (incoming replaces, null never clobbers)", () => {
+  // These columns are already-summed-per-date totals by the time they reach
+  // mergeDailyMetric (summing across metric entries happens in parseMetrics
+  // per payload); the merge step itself does whole-value replace-if-non-null,
+  // identical to steps -- it does NOT add across re-deliveries.
+  const existing = {
+    date: "2026-07-08",
+    walking_running_distance_m: 6175,
+    flights_climbed: 10,
+  };
+  const incoming = {
+    date: "2026-07-08",
+    walking_running_distance_m: 7000,
+    flights_climbed: 12,
+  };
+  const merged = mergeDailyMetric(existing, incoming);
+  assertEquals(merged.walking_running_distance_m, 7000);
+  assertEquals(merged.flights_climbed, 12);
+
+  // A re-delivery with nulls (e.g. a payload that doesn't cover this date's
+  // activity data at all) must not clobber the stored totals.
+  const incomingNull = {
+    date: "2026-07-08",
+    walking_running_distance_m: null,
+    flights_climbed: null,
+  };
+  const mergedAgain = mergeDailyMetric(merged, incomingNull);
+  assertEquals(mergedAgain.walking_running_distance_m, 7000);
+  assertEquals(mergedAgain.flights_climbed, 12);
 });
 
 // ---------------------------------------------------------------------------
@@ -1232,4 +1376,24 @@ Deno.test("regression: a workout with a route still strips raw.route and keeps _
   assertEquals(routeStart.longitude, -2.9876);
   // route (the new normalized field) is populated independently of raw.
   assertEquals(w.route.length, 2);
+});
+
+Deno.test("drops workouts lacking a type or resolvable start (NOT NULL guard)", () => {
+  const payload = {
+    data: {
+      workouts: [
+        { id: "no-name", start: "2026-07-08 07:00:00 +0200", end: "2026-07-08 08:00:00 +0200" },
+        { id: "no-start", name: "Run", duration: 1800 },
+        {
+          id: "keeper",
+          name: "Run",
+          start: "2026-07-08 07:00:00 +0200",
+          end: "2026-07-08 08:00:00 +0200",
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.workouts.length, 1);
+  assertEquals(result.workouts[0].external_id, "keeper");
 });

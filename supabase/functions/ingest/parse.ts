@@ -63,8 +63,9 @@ export interface NormalizedDailyMetric {
   steps: number | null;
   active_energy_kcal: number | null;
   wrist_temp_deviation_c: number | null;
-  state_of_mind: Record<string, unknown> | null;
   weight_kg: number | null;
+  walking_running_distance_m: number | null;
+  flights_climbed: number | null;
 }
 
 export interface ParsedResult {
@@ -88,10 +89,11 @@ const FIELD_MAP = {
     active_energy: "active_energy_kcal", // summed per date
     apple_sleeping_wrist_temperature: "wrist_temp_deviation_c",
     weight_body_mass: "weight_kg", // scalar per date, last-wins; unit-converted to kg
-    // sleep_analysis and state_of_mind are handled specially (multi-field).
+    walking_running_distance: "walking_running_distance_m", // summed per date; unit-converted to meters
+    flights_climbed: "flights_climbed", // summed per date; integer count
+    // sleep_analysis is handled specially (multi-field).
   } as Record<string, keyof NormalizedDailyMetric>,
   sleepAnalysisMetricName: "sleep_analysis",
-  stateOfMindMetricName: "state_of_mind",
   // Workout field candidates, in preference order, for values that may
   // appear under different keys or as flat numbers vs {qty, units} objects.
   workout: {
@@ -368,11 +370,19 @@ function buildWorkoutRaw(w: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * `duration` units have varied between minutes and seconds across Health
- * Auto Export versions. Prefer end-start when both are known; otherwise
- * assume minutes unless the raw value is implausibly small to be seconds
- * for a workout (we treat any bare value as minutes per spec: "else treat
- * as minutes if implausibly small for seconds").
+ * Prefer end-start when both are known — it's always in seconds and doesn't
+ * depend on guessing `duration`'s unit. When only bare `duration` is present,
+ * treat it as SECONDS: real payloads in this HAE version have shown bare
+ * `duration` values (e.g. 1869.8, 3736.8) matching end−start exactly, and the
+ * vendored HAE docs (docs/vendor/hae-wiki/API-Export---JSON-Format.md) also
+ * document workout `duration` as seconds. An earlier version of this function
+ * assumed minutes as a defensive default against older HAE versions that may
+ * have used minutes, but that assumption is contradicted by every real
+ * payload observed so far. Today start+end is present on every real workout,
+ * so this fallback is dormant; it's fixed anyway so it's correct if it ever
+ * fires. No magnitude guard: a workout with only `duration` and no start/end
+ * has nothing to sanity-check the value against, so guessing a threshold
+ * would just be speculative complexity.
  */
 function inferDurationSeconds(
   rawDuration: unknown,
@@ -385,8 +395,8 @@ function inferDurationSeconds(
   }
   const n = toNumber(rawDuration);
   if (n === null) return null;
-  // No start/end to corroborate: treat as minutes (spec default).
-  return Math.round(n * 60);
+  // No start/end to corroborate: treat as seconds (real-payload evidence).
+  return Math.round(n);
 }
 
 function parseHrSamples(
@@ -679,8 +689,9 @@ function emptyDailyMetric(date: string): NormalizedDailyMetric {
     steps: null,
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
-    state_of_mind: null,
     weight_kg: null,
+    walking_running_distance_m: null,
+    flights_climbed: null,
   };
 }
 
@@ -724,16 +735,14 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
       for (const entry of data) parseSleepEntry(entry, getRow);
       continue;
     }
-    if (name === FIELD_MAP.stateOfMindMetricName) {
-      for (const entry of data) parseStateOfMindEntry(entry, getRow);
-      continue;
-    }
 
     const column = FIELD_MAP.metricNameToColumn[name];
     if (!column) continue; // unknown metric name: ignore gracefully
 
-    const summed = column === "steps" || column === "active_energy_kcal";
+    const summed = column === "steps" || column === "active_energy_kcal" ||
+      column === "walking_running_distance_m" || column === "flights_climbed";
     const isWeight = column === "weight_kg";
+    const isDistance = column === "walking_running_distance_m";
     // The metric-level `units` field applies to every entry in `data`
     // (Health Auto Export doesn't vary units per-entry within one metric).
     const metricUnits = typeof metric.units === "string"
@@ -754,11 +763,22 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
         const factor = entryUnits ? FIELD_MAP.massUnitToKg[entryUnits] ?? 1 : 1;
         qty = qty * factor;
       }
+      if (isDistance) {
+        const entryUnits = typeof entry.units === "string"
+          ? entry.units.toLowerCase()
+          : metricUnits;
+        const factor = entryUnits
+          ? FIELD_MAP.distanceUnitToMeters[entryUnits] ?? 1
+          : 1;
+        qty = qty * factor;
+      }
 
       const row = getRow(date) as unknown as Record<string, unknown>;
       if (summed) {
         const total = addSum(date, column, qty);
-        row[column] = column === "steps" ? Math.round(total) : total;
+        row[column] = column === "steps" || column === "flights_climbed"
+          ? Math.round(total)
+          : total;
       } else {
         row[column] = qty;
       }
@@ -797,18 +817,6 @@ function parseSleepEntry(
   if (hasStage) row.sleep_stages = stages;
 }
 
-function parseStateOfMindEntry(
-  entry: unknown,
-  getRow: (date: string) => NormalizedDailyMetric,
-): void {
-  if (!isPlainObject(entry)) return;
-  const date = localDatePart(entry.date);
-  if (!date) return;
-  const row = getRow(date);
-  const { date: _d, ...rest } = entry;
-  row.state_of_mind = rest;
-}
-
 // ===========================================================================
 // Entry point
 // ===========================================================================
@@ -829,7 +837,14 @@ export function parseIngestPayload(body: unknown): ParsedResult {
   }
 
   const workoutsRaw = Array.isArray(data.workouts) ? data.workouts : [];
-  const workouts = workoutsRaw.map(parseWorkout);
+  // A workout without a type or resolvable start time is unusable everywhere
+  // downstream (workouts.type/start_at are NOT NULL) — drop it here rather
+  // than letting one malformed entry violate the constraint and abort the
+  // whole batch upsert (HAE would then retry the poisoned batch forever).
+  // The full entry stays recoverable in raw_payloads.
+  const workouts = workoutsRaw
+    .map(parseWorkout)
+    .filter((w) => w.type !== null && w.start_at !== null);
 
   const dailyMetricsMap = parseMetrics(data.metrics);
   const dailyMetrics = [...dailyMetricsMap.values()].sort((a, b) =>
@@ -852,8 +867,9 @@ const MERGEABLE_COLUMNS = [
   "steps",
   "active_energy_kcal",
   "wrist_temp_deviation_c",
-  "state_of_mind",
   "weight_kg",
+  "walking_running_distance_m",
+  "flights_climbed",
 ] as const;
 
 // Sleep columns describe ONE aggregate of the night and merge as a group:
