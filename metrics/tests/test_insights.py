@@ -6,6 +6,9 @@ import pandas as pd
 import pytest
 
 from metrics.insights import (
+    _bh_qvalues,
+    _effective_n,
+    _lag1_autocorr,
     compute_correlations,
     discover_adjusted_insights,
     ef_dlm,
@@ -206,6 +209,74 @@ def test_correlations_tolerates_missing_weight_column():
     frame = make_frame(200)  # no weight_7d_slope column at all
     rows = compute_correlations(frame, drivers=["rhr_dev"], perfs=["weight_7d_slope"], max_lag=1)
     assert rows == []
+
+
+# --- F3: effective-sample-size correction + BH q-values on autocorrelated series ---
+
+def _ar1(n, phi, sd, rng):
+    """A synthetic AR(1) series x_t = phi·x_{t-1} + eps."""
+    x = np.zeros(n)
+    for i in range(1, n):
+        x[i] = phi * x[i - 1] + rng.normal(0, sd)
+    return x
+
+
+def test_lag1_autocorr_recovers_ar1_phi():
+    rng = np.random.default_rng(3)
+    x = _ar1(4000, 0.9, 1.0, rng)
+    assert _lag1_autocorr(pd.Series(x)) == pytest.approx(0.9, abs=0.05)
+    # a clamp + degenerate guard: constant series → 0 (treated iid)
+    assert _lag1_autocorr(pd.Series([5.0] * 50)) == 0.0
+
+
+def test_effective_n_shrinks_for_autocorrelated_series():
+    # Two series each with lag-1 autocorr 0.9 → n_eff = n·(1−0.81)/(1+0.81) ≈ 0.105·n.
+    assert _effective_n(200, 0.9, 0.9) == pytest.approx(200 * (1 - 0.81) / (1 + 0.81), abs=1.0)
+    # iid series (r1=0) → n_eff == n (no penalty).
+    assert _effective_n(200, 0.0, 0.0) == 200
+    # clamped to [3, n].
+    assert _effective_n(200, 0.99, 0.99) >= 3.0
+    assert _effective_n(200, 0.9, 0.9) <= 200
+
+
+def test_autocorrelation_correction_makes_p_less_overconfident():
+    # Two INDEPENDENT AR(1) series (no true relationship). The iid pearsonr p can
+    # look "significant" by chance because each series carries far less independent
+    # information than its length; the effective-n correction must widen (raise) p.
+    rng = np.random.default_rng(11)
+    n = 220
+    x = _ar1(n, 0.92, 1.0, rng)
+    y = _ar1(n, 0.92, 1.0, rng)
+    dates = pd.date_range("2025-01-01", periods=n, freq="D")
+    frame = pd.DataFrame({"drv": x, "prf": y}, index=dates)
+    rows = compute_correlations(frame, drivers=["drv"], perfs=["prf"], max_lag=0)
+    assert len(rows) == 1
+    row = rows[0]
+    # the correction never makes the series look MORE certain: corrected ≥ naive.
+    assert row["p_value"] >= row["p_value_naive"] - 1e-9
+    # effective n is materially smaller than the raw n for phi≈0.9 series.
+    assert row["n_eff"] < row["n"]
+    # q_value is attached and ≥ its own p (single-test BH q == p here).
+    assert row["q_value"] == pytest.approx(row["p_value"], abs=1e-9)
+
+
+def test_bh_qvalues_monotone_and_ordered():
+    q = _bh_qvalues([0.001, 0.5, 0.02, 0.8])
+    assert len(q) == 4
+    assert all(0.0 <= v <= 1.0 for v in q)
+    # BH: smallest p gets the tightest q; q is monotone in p-rank.
+    assert q[0] <= q[2] <= q[1] <= q[3]
+    assert _bh_qvalues([]) == []
+
+
+def test_correlations_attach_qvalue_across_sweep():
+    frame = make_frame(200)
+    frame["ef"] = frame["sleep_duration"] * 0.001 + RNG.normal(0, 0.01, 200)
+    rows = compute_correlations(
+        frame, drivers=["sleep_duration", "rhr_dev"], perfs=["ef"], max_lag=2
+    )
+    assert rows  # sweep produced pairs
+    assert all("q_value" in r and "n_eff" in r and "p_value_naive" in r for r in rows)
 
 
 def test_perfs_constant_includes_weight_slope():

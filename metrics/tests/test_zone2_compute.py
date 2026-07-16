@@ -22,21 +22,25 @@ TZ = ZoneInfo("Europe/Paris")
 NOW = datetime(2026, 7, 11, 3, 30, tzinfo=timezone.utc)
 
 
-def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True, steps_per_day=8000):
+def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True,
+                   steps_per_day=8000, aerobic_type="indoor_cycling", params=None):
     """400-day synthetic history. Toggles let the level-fusion tests isolate one
     signal at a time: with_ef=False drops ride EF (no distance in practice),
-    with_rhr=False drops resting-HR data, with_vo2=False drops watch VO2max."""
+    with_rhr=False drops resting-HR data, with_vo2=False drops watch VO2max.
+    aerobic_type swaps the every-3rd-day aerobic session's modality (e.g.
+    'running' to exercise the run-EF signal); params overrides the fake params row."""
     today = NOW.astimezone(TZ).date()
     n_days = 400
     days = [today - timedelta(days=n_days - 1 - i) for i in range(n_days)]
 
-    # An indoor_cycling Z2 ride every 3rd day for the first 300 days, then a
-    # 100-day full gap. Strength sessions every 2nd day THROUGHOUT — if they
-    # leaked into w(t), the gap would never read as a gap.
+    # An aerobic Z2 session every 3rd day for the first 300 days, then a 100-day
+    # full gap. Strength sessions every 2nd day THROUGHOUT — if they leaked into
+    # w(t), the gap would never read as a gap.
+    prefix = "run" if "run" in aerobic_type else "bike"
     workouts, zones, computed = [], {}, []
     for i, d in enumerate(days):
         if i % 3 == 0 and i < 300:
-            w = {"id": f"bike{i}", "type": "indoor_cycling",
+            w = {"id": f"{prefix}{i}", "type": aerobic_type,
                  "start_at": f"{d.isoformat()}T10:00:00Z", "duration_s": 2400,
                  "distance_m": 20000 if with_ef else None, "avg_hr": 130, "max_hr": 150}
             workouts.append(w)
@@ -58,25 +62,42 @@ def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True, step
          "resting_hr": (58 if i % 2 == 0 else None) if with_rhr else None,
          "hrv_sdnn_ms": 45.0,
          "steps": steps_per_day,
-         "vo2max": 42.0 if (with_vo2 and i in (50, 200)) else None}
+         "vo2max": 42.0 if (with_vo2 and i in (50, 200, 350)) else None}
         for i, d in enumerate(days)
     ]
     daily_rows = [{"date": d.isoformat(), "rhr_dev": 0.5, "hrv_dev": -1.0} for d in days]
 
     captured = {}
-    monkeypatch.setattr(db, "fetch_zone2_fitness_params", lambda sb: {
+    default_params = {
         "id": 1, "stage": "literature", "fast_sat": 26, "rhr_top_amateur": 48,
         "ef_top_factor": 1.6, "b_ref_min_per_wk": 0,  # 0 → guard must kick in
-    })
+    }
+    monkeypatch.setattr(db, "fetch_zone2_fitness_params",
+                        lambda sb: params if params is not None else default_params)
     monkeypatch.setattr(db, "fetch_computed_workout_zones", lambda sb: zones)
     monkeypatch.setattr(db, "fetch_computed_workouts", lambda sb: computed)
     monkeypatch.setattr(db, "fetch_active_injury_holds",
                         lambda sb: {"active_injuries": 0, "active_constraints": 0})
     monkeypatch.setattr(db, "upsert_computed_zone2_fitness",
                         lambda sb, rows: captured.setdefault("rows", rows))
+    monkeypatch.setattr(db, "update_zone2_fitted_from",
+                        lambda sb, ff: captured.__setitem__("fitted_from", ff))
 
     compute.run_zone2_fitness(None, workouts, daily_metrics, daily_rows, days, TZ, NOW)
-    return captured["rows"]
+    # expose the fitted_from write (F4 ratchet) on the returned list for callers
+    # that want it, without changing the primary rows return.
+    rows = captured["rows"]
+    rows_fitted_from = captured.get("fitted_from")
+    return _Rows(rows, rows_fitted_from)
+
+
+class _Rows(list):
+    """A list of computed rows that also carries the fitted_from jsonb the run
+    persisted (F4 ratchet), so existing row-based callers are unaffected."""
+
+    def __init__(self, rows, fitted_from):
+        super().__init__(rows)
+        self.fitted_from = fitted_from
 
 
 def test_run_zone2_fitness_wiring(monkeypatch, capsys):
@@ -260,3 +281,88 @@ def test_b_prior_only_confidence_low_band_wide(monkeypatch):
     assert all(r["confidence"] <= expected_conf + 0.01 for r in rows)
     width = rows[-1]["durable_band_hi"] - rows[-1]["durable_band_lo"]
     assert width > 30.0
+
+
+# ===========================================================================
+# F2: running EF is the aerobic-specific calibration signal that actually fires.
+# ===========================================================================
+
+def test_run_ef_sets_the_level_like_bike_ef(monkeypatch):
+    # Runs carry distance + HR, so run EF is EF-eligible and feeds the fusion.
+    # Mirroring bike EF: with run EF present the level rises far above the thin
+    # B-prior-only level, and run_ef carries a contributing weight.
+    with_run = _run_synthetic(monkeypatch, aerobic_type="running", with_vo2=False)
+    monkeypatch.undo()
+    without = _run_synthetic(monkeypatch, aerobic_type="running", with_ef=False, with_vo2=False)
+    peak_with = max(r["durable_base"] for r in with_run)
+    peak_without = max(r["durable_base"] for r in without)
+    assert peak_with > 2.0 * peak_without  # run-EF-led ≫ B-prior-led
+    # run_ef contributes a real inverse-variance weight during the training block;
+    # bike_ef stays 0 (no bike EF here). Confidence is higher while EF is fresh.
+    assert with_run[290]["contributing"]["run_ef"] > 0.0
+    assert with_run[290]["contributing"]["bike_ef"] == 0.0
+    assert with_run[290]["confidence"] > without[290]["confidence"] + 0.3
+
+
+def test_run_ef_weight_matches_the_run_ef_variance(monkeypatch):
+    # The contributing weight equals 1/variance with the run-EF variance (fresh,
+    # staleness age 0 on a session day) — i.e. run EF is wired with its OWN var.
+    from metrics import models as _m
+
+    rows = _run_synthetic(monkeypatch, aerobic_type="running", with_vo2=False)
+    # day 288 is a session day (i%3==0) inside the block → EF age 0.
+    w = rows[288]["contributing"]["run_ef"]
+    assert w == pytest.approx(1.0 / _m.Z2_RUN_EF_VARIANCE, abs=0.02)
+
+
+# ===========================================================================
+# F5: B is stamped with the PREVIOUS completed week — no intra-week lookahead.
+# ===========================================================================
+
+def test_b_has_no_intra_week_lookahead(monkeypatch):
+    # First-week days carry B=0 (no completed predecessor week yet): the very first
+    # session cannot retroactively raise B for the days before it in the same week.
+    rows = _run_synthetic(monkeypatch, aerobic_type="running", with_vo2=False)
+    assert rows[0]["base_accum_b"] == 0.0
+    # B still builds through the block and decays through the gap (unchanged trend),
+    # only now lagged by one completed week rather than reading its own week ahead.
+    bs = [r["base_accum_b"] for r in rows]
+    assert bs[10] < bs[250]
+    assert bs[299] > bs[-1]
+
+
+# ===========================================================================
+# F4: personal detrained baselines RATCHET (widen-only) via fitted_from.
+# ===========================================================================
+
+def test_baseline_ratchet_persists_lifetime_extremes(monkeypatch):
+    # No stored extremes yet → the run seeds fitted_from with this window's
+    # RHR max / VO2 min (the most-detrained extremes) and valid-day counts.
+    rows = _run_synthetic(monkeypatch, aerobic_type="running")
+    ff = rows.fitted_from
+    assert ff is not None
+    assert ff["rhr_lifetime_max"] == 58.0     # the only RHR value in the synthetic
+    assert ff["vo2_lifetime_min"] == 42.0     # the only VO2max value
+    assert ff["rhr_valid_days"] > 0
+
+
+def test_baseline_ratchet_only_widens_never_shrinks(monkeypatch):
+    # A stored MORE-detrained history (higher RHR, lower VO2, larger valid-day
+    # count) must SURVIVE even though this window's trained extremes are milder.
+    stored = {
+        "rhr_lifetime_max": 72.0,   # more detrained than the window's 58
+        "vo2_lifetime_min": 30.0,   # more detrained than the window's 42
+        "rhr_valid_days": 900,
+        "vo2_valid_days": 900,
+    }
+    params = {
+        "id": 1, "stage": "literature", "fast_sat": 26, "rhr_top_amateur": 48,
+        "ef_top_factor": 1.6, "b_ref_min_per_wk": 200, "fitted_from": stored,
+    }
+    rows = _run_synthetic(monkeypatch, aerobic_type="running", params=params)
+    ff = rows.fitted_from
+    # widen-only: the detrained extremes are kept, not overwritten by trained ones.
+    assert ff is None or (
+        ff["rhr_lifetime_max"] == 72.0 and ff["vo2_lifetime_min"] == 30.0
+        and ff["rhr_valid_days"] == 900 and ff["vo2_valid_days"] == 900
+    )

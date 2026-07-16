@@ -62,14 +62,17 @@ def ef(distance_m: float | None, duration_s: float | None, avg_hr: float | None)
 
 
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
-    """EF/decoupling eligibility: swim AND bike (v3 pt3 — bike EF is the LEAD
-    durable-calibration signal, so cycling workouts must produce EF), each gated
-    ≥20 min and ≥70% of classified time in Z1–Z2. Indoor rides without distance
-    still yield ef=None downstream (ef() requires distance) — that is fine."""
+    """EF/decoupling eligibility: swim, bike AND run, each gated ≥20 min and ≥70%
+    of classified time in Z1–Z2 (the same aerobic-specific gate for all three).
+    Running EF is the aerobic-specific calibration LEAD the model actually runs on
+    (v5): runs carry distance + HR, whereas every bike session is indoor with
+    distance_m NULL so bike EF is structurally unobtainable. Indoor rides (and any
+    HR-only run without distance) still yield ef=None downstream — ef() requires
+    distance — which is fine."""
     if not workout_type:
         return False
     t = workout_type.lower()
-    if "swim" not in t and "cycl" not in t and "bik" not in t:
+    if not any(m in t for m in ("swim", "cycl", "bik", "run")):
         return False
     if not duration_s or duration_s < 20 * 60:
         return False
@@ -98,14 +101,24 @@ def hr_drift_pct(samples: list[Sample]) -> float | None:
     return (avg2 - avg1) / avg1 * 100.0
 
 
+HRR60_POST_END_MAX_S = 90  # recovery sample must land within 90s of the end
+
+
 def hrr60(samples: list[Sample], duration_s: float | None) -> float | None:
     """Max HR in the final 2 min minus HR ~60s after the end, when post-end
-    samples exist in the stream. Health Auto Export rarely provides them."""
+    samples exist in the stream. Health Auto Export rarely provides them. The
+    post-end recovery sample must land in [duration_s + 45, duration_s + 90]:
+    bounded above so a sample minutes later (e.g. the next activity) can never
+    masquerade as a 60-second recovery reading."""
     if not samples or not duration_s:
         return None
     ordered = sorted(samples)
     final_window = [bpm for off, bpm in ordered if duration_s - 120 <= off <= duration_s]
-    post = [(abs(off - (duration_s + 60)), bpm) for off, bpm in ordered if off >= duration_s + 45]
+    post = [
+        (abs(off - (duration_s + 60)), bpm)
+        for off, bpm in ordered
+        if duration_s + 45 <= off <= duration_s + HRR60_POST_END_MAX_S
+    ]
     if not final_window or not post:
         return None
     return max(final_window) - min(post)[1]
@@ -196,10 +209,14 @@ def flags_for_day(
 # IRREDUCIBLE physiological priors stay literature constants while data is thin,
 # and each is marked [LITERATURE PRIOR] with why it cannot be fit from this user.
 #
-# [LITERATURE PRIOR] τ_fast: enzyme/plasma-volume turnover half-life. Molecular,
-# training-age independent, and NOT identifiable from thin gap data (docs §7
-# staged personalization + "τ_fast=14 stays a literature PRIOR; do NOT fit from
-# thin data"). Stays 14 d until many gap→return episodes exist.
+# [LITERATURE PRIOR] τ_fast: enzyme/plasma-volume turnover E-FOLDING time (the EWMA
+# decay constant, NOT a half-life: 14 d as an e-folding time is a half-life of
+# 14·ln2 ≈ 9.7 d). Chosen as a physiological PRIOR — the cited oxidative-enzyme
+# half-life ~12 d would instead imply τ = 12/ln2 ≈ 17.3 d, so 14 sits between the
+# plasma-volume (~days) and enzyme (~2 wk) reversal scales. Molecular, training-age
+# independent, and NOT identifiable from thin gap data (docs §7 staged
+# personalization + "τ_fast=14 stays a literature PRIOR; do NOT fit from thin
+# data"). Stays 14 d until many gap→return episodes exist; overridable via params.
 Z2_TAU_FAST_DAYS = 14.0
 # [LITERATURE PRIOR, B-scaled] τ_slow(B): capillary/mito regression window. Its
 # B-dependence is the model's softest constant (docs §3, Zheng 2022 contested);
@@ -250,8 +267,24 @@ Z2_SIGNAL_STALENESS_TAU_DAYS = 45.0
 # Each is still × the staleness inflation above. Derivations:
 # [LITERATURE PRIOR] bike EF: day-to-day submaximal EF CV ≈ 4%; the elevation map
 #   spans baseline→1.6×baseline (a 0.6·baseline span) onto C_D = 70 pts, so
-#   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22. The aerobic-specific trusted LEAD.
+#   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22.
+#   NOTE (v5): bike EF is structurally UNOBTAINABLE for this user — every cycling
+#   session is indoor with distance_m NULL, so ef() returns None and 0 bike-EF
+#   observations have ever existed. It stays wired as the trusted aerobic LEAD IF
+#   distance ever appears (outdoor GPS ride), but running EF (below) is the actual
+#   aerobic-specific calibration signal the model runs on.
 Z2_BIKE_EF_VARIANCE = 22.0
+# [LITERATURE PRIOR] running EF: the aerobic-specific calibration signal that
+#   actually fires (108 runs carry distance + HR, vs 0 usable bike EF). Same
+#   architecture as bike EF — ef() = (m/min)/bpm, the SAME elevation map spanning
+#   the user's own detrained EF baseline → ef_top_factor×baseline onto C_D, gated
+#   to Z1–Z2 runs — so its variance is derived the SAME way: submaximal running EF
+#   day-to-day CV ≈ 4% over the 0.6·baseline elevation span onto C_D = 70 pts →
+#   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22. Overridable via
+#   zone2_fitness_params.run_ef_variance. (Running pace↔HR is noisier outdoors than
+#   indoor bike power↔HR, but the derivation mirrors bike EF per the model contract;
+#   widen this param if the residuals warrant.)
+Z2_RUN_EF_VARIANCE = 22.0
 # [LITERATURE PRIOR] watch VO2max: Lambe 2025 LoA ≈ ±12 ml/kg/min → sd ≈ 6 ml;
 #   elevation slope ≈ C_D/(62−32) ≈ 2.33 pts per ml → sd ≈ 14 pts → var ≈ 196.
 #   (EF:VO2 var ratio ≈ 1:9 — the same RATIO as the old relative weights; only

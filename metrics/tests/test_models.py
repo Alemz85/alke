@@ -13,6 +13,7 @@ from metrics.models import (
     ef_eligibility,
     flags_for_day,
     hr_drift_pct,
+    hrr60,
     time_in_zones,
     trimp_edwards,
     zone_bounds,
@@ -72,25 +73,31 @@ def test_ef_formula():
     assert ef(1400, 0, 120) is None
 
 
-def test_ef_eligibility_swims_and_bikes_z1z2_70pct_20min():
+def test_ef_eligibility_swims_bikes_and_runs_z1z2_70pct_20min():
     tiz_ok = {1: 900, 2: 300, 3: 300, 4: 0, 5: 0}  # 80% z1-z2, 25 min
     assert ef_eligibility("pool_swim", tiz_ok, 1500)
-    # v3: cycling is EF-eligible too — bike EF is the lead durable-calibration
-    # signal, so it must be able to exist (indoor rides without distance still
-    # yield ef=None downstream, which is fine).
+    # v3: cycling is EF-eligible too — bike EF is the documented durable-calibration
+    # lead (indoor rides without distance still yield ef=None downstream, fine).
     assert ef_eligibility("indoor_cycling", tiz_ok, 1500)
     assert ef_eligibility("cycling", tiz_ok, 1500)
     assert ef_eligibility("biking", tiz_ok, 1500)
+    # v5 (F2): running is EF-eligible — run EF is the aerobic-specific calibration
+    # signal that actually fires (runs carry distance + HR, unlike indoor bikes).
+    assert ef_eligibility("running", tiz_ok, 1500)
+    assert ef_eligibility("indoor_run", tiz_ok, 1500)
+    assert ef_eligibility("trail_running", tiz_ok, 1500)
     # everything else stays ineligible
-    assert not ef_eligibility("running", tiz_ok, 1500)
     assert not ef_eligibility("functional_strength_training", tiz_ok, 1500)
+    assert not ef_eligibility("rowing", tiz_ok, 1500)
     assert not ef_eligibility(None, tiz_ok, 1500)
-    # gates apply to bikes exactly as to swims
+    # gates apply to bikes and runs exactly as to swims
     assert not ef_eligibility("pool_swim", tiz_ok, 1100)  # <20 min
     assert not ef_eligibility("indoor_cycling", tiz_ok, 1100)
+    assert not ef_eligibility("running", tiz_ok, 1100)  # <20 min → excluded
     tiz_hot = {1: 300, 2: 300, 3: 900, 4: 0, 5: 0}  # 40% z1-z2
     assert not ef_eligibility("pool_swim", tiz_hot, 1500)
     assert not ef_eligibility("indoor_cycling", tiz_hot, 1500)
+    assert not ef_eligibility("running", tiz_hot, 1500)  # Z3+ run excluded (gating)
 
 
 def test_hr_drift_pct_half_split():
@@ -98,6 +105,22 @@ def test_hr_drift_pct_half_split():
     samples = [(i * 10, 110) for i in range(6)] + [(60 + i * 10, 121) for i in range(6)]
     assert hr_drift_pct(samples) == pytest.approx(10.0)
     assert hr_drift_pct([(0, 110)]) is None  # too few samples
+
+
+def test_hrr60_post_end_window_is_bounded_above():
+    # F7: the recovery sample must land within [end+45, end+90]. A well-placed
+    # post-end sample qualifies; one minutes later (e.g. the next activity) must NOT
+    # masquerade as a 60s recovery reading.
+    duration = 1800
+    final = [(duration - 90, 170), (duration - 30, 175)]  # max in final 2 min = 175
+    good = final + [(duration + 60, 130)]  # 60s after end → qualifies
+    assert hrr60(good, duration) == pytest.approx(175 - 130)
+    # a sample at +5 min is beyond the 90s bound → no qualifying post-end sample.
+    late = final + [(duration + 300, 120)]
+    assert hrr60(late, duration) is None
+    # boundary: exactly +90s still qualifies, +91s does not.
+    assert hrr60(final + [(duration + 90, 128)], duration) == pytest.approx(175 - 128)
+    assert hrr60(final + [(duration + 91, 128)], duration) is None
 
 
 def test_ctl_atl_ewma():

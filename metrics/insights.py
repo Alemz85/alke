@@ -3,18 +3,19 @@ daily analysis frame; compute.py builds the frame and writes the results."""
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, t as student_t
 
 MIN_CORR_N = 20
 MIN_DLM_N = 40
 MIN_ADJUSTED_N = 60
 
-DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior"]
+DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior", "steps_prior"]
 PERFS = ["ef", "decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 
 WEIGHT_FFILL_LIMIT_DAYS = 3
@@ -221,14 +222,72 @@ def weight_series(raw: pd.Series | None) -> tuple[pd.Series | None, pd.Series | 
     return weight, weight_7d_slope
 
 
+def _lag1_autocorr(series: pd.Series) -> float:
+    """Lag-1 autocorrelation of a series, clamped to (−1, 1). NaN/degenerate → 0
+    (treat as iid, i.e. no effective-n penalty)."""
+    s = pd.Series(series).astype(float).reset_index(drop=True)
+    if len(s) < 3 or s.std(ddof=0) == 0:
+        return 0.0
+    r1 = s.autocorr(lag=1)
+    if r1 is None or not np.isfinite(r1):
+        return 0.0
+    return float(max(-0.999, min(0.999, r1)))
+
+
+def _effective_n(n: int, r1_x: float, r1_y: float) -> float:
+    """Bartlett/Bayley-Hammersley effective sample size for a correlation between
+    two AUTOCORRELATED series (F3): n_eff = n·(1 − r1_x·r1_y)/(1 + r1_x·r1_y).
+    rhr_dev/hrv_dev/ctl/atl are rolling/EWMA series (lag-1 autocorr ~0.9), so the
+    nominal n badly overstates independent information; this shrinks it. Clamped to
+    [3, n] so a t-test always has ≥1 df and n_eff never exceeds the raw n."""
+    prod = r1_x * r1_y
+    factor = (1.0 - prod) / (1.0 + prod) if (1.0 + prod) > 1e-9 else 1.0
+    return float(min(n, max(3.0, n * factor)))
+
+
+def _p_from_r(r: float, n_eff: float) -> float:
+    """Two-sided p-value for Pearson r under an EFFECTIVE sample size n_eff,
+    via the t-statistic t = r·√((n_eff−2)/(1−r²)) on n_eff−2 df. Continuous in
+    n_eff (fractional df is fine for the t-distribution)."""
+    df = n_eff - 2.0
+    if df <= 0 or abs(r) >= 1.0:
+        return 0.0 if abs(r) >= 1.0 else 1.0
+    t_stat = r * math.sqrt(df / (1.0 - r * r))
+    return float(2.0 * student_t.sf(abs(t_stat), df))
+
+
+def _bh_qvalues(pvals: list[float]) -> list[float]:
+    """Benjamini-Hochberg q-values for a list of p-values, returned in the INPUT
+    order (monotone-enforced, clamped to ≤1). Empty input → empty list."""
+    m = len(pvals)
+    if m == 0:
+        return []
+    order = sorted(range(m), key=lambda i: pvals[i])
+    q = [0.0] * m
+    running = 1.0
+    for rank in range(m, 0, -1):
+        idx = order[rank - 1]
+        running = min(running, pvals[idx] * m / rank)
+        q[idx] = running
+    return q
+
+
 def compute_correlations(
     frame: pd.DataFrame,
     drivers: list[str] | None = None,
     perfs: list[str] | None = None,
     max_lag: int = 3,
 ) -> list[dict]:
-    """Pearson r for each (driver at t−lag, perf at t) pair with n and p.
-    Pairs with n < 20 are skipped. Overwrites the table each nightly run."""
+    """Pearson r for each (driver at t−lag, perf at t) pair. Pairs with n < 20 are
+    skipped. Overwrites the table each nightly run.
+
+    F3 fix — these series are autocorrelated (rolling/EWMA; lag-1 ~0.9), so a
+    pearsonr p-value computed on the nominal n is overconfident, and the ~100-pair
+    sweep has no multiplicity control. Each pair's p is recomputed under an
+    EFFECTIVE sample size n_eff = n·(1−r1·r2)/(1+r1·r2) (r1/r2 = the two series'
+    lag-1 autocorrs), and a BH q_value is attached across the whole sweep.
+    `p_value` is the corrected (n_eff) p; `p_value_naive` keeps the iid p for
+    reference; `q_value` is the FDR-adjusted value the UI should prefer."""
     computed_at = datetime.now(timezone.utc).isoformat()
     rows: list[dict] = []
     for x in drivers if drivers is not None else DRIVERS:
@@ -241,7 +300,10 @@ def compute_correlations(
                 paired = pd.DataFrame({"x": frame[x].shift(lag), "y": frame[y]}).dropna()
                 if len(paired) < MIN_CORR_N or paired["x"].std() == 0 or paired["y"].std() == 0:
                     continue
-                r, p = pearsonr(paired["x"], paired["y"])
+                r, p_naive = pearsonr(paired["x"], paired["y"])
+                n = int(len(paired))
+                n_eff = _effective_n(n, _lag1_autocorr(paired["x"]), _lag1_autocorr(paired["y"]))
+                p_corr = _p_from_r(float(r), n_eff)
                 rows.append(
                     {
                         "computed_at": computed_at,
@@ -249,10 +311,14 @@ def compute_correlations(
                         "var_y": y,
                         "lag_days": lag,
                         "r": round(float(r), 4),
-                        "n": int(len(paired)),
-                        "p_value": float(p),
+                        "n": n,
+                        "n_eff": round(n_eff, 1),
+                        "p_value": p_corr,
+                        "p_value_naive": float(p_naive),
                     }
                 )
+    for row, q in zip(rows, _bh_qvalues([row["p_value"] for row in rows])):
+        row["q_value"] = float(q)
     return rows
 
 

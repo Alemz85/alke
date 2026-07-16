@@ -86,7 +86,9 @@ def upsert_computed_daily(sb: Client, rows: list[dict]) -> None:
 
 def fetch_computed_workouts(sb: Client) -> list[dict]:
     def q():
-        return sb.table("computed_workout").select("workout_id, ef, decoupling_pct, hrr60").order("workout_id")
+        return sb.table("computed_workout").select(
+            "workout_id, trimp, ef, decoupling_pct, hrr60"
+        ).order("workout_id")
 
     return _fetch_all(q)
 
@@ -106,6 +108,13 @@ def fetch_zone2_fitness_params(sb: Client) -> dict:
     row is somehow absent, letting callers apply literature defaults."""
     rows = sb.table("zone2_fitness_params").select("*").eq("id", 1).execute().data
     return rows[0] if rows else {}
+
+
+def update_zone2_fitted_from(sb: Client, fitted_from: dict) -> None:
+    """Persist the params row's `fitted_from` jsonb — the lifetime-extreme store
+    the durable baselines ratchet against (never shrinks; only widens). Kept in the
+    existing jsonb column so no schema change is needed."""
+    sb.table("zone2_fitness_params").update({"fitted_from": fitted_from}).eq("id", 1).execute()
 
 
 def fetch_active_injury_holds(sb: Client) -> dict:
@@ -135,11 +144,24 @@ def upsert_computed_zone2_fitness(sb: Client, rows: list[dict]) -> None:
         sb.table("computed_zone2_fitness").upsert(rows[i : i + WRITE_CHUNK], on_conflict="date").execute()
 
 
+# Columns the insight_correlations table actually has. compute_correlations now
+# also returns n_eff / p_value_naive / q_value (F3), but persisting those needs a
+# migration (out of the metrics surface); until that lands, project each row to the
+# known columns so the write stays valid. p_value already carries the CORRECTED
+# (effective-n) value, so the overconfidence fix reaches the DB today; q_value is
+# available in the return value for callers and will be stored once the columns exist.
+INSIGHT_CORR_COLUMNS = (
+    "computed_at", "var_x", "var_y", "lag_days", "r", "n", "p_value",
+    "n_eff", "p_value_naive", "q_value",
+)
+
+
 def replace_insight_correlations(sb: Client, rows: list[dict]) -> None:
     """SPEC: the exploratory table is overwritten each nightly run."""
+    projected = [{k: row[k] for k in INSIGHT_CORR_COLUMNS if k in row} for row in rows]
     sb.table("insight_correlations").delete().neq("lag_days", -1).execute()
-    for i in range(0, len(rows), WRITE_CHUNK):
-        sb.table("insight_correlations").insert(rows[i : i + WRITE_CHUNK]).execute()
+    for i in range(0, len(projected), WRITE_CHUNK):
+        sb.table("insight_correlations").insert(projected[i : i + WRITE_CHUNK]).execute()
 
 
 def upsert_insight_model(sb: Client, row: dict) -> None:

@@ -156,7 +156,19 @@ def run(full: bool) -> None:
     print(f"computed_workout: {len(computed_rows)} rows")
 
     # ---- daily chain (always full history) ----
-    trimp_by_id = {r["workout_id"]: r["trimp"] for r in computed_rows}
+    # The daily CTL/ATL/ACWR chain spans ALL history, but per-workout metrics only
+    # recompute over the RECOMPUTE_DAYS window (unless --full). Seed trimp from the
+    # STORED computed_workout.trimp for every workout, then overlay this run's fresh
+    # window on top. Seeding only from `computed_rows` (the window) zeroed every
+    # pre-window workout's TRIMP each nightly run — silently rewriting all older
+    # computed_daily rows (and their CTL/ATL/ACWR) to 0. (Regression:
+    # test_incremental_chain_preserves_prewindow_trimp.)
+    trimp_by_id = {
+        r["workout_id"]: float(r["trimp"])
+        for r in db.fetch_computed_workouts(sb)
+        if r.get("trimp") is not None
+    }
+    trimp_by_id.update({r["workout_id"]: r["trimp"] for r in computed_rows})
     trimp_by_date: dict[date, float] = defaultdict(float)
     workouts_by_week: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for w in all_workouts:
@@ -246,12 +258,14 @@ def run(full: bool) -> None:
 
 def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, list[float]]]:
     """Per-day performance readings: EF / decoupling / HRR60 collected over that
-    day's workouts (averaged downstream). The EF series is SWIM-ONLY: since
-    ef_eligibility extended to bikes (v3 — bike EF is the durable calibration's
-    lead signal), a per-day average mixing swim EF (~0.5–1.5 m/min/bpm) with bike
-    EF (~2–4 m/min/bpm) would be incomparable units and corrupt the correlation/
-    DLM series; gating on swim preserves its original meaning. Decoupling and
-    HRR60 are relative/HR-domain quantities and stay cross-sport."""
+    day's workouts (averaged downstream). The EF series is SWIM-ONLY: ef_eligibility
+    now spans swim, bike AND run (bike/run EF feed the zone2 durable calibration),
+    but a per-day average mixing swim EF (~0.5–1.5 m/min/bpm) with bike/run EF
+    (higher, and mutually incomparable) would be incomparable units and corrupt the
+    correlation/DLM series; gating on swim preserves its original meaning. The
+    zone2 model instead consumes bike EF and run EF as SEPARATE signals, each with
+    its own baseline/top. Decoupling and HRR60 are relative/HR-domain quantities
+    and stay cross-sport."""
     perf_by_date: dict[date, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for w in all_workouts:
         perf = perf_by_id.get(w["id"])
@@ -316,10 +330,14 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
             "hrr60": [
                 pd.Series(perf_by_date[d]["hrr60"]).mean() if perf_by_date[d]["hrr60"] else None for d in index
             ],
+            "steps": [(dm_by_date.get(d) or {}).get("steps") for d in index],
         },
         index=pd.DatetimeIndex([pd.Timestamp(d) for d in index]),
     ).astype(float)
     frame["trimp_prior"] = frame["trimp_total"].shift(1)
+    # F9: yesterday's ambient activity as a driver, analogous to trimp_prior.
+    # daily_metrics already carries steps; steps_prior joins the DRIVERS sweep.
+    frame["steps_prior"] = frame["steps"].shift(1)
     # consistency: absolute deviation from the 14-day rolling median midpoint
     frame["sleep_midpoint_dev"] = (
         frame["sleep_midpoint"] - frame["sleep_midpoint"].rolling(14, min_periods=5).median()
@@ -458,6 +476,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # fallback (citations at the constants in models.py).
     rhr_top_amateur = param("rhr_top_amateur", models.Z2_RHR_TOP_AMATEUR)
     ef_top_factor = param("ef_top_factor", models.Z2_EF_TOP_FACTOR)
+    run_ef_variance = param("run_ef_variance", models.Z2_RUN_EF_VARIANCE)
     stage = (params.get("stage") if params else None) or "literature"
 
     # ---- daily Zone-2 load w(t) from computed_workout.time_in_zones (spec §1),
@@ -479,6 +498,14 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             continue
         day = local_date(wk["start_at"], tz)
         w_by_date[day] += z2_trimp_from_zones(tiz)
+        # INTENTIONAL weighting difference (F8, do-not-change): B's weekly minutes
+        # (aerobic_sec) count z3 at FULL weight, whereas the graded stimulus w(t)
+        # (z2_trimp_from_zones) HALF-credits z3. These measure different things and
+        # are calibrated as such: B = total AEROBIC VOLUME including tempo (b_ref was
+        # calibrated against z2+z3 minutes), so a tempo minute is a minute of base;
+        # w(t) = the GRADED build stimulus, where a z3 minute is discounted because
+        # above the Z2 band it stops being a pure Zone-2 stimulus. Do not "unify"
+        # them — b_ref and the w(t) map are each calibrated to their own definition.
         aerobic_sec = float(tiz.get("z2", 0) or 0) + float(tiz.get("z3", 0) or 0)
         # Intensity gate (spec §1): ≥20 min in the aerobic band. The spec's second
         # clause (≥20 min at/above the Z2 lower bound) is the SAME quantity — all
@@ -492,8 +519,13 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
 
     # ---- per-day CAUSAL B_t, τ_slow_t, floor_t (spec §3 + v3) over the FULL
     # weekly axis: every ISO week in range contributes (0.0 when workout-free) so
-    # B decays through an off-gap, and each day is stamped with the B of ITS OWN
-    # week — never today's. ----
+    # B decays through an off-gap. Each day is stamped with B as of the PREVIOUS
+    # COMPLETED week (b_by_week[i-1] for a day in week i). Stamping the day's OWN
+    # week (b_by_week[i]) was intra-week LOOKAHEAD: that week's B already contains
+    # minutes from workouts LATER in the same week, so a Monday read Saturday's
+    # session — a causal-track violation (the module's "no fictional history"
+    # contract). The first week (i=0) has no completed predecessor → B seeds at 0.0
+    # (brand-new, exactly as base_consolidation_series seeds). ----
     week_keys = iso_weeks_spanning(days)
     weekly_series = [weekly_z2_min.get(k, 0.0) for k in week_keys]
     b_by_week = models.base_consolidation_series(weekly_series, b_ref=b_ref)
@@ -501,7 +533,8 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     b_t: list[float] = []
     for d in days:
         iso = d.isocalendar()
-        b_t.append(b_by_week[week_index[(iso.year, iso.week)]])
+        wi = week_index[(iso.year, iso.week)]
+        b_t.append(b_by_week[wi - 1] if wi > 0 else 0.0)
     tau_slow_t = [models.tau_slow(b, tau_min=tau_slow_min, tau_max=tau_slow_max) for b in b_t]
 
     # ---- v4.2 NEAT floor: a per-day CAUSAL EWMA of daily steps raises the durable
@@ -561,7 +594,13 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # variance-inflated continuously with each signal's age (spec §4c).
     # =====================================================================
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
-    bike_ef_obs: list[tuple[date, float]] = []  # swim EF stays WITHHELD (docs §6)
+    # Bike and RUN EF as two SEPARATE aerobic-specific signals (each its own
+    # baseline/top/variance — running and cycling EF are incomparable units). Swim
+    # EF stays WITHHELD (technique confound, docs §6). Run EF is the signal that
+    # actually fires: runs carry distance + HR, bike sessions are indoor/no-distance
+    # so bike EF is structurally unobtainable (v5). Both remain wired.
+    bike_ef_obs: list[tuple[date, float]] = []
+    run_ef_obs: list[tuple[date, float]] = []
     for wk in all_workouts:
         perf = perf_by_id.get(wk["id"])
         if not perf or perf.get("ef") is None:
@@ -569,7 +608,10 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         wtype = (wk.get("type") or "").lower()
         if "cycl" in wtype or "bik" in wtype:
             bike_ef_obs.append((local_date(wk["start_at"], tz), float(perf["ef"])))
+        elif "run" in wtype:
+            run_ef_obs.append((local_date(wk["start_at"], tz), float(perf["ef"])))
     bike_ef_obs.sort()
+    run_ef_obs.sort()
 
     # Raw per-date RHR / VO2max for personal detrained extremes (trailing ~180d).
     rhr_series = [
@@ -586,36 +628,82 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     vo2_window = [v for d, v in vo2_series if d >= window_start]
 
     # PERSONAL baselines = the user's OWN most-detrained extreme (v3 pt5):
-    #   RHR baseline  = trailing-180d MAX  (highest resting HR = most detrained)
-    #   VO2max baseline = trailing MIN     (lowest VO2max = most detrained)
-    #   EF baseline   = earliest/most-detrained EF (first bike EF observed)
-    rhr_personal_baseline = max(rhr_window) if rhr_window else None
-    vo2_personal_baseline = min(vo2_window) if vo2_window else None
+    #   RHR baseline  = MAX resting HR (highest = most detrained)
+    #   VO2max baseline = MIN VO2max   (lowest  = most detrained)
+    #   EF baseline   = earliest/most-detrained EF (first observed)
+    #
+    # F4 fix — RATCHET (only widen, never shrink): the trailing-180d window forgets
+    # the true detrained extreme once the user sustains training, so max/min drift
+    # trained-ward and the elevation score self-deflates. Persist LIFETIME extremes
+    # in the params row's `fitted_from` jsonb (a widen-only store): the baseline is
+    # the more-detrained of {stored lifetime extreme, this window's extreme}, and
+    # the blend's valid-day count likewise ratchets (max of stored/window) so it
+    # never re-inflates the population prior after a season of data.
+    stored = (params.get("fitted_from") if params else None) or {}
+    rhr_window_max = max(rhr_window) if rhr_window else None
+    vo2_window_min = min(vo2_window) if vo2_window else None
+
+    def _widen(stored_val, window_val, wider):
+        vals = [v for v in (stored_val, window_val) if v is not None]
+        return wider(vals) if vals else None
+
+    rhr_personal_baseline = _widen(stored.get("rhr_lifetime_max"), rhr_window_max, max)
+    vo2_personal_baseline = _widen(stored.get("vo2_lifetime_min"), vo2_window_min, min)
     bike_ef_personal_baseline = bike_ef_obs[0][1] if bike_ef_obs else None
+    run_ef_personal_baseline = run_ef_obs[0][1] if run_ef_obs else None
+
+    # valid-day counts ratchet too (widen-only) so the personal baseline's weight
+    # never falls back toward the population prior once a season of data exists.
+    rhr_valid_days = max(int(stored.get("rhr_valid_days") or 0), len(rhr_window))
+    vo2_valid_days = max(int(stored.get("vo2_valid_days") or 0), len(vo2_window))
+
+    # Persist the widened lifetime store (skip when nothing changed to avoid a
+    # needless write). Guarded — a params-write failure must never fail the job.
+    new_fitted = dict(stored)
+    if rhr_personal_baseline is not None:
+        new_fitted["rhr_lifetime_max"] = rhr_personal_baseline
+    if vo2_personal_baseline is not None:
+        new_fitted["vo2_lifetime_min"] = vo2_personal_baseline
+    new_fitted["rhr_valid_days"] = rhr_valid_days
+    new_fitted["vo2_valid_days"] = vo2_valid_days
+    if new_fitted != stored:
+        try:
+            db.update_zone2_fitted_from(sb, new_fitted)
+        except Exception as e:  # noqa: BLE001 — a params write must not fail the job
+            print(f"zone2_fitness_params.fitted_from: skipped ({e})")
 
     # Population priors, used ONLY to seed the baseline while history is thin; their
     # weight → 0 as valid days accrue (v3 pt5: no fixed 68/32 once own data exists).
     rhr_baseline = models.blended_baseline(
-        rhr_personal_baseline, models.Z2_RHR_POP_BASELINE, valid_days=len(rhr_window)
+        rhr_personal_baseline, models.Z2_RHR_POP_BASELINE, valid_days=rhr_valid_days
     )
     vo2_baseline = models.blended_baseline(
-        vo2_personal_baseline, models.Z2_VO2MAX_POP_BASELINE, valid_days=len(vo2_window)
+        vo2_personal_baseline, models.Z2_VO2MAX_POP_BASELINE, valid_days=vo2_valid_days
     )
     # Top-amateur EF ≈ ef_top_factor × the user's own detrained baseline (economy
-    # improves ~40-60% baseline→trained; a personal, not fixed, target).
+    # improves ~40-60% baseline→trained; a personal, not fixed, target). Bike and
+    # run each get their OWN top from their OWN baseline (incomparable units).
     ef_top_amateur = (
         bike_ef_personal_baseline * ef_top_factor if bike_ef_personal_baseline else None
+    )
+    run_ef_top_amateur = (
+        run_ef_personal_baseline * ef_top_factor if run_ef_personal_baseline else None
     )
 
     # Last-known observation per signal ON OR BEFORE each day (None before the first).
     rhr_latest_t = causal_latest(rhr_series, days)
     vo2_latest_t = causal_latest(vo2_series, days)
     bike_latest_t = causal_latest(bike_ef_obs, days)
+    run_latest_t = causal_latest(run_ef_obs, days)
 
     # ---- the LEVEL fusion (v4 redesign) — absolute D-space variances, each ×
     # per-day staleness inflation (documented derivations at the constants in
     # models.py):
-    #   bike EF (var 22)     — the aerobic-specific trusted LEAD (v3 pt3).
+    #   run EF (var 22)      — the aerobic-specific calibration signal that ACTUALLY
+    #     fires (v5): runs carry distance + HR. The trusted LEAD in practice.
+    #   bike EF (var 22)     — the DOCUMENTED aerobic LEAD (v3 pt3), but structurally
+    #     unobtainable without ride distance (indoor rides → 0 observations). Kept
+    #     wired IF distance ever appears; run EF is what leads today.
     #   watch VO2max (196)   — low-weight occasional calibration.
     #   B-prior (C_D·B_t, (C_D/4)²) — ALWAYS present: the load history itself is
     #     the default level-setter (B=1 ≡ the consolidated club-level base the
@@ -631,6 +719,17 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     def level_estimates(i: int) -> dict[str, tuple[float, float]]:
         """{signal: (level estimate in D-space, variance)} fused for day i."""
         out: dict[str, tuple[float, float]] = {}
+        obs = run_latest_t[i]
+        if obs is not None and run_ef_top_amateur is not None:
+            elev = models.signal_elevation_score(
+                obs[1], run_ef_personal_baseline, run_ef_top_amateur, ceiling=c_durable
+            )
+            if elev is not None:
+                age = (days[i] - obs[0]).days
+                out["run_ef"] = (
+                    elev,
+                    models.staleness_inflated_variance(run_ef_variance, age),
+                )
         obs = bike_latest_t[i]
         if obs is not None and ef_top_amateur is not None:
             elev = models.signal_elevation_score(
@@ -802,7 +901,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         valid_signals = 0
         if load_moved:
             valid_signals += 1
-        if "bike_ef" in ests:
+        if "run_ef" in ests or "bike_ef" in ests:
             valid_signals += 1  # aerobic-specific efficiency present (leads)
         if drow.get("rhr_dev") is not None:
             valid_signals += 1
@@ -862,6 +961,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                 "contributing": {
                     # effective inverse-variance weights actually fused THIS day
                     # (staleness-inflated; 0 when the signal is absent).
+                    "run_ef": round(1.0 / ests["run_ef"][1], 3) if "run_ef" in ests else 0.0,
                     "bike_ef": round(1.0 / ests["bike_ef"][1], 3) if "bike_ef" in ests else 0.0,
                     # corroborator, not level-setter (v3 pt3: strength-confounded)
                     # — the elevation is computed (rhr_elev) for provenance but
