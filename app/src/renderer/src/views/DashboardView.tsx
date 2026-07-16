@@ -40,21 +40,20 @@ import {
 import { useAllWorkouts } from '../hooks/useSessionsData'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
 import { useMonthCalendar } from '../hooks/useMonthCalendar'
-import { localDateKey } from '../hooks/sessionsDate'
+import { addDays, isoWeekStart, localDateKey, todayYMD, ymdKey } from '../hooks/sessionsDate'
 import { formatDurationHM, formatPerMonth, formatTrendPct } from '../lib/format'
 import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
 import {
   countSessionsForGoal,
   daysBetweenDates,
-  endOfIsoWeek,
   fmtDelta,
   fmtDistance,
   fmtDuration,
   fmtNum,
   fmtShortDate,
   humanizeWorkoutType,
-  parseWeeklyMinSessions,
-  startOfIsoWeek
+  isoWeekWindowFor,
+  parseWeeklyMinSessions
 } from './dashboardUtils'
 import './DashboardView.css'
 
@@ -277,15 +276,17 @@ export function DashboardView({ onOpenSessions }: DashboardViewProps): ReactElem
   const dailyMetricsQuery = useDailyMetrics(365)
   const recentWorkoutsQuery = useRecentWorkouts()
 
-  const now = new Date()
-  const weekStart = startOfIsoWeek(now)
-  const weekEnd = endOfIsoWeek(now)
-  const fourWeeksAgo = new Date(weekStart)
-  fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28)
-  const workoutsThisWeekQuery = useWorkoutsInRange(weekStart.toISOString(), weekEnd.toISOString())
-
   const timezone = userConfigQuery.data?.timezone ?? undefined
   const weeklyMinSessions = parseWeeklyMinSessions(userConfigQuery.data)
+
+  // The ISO week window anchored to "today" in the USER's configured
+  // timezone (not the machine's) — computed_daily rows are keyed by the
+  // user-tz calendar date, so filtering them against a machine-local week
+  // boundary silently misaligned near timezone edges / DST transitions.
+  const todayYmd = todayYMD(timezone)
+  const weekWindow = isoWeekWindowFor(todayYmd)
+  const fourWeeksAgoKey = ymdKey(addDays(isoWeekStart(todayYmd), -28))
+  const workoutsThisWeekQuery = useWorkoutsInRange(weekWindow.startIso, weekWindow.endIso)
 
   // --- Month calendar + period summaries (moved here from the Sessions view) ---
   const {
@@ -405,17 +406,18 @@ export function DashboardView({ onOpenSessions }: DashboardViewProps): ReactElem
   const latestTsb = latestComputed?.tsb ?? null
 
   // --- TRIMP this week vs 4-week average ---
-  const weekStartStr = weekStart.toISOString().slice(0, 10)
-  const weekEndStr = weekEnd.toISOString().slice(0, 10)
+  // computed_daily.date is keyed in the user's timezone (the nightly job's
+  // convention), so this window must match — see weekWindow/fourWeeksAgoKey above.
   const trimpThisWeekRows = sortedComputed.filter(
-    (r) => r.date >= weekStartStr && r.date < weekEndStr
+    (r) => r.date >= weekWindow.startKey && r.date < weekWindow.endKey
   )
   const trimpThisWeekTotal = trimpThisWeekRows.some((r) => r.trimp_total !== null)
     ? trimpThisWeekRows.reduce((sum, r) => sum + (r.trimp_total ?? 0), 0)
     : null
 
-  const fourWeeksAgoStr = fourWeeksAgo.toISOString().slice(0, 10)
-  const trimp4wRows = sortedComputed.filter((r) => r.date >= fourWeeksAgoStr && r.date < weekEndStr)
+  const trimp4wRows = sortedComputed.filter(
+    (r) => r.date >= fourWeeksAgoKey && r.date < weekWindow.endKey
+  )
   const trimp4wAvg = trimp4wRows.some((r) => r.trimp_total !== null)
     ? trimp4wRows.reduce((sum, r) => sum + (r.trimp_total ?? 0), 0) / 4
     : null

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DailyMetric } from '@shared/types'
 import {
   bucketAggregate,
@@ -62,7 +62,8 @@ function makeMetric(overrides: Partial<DailyMetric> & { date: string }): DailyMe
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
     weight_kg: overrides.weight_kg ?? null,
-    state_of_mind: null
+    walking_running_distance_m: null,
+    flights_climbed: null,
   }
 }
 
@@ -123,7 +124,7 @@ describe('fmtLocalDate', () => {
 })
 
 describe('daysAgo', () => {
-  it('returns 0 for today', () => {
+  it('returns 0 for today (UTC-anchored when no timezone is given)', () => {
     const today = new Date().toISOString().slice(0, 10)
     expect(daysAgo(today)).toBe(0)
   })
@@ -131,6 +132,18 @@ describe('daysAgo', () => {
   it('returns a positive count for a past date', () => {
     const past = new Date(Date.now() - 5 * 86_400_000).toISOString().slice(0, 10)
     expect(daysAgo(past)).toBe(5)
+  })
+
+  it('anchors "today" to the given timezone, not UTC', () => {
+    // Fix a moment where UTC and America/Los_Angeles (UTC-8 in January)
+    // disagree on the calendar day: 2026-01-06T04:00:00Z is still
+    // 2026-01-05 20:00 in LA — "today" is the 6th in UTC but the 5th in LA.
+    vi.setSystemTime(new Date('2026-01-06T04:00:00Z'))
+    expect(daysAgo('2026-01-06')).toBe(0) // UTC: today IS the 6th
+    expect(daysAgo('2026-01-06', 'America/Los_Angeles')).toBe(-1) // LA: the 6th is "tomorrow"
+    expect(daysAgo('2026-01-05', 'America/Los_Angeles')).toBe(0) // LA: today IS the 5th
+    expect(daysAgo('2026-01-01', 'America/Los_Angeles')).toBe(4) // LA: 4 days before the 5th
+    vi.useRealTimers()
   })
 })
 
@@ -144,13 +157,43 @@ describe('sortByDate', () => {
 })
 
 describe('sliceLastNDays', () => {
-  it('keeps only rows within the last N days up to today', () => {
+  it('keeps only rows within the last N days up to today (UTC-anchored when no timezone is given)', () => {
     const today = new Date()
     const iso = (daysBack: number): string =>
       new Date(today.getTime() - daysBack * 86_400_000).toISOString().slice(0, 10)
     const rows = [makeMetric({ date: iso(10) }), makeMetric({ date: iso(2) }), makeMetric({ date: iso(0) })]
     const sliced = sliceLastNDays(rows, 5)
     expect(sliced.map((r) => r.date)).toEqual([iso(2), iso(0)])
+  })
+
+  it('anchors the window to the given timezone, not UTC', () => {
+    // Same instant/day-boundary case as the daysAgo timezone test above:
+    // 2026-01-06T04:00:00Z is still 2026-01-05 in America/Los_Angeles.
+    vi.setSystemTime(new Date('2026-01-06T04:00:00Z'))
+    const rows = [
+      makeMetric({ date: '2026-01-04' }),
+      makeMetric({ date: '2026-01-05' }),
+      makeMetric({ date: '2026-01-06' })
+    ]
+    // UTC: "today" is the 6th, so a 2-day window is [5th, 6th].
+    expect(sliceLastNDays(rows, 2).map((r) => r.date)).toEqual(['2026-01-05', '2026-01-06'])
+    // LA: "today" is the 5th, so a 2-day window is [4th, 5th] — the 6th (not
+    // yet "today" in LA) must NOT appear.
+    expect(sliceLastNDays(rows, 2, 'America/Los_Angeles').map((r) => r.date)).toEqual([
+      '2026-01-04',
+      '2026-01-05'
+    ])
+    vi.useRealTimers()
+  })
+
+  it('a N-day window spans exactly N calendar dates ending today (no off-by-one)', () => {
+    vi.setSystemTime(new Date('2026-01-06T12:00:00Z'))
+    const rows = [
+      makeMetric({ date: '2026-01-05' }),
+      makeMetric({ date: '2026-01-06' })
+    ]
+    expect(sliceLastNDays(rows, 1).map((r) => r.date)).toEqual(['2026-01-06'])
+    vi.useRealTimers()
   })
 })
 
@@ -223,6 +266,18 @@ describe('rollingAverage', () => {
     expect(result.get('2026-01-01')).toBe(60) // window of 1 (no prior day)
     expect(result.get('2026-01-02')).toBe(61) // avg(60,62)
     expect(result.get('2026-01-03')).toBe(63) // avg(62,64)
+  })
+
+  it('windows by calendar distance, not row count, when the data has gaps', () => {
+    // Old rows-based slicing would average 60 and 80 here even though they
+    // are 9 calendar days apart — far outside a 7-day window.
+    const rows = [
+      makeMetric({ date: '2026-01-01', resting_hr: 60 }),
+      makeMetric({ date: '2026-01-10', resting_hr: 80 })
+    ]
+    const result = rollingAverage(rows, 'resting_hr', 7)
+    expect(result.get('2026-01-01')).toBe(60)
+    expect(result.get('2026-01-10')).toBe(80)
   })
 
   it('skips dates where the trailing window has no non-null values', () => {

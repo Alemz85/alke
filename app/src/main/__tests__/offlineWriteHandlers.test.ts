@@ -33,7 +33,12 @@ function database(): OfflineWriteDatabase {
     updateGymSession: vi.fn(async () => ({})),
     deleteGymSession: vi.fn(async () => undefined),
     addProtein: vi.fn(async () => ({})),
-    setProtein: vi.fn(async () => ({}))
+    setProtein: vi.fn(async () => ({})),
+    addGoal: vi.fn(async () => ({})),
+    updateGoal: vi.fn(async () => ({})),
+    deleteGoal: vi.fn(async () => undefined),
+    addExercise: vi.fn(async () => ({})),
+    updateUserConfig: vi.fn(async () => ({}))
   }
 }
 
@@ -43,12 +48,14 @@ describe('executeOfflineWrite', () => {
     const note = { injury_id: 'injury', note: 'Fine' }
     const template = { name: 'A', notes: null, items: [] }
     const session = { sets: [] }
+    const goal = { title: 'Run a 10k', description: null, duration_days: 30 }
 
     await executeOfflineWrite(db, operation('addInjuryLog', [note]))
     await executeOfflineWrite(db, operation('addGymTemplate', [template]))
     await executeOfflineWrite(db, operation('createGymTemplateVersion', ['base', template]))
     await executeOfflineWrite(db, operation('addGymSession', [session]))
     await executeOfflineWrite(db, operation('addProtein', ['2026-07-13', 40]))
+    await executeOfflineWrite(db, operation('addGoal', [goal]))
 
     expect(db.addInjuryLog).toHaveBeenCalledWith(note, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     expect(db.addGymTemplate).toHaveBeenCalledWith(template, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
@@ -59,6 +66,7 @@ describe('executeOfflineWrite', () => {
     )
     expect(db.addGymSession).toHaveBeenCalledWith(session, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     expect(db.addProtein).toHaveBeenCalledWith('2026-07-13', 40, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+    expect(db.addGoal).toHaveBeenCalledWith(goal, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
   })
 
   it('replays ordered state changes using their original arguments', async () => {
@@ -73,6 +81,10 @@ describe('executeOfflineWrite', () => {
     await executeOfflineWrite(db, operation('updateInjuryStartedAt', ['injury', '2026-07-01']))
     await executeOfflineWrite(db, operation('startGymTemplateRun', ['template']))
     await executeOfflineWrite(db, operation('completeGymTemplateRun', ['template']))
+    await executeOfflineWrite(db, operation('updateGoal', ['goal', { title: 'New title' }]))
+    await executeOfflineWrite(db, operation('deleteGoal', ['goal']))
+    await executeOfflineWrite(db, operation('addExercise', ['Face Pull', 'shoulders']))
+    await executeOfflineWrite(db, operation('updateUserConfig', [{ hr_max: 190 }]))
 
     expect(db.setPlanItemCheck).toHaveBeenCalledWith('item', '2026-07-13', false)
     expect(db.updateGymTemplate).toHaveBeenCalledWith('template', { name: 'B' })
@@ -84,6 +96,10 @@ describe('executeOfflineWrite', () => {
     expect(db.updateInjuryStartedAt).toHaveBeenCalledWith('injury', '2026-07-01')
     expect(db.startGymTemplateRun).toHaveBeenCalledWith('template')
     expect(db.completeGymTemplateRun).toHaveBeenCalledWith('template')
+    expect(db.updateGoal).toHaveBeenCalledWith('goal', { title: 'New title' })
+    expect(db.deleteGoal).toHaveBeenCalledWith('goal')
+    expect(db.addExercise).toHaveBeenCalledWith('Face Pull', 'shoulders')
+    expect(db.updateUserConfig).toHaveBeenCalledWith({ hr_max: 190 })
   })
 
   it('rejects unknown persisted operation types', async () => {

@@ -6,6 +6,33 @@ describe('modalityToDomain', () => {
     expect(modalityToDomain('running')).toBe('aerobic')
     expect(modalityToDomain('run')).toBe('aerobic')
   })
+
+  it('treats real strength ingest types as load, not neutral (confirmed real HAE types)', () => {
+    // Bug: these compound strings never matched the old exact-match table,
+    // so they silently fell through to 'neutral' even though modalityLabel
+    // (same file) and ModalityIcon both already classify them as Gym/strength.
+    expect(modalityToDomain('functional_strength_training')).toBe('load')
+    expect(modalityToDomain('traditional_strength_training')).toBe('load')
+    expect(modalityToDomain('core_training')).toBe('load')
+  })
+
+  it('treats other real cardio ingest variants as aerobic, not just the short tokens', () => {
+    expect(modalityToDomain('pool_swim')).toBe('aerobic')
+    expect(modalityToDomain('open_water_swim')).toBe('aerobic')
+    expect(modalityToDomain('indoor_cycling')).toBe('aerobic')
+    expect(modalityToDomain('treadmill_running')).toBe('aerobic')
+  })
+
+  it('keeps walking neutral (not aerobic) and surf as sessions, per the exact-match table', () => {
+    expect(modalityToDomain('walking')).toBe('neutral')
+    expect(modalityToDomain('walk')).toBe('neutral')
+    expect(modalityToDomain('surf')).toBe('sessions')
+    expect(modalityToDomain('surfing')).toBe('sessions')
+  })
+
+  it('defaults a truly unknown type to neutral', () => {
+    expect(modalityToDomain('teleportation')).toBe('neutral')
+  })
 })
 
 describe('modalityLabel', () => {

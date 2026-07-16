@@ -126,12 +126,13 @@ export function RecoveryView(): ReactElement {
   // --- Hero: last night's sleep ---
   const latestSleepRow = [...allMetrics].reverse().find((m) => m.sleep_duration_min !== null)
   const latestSleepMinutes = latestSleepRow?.sleep_duration_min ?? null
-  const latestSleepAge = latestSleepRow ? daysAgo(latestSleepRow.date) : null
+  const latestSleepAge = latestSleepRow ? daysAgo(latestSleepRow.date, timezone) : null
 
   const last7dSleepRows = latestSleepRow
     ? sliceLastNDays(
         allMetrics.filter((m) => m.date <= latestSleepRow.date),
-        7
+        7,
+        timezone
       )
     : []
   const avg7dSleep = mean(last7dSleepRows.map((m) => m.sleep_duration_min))
@@ -156,7 +157,7 @@ export function RecoveryView(): ReactElement {
   // --- Sleep chart data ---
   // Short windows plot daily bars + a 7d rolling-avg line; long windows (90d/1y)
   // collapse into weekly/monthly average bars so the trend isn't lost in noise.
-  const sleepDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[sleepRange])
+  const sleepDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[sleepRange], timezone)
   const sleepGran = granularityForDays(RANGE_DAYS[sleepRange])
   const sleepRollingAvg = rollingAverage(allMetrics, 'sleep_duration_min')
   const sleepChartData =
@@ -189,7 +190,7 @@ export function RecoveryView(): ReactElement {
   const latestWake = fmtClockTime(latestSleepRow?.sleep_end, timezone)
   // Shift post-midnight times beyond 24:00 so the overnight clock remains
   // continuous instead of drawing a false jump at midnight.
-  const bedtimeDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[bedtimeRange])
+  const bedtimeDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[bedtimeRange], timezone)
   const bedtimeChartData = bedtimeDaysWindow.map((row, index, rows) => {
     const rawBedtime = clockMinutesOnSleepAxis(row.sleep_start, timezone)
     const bedtime = rawBedtime !== null && rawBedtime >= 16 * 60 && rawBedtime <= 36 * 60
@@ -222,7 +223,7 @@ export function RecoveryView(): ReactElement {
   const hasStageLegend = latestStages !== null && [deepH, coreH, remH, awakeH].some((v) => v !== null)
 
   // --- RHR chart data ---
-  const rhrDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[rhrRange])
+  const rhrDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[rhrRange], timezone)
   const rhrGran = granularityForDays(RANGE_DAYS[rhrRange])
   const computedByDate = new Map(allComputed.map((c) => [c.date, c]))
   // Baseline band: a +/-3bpm corridor around the 60d baseline. Renders as a
@@ -255,7 +256,7 @@ export function RecoveryView(): ReactElement {
     rhrGran === 'weekly' ? 'Weekly avg' : rhrGran === 'monthly' ? 'Monthly avg' : 'RHR'
 
   // --- HRV chart data (dots + median line; HRV is noisy so we lead with median) ---
-  const hrvDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[hrvRange])
+  const hrvDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[hrvRange], timezone)
   const hrvGran = granularityForDays(RANGE_DAYS[hrvRange])
   const hrvWeeklyMedian = weeklyMedianByDate(hrvDaysWindow, 'hrv_sdnn_ms')
   const hrvChartData =
@@ -279,7 +280,7 @@ export function RecoveryView(): ReactElement {
         : 'Weekly median'
 
   // --- Respiratory rate chart data (dots + 7d rolling avg line) ---
-  const respDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[respRange])
+  const respDaysWindow = sliceLastNDays(allMetrics, RANGE_DAYS[respRange], timezone)
   const respGran = granularityForDays(RANGE_DAYS[respRange])
   const respRollingAvg = rollingAverage(allMetrics, 'respiratory_rate')
   const respChartData =
@@ -299,7 +300,7 @@ export function RecoveryView(): ReactElement {
     respGran === 'weekly' ? 'Weekly avg' : respGran === 'monthly' ? 'Monthly avg' : '7d avg'
 
   // --- VO2max sparse scatter (1y) ---
-  const vo2Window = sliceLastNDays(allMetrics, RANGE_DAYS['1y'])
+  const vo2Window = sliceLastNDays(allMetrics, RANGE_DAYS['1y'], timezone)
   const vo2ChartData = vo2Window
     .filter((r) => r.vo2max !== null)
     .map((r) => ({ date: r.date, vo2max: r.vo2max as number }))
@@ -307,14 +308,14 @@ export function RecoveryView(): ReactElement {
 
   // --- Wrist temperature: only render the card if any non-null values exist ---
   const hasWristTempData = allMetrics.some((r) => r.wrist_temp_deviation_c !== null)
-  const wristTempWindow = sliceLastNDays(allMetrics, RANGE_DAYS['30d'])
+  const wristTempWindow = sliceLastNDays(allMetrics, RANGE_DAYS['30d'], timezone)
   const wristTempChartData = wristTempWindow.map((r) => ({
     date: r.date,
     dev: r.wrist_temp_deviation_c
   }))
 
   // --- Body weight: sparse scatter + 7-day-bridged trend line ---
-  const weightWindow = sliceLastNDays(allMetrics, RANGE_DAYS[weightRange])
+  const weightWindow = sliceLastNDays(allMetrics, RANGE_DAYS[weightRange], timezone)
   const weightChartData = buildWeightSeries(weightWindow)
   const hasWeightData = weightChartData.length > 0
 

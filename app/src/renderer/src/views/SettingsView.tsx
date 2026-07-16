@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, X } from 'lucide-react'
 import type { UserConfig, UserConfigPatch } from '@shared/types'
+import { isQueuedWriteReceipt } from '../lib/optimisticEntities'
 import { TabHeader } from './TabHeader'
 import './SettingsView.css'
 
@@ -132,6 +133,14 @@ export function SettingsView(): ReactElement {
   const mutation = useMutation({
     mutationFn: (patch: UserConfigPatch) => window.api.updateUserConfig(patch),
     onSuccess: (fresh) => {
+      if (isQueuedWriteReceipt(fresh)) {
+        // Offline: the patch is durably queued; keep the local draft as the
+        // source of truth and skip the global refetch (the server still holds
+        // the old config until the queue flushes).
+        setSaveError(null)
+        setSavedVisible(true)
+        return
+      }
       setDraft(toDraft(fresh))
       setSaveError(null)
       setSavedVisible(true)

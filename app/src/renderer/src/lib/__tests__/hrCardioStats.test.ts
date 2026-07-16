@@ -21,7 +21,6 @@ function workout(
     avg_hr: avgHr,
     max_hr: null,
     source: 'healthkit',
-    raw: null,
     computed: null
   }
 }

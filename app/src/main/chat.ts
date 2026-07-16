@@ -149,6 +149,27 @@ function promptWithAttachments(message: string, attachments: ChatAttachment[]): 
 // `close` handler emits `done` instead of `error` for a deliberate stop.
 const activeChildren = new Map<string, { child: ChildProcess; markStopped: () => void }>()
 
+// The renderer only ever renders ONE session's stream at a time (it tracks a
+// single activeId and drops chat:stream events for any other sessionId — see
+// ChatView.tsx). So a child left running for a session the user has since
+// navigated away from is a pure orphan: nobody will ever see its output, and
+// it just burns a live `claude` process. Rather than let orphans accumulate
+// until the concurrency cap below refuses new sends, kill every OTHER
+// session's child the moment a new send comes in for session X.
+function killOtherSessions(keepSessionId: string): void {
+  for (const [sid, entry] of activeChildren) {
+    if (sid === keepSessionId) continue
+    entry.markStopped()
+    entry.child.kill('SIGTERM')
+    activeChildren.delete(sid)
+  }
+}
+
+// Defensive ceiling in case killOtherSessions ever races with a new spawn (or
+// this policy changes later) — never let the app accumulate unbounded live
+// CLI child processes.
+const MAX_CONCURRENT_CHILDREN = 3
+
 export function checkClaude(): Promise<ChatStatus> {
   return new Promise((resolve) => {
     execFile('claude', ['--version'], { timeout: 10_000 }, (error, stdout) => {
@@ -174,6 +195,17 @@ export async function sendMessage(
   if (!session) {
     session = await db.createChatSession(userMessage.slice(0, 80))
   }
+
+  // The renderer can only ever display this (the newly-sent-to) session's
+  // stream — kill any other session's still-running child first, since it's
+  // now a guaranteed orphan (see killOtherSessions doc comment above).
+  killOtherSessions(session.id)
+  if (!activeChildren.has(session.id) && activeChildren.size >= MAX_CONCURRENT_CHILDREN) {
+    throw new Error(
+      `too many chat sessions are already running (max ${MAX_CONCURRENT_CHILDREN}) — stop one and try again`
+    )
+  }
+
   const messages = [...(session.messages ?? [])]
   messages.push({ role: 'user', content: userMessage, ts: new Date().toISOString() })
   await db.updateChatSession(session.id, { messages })
@@ -230,7 +262,17 @@ export async function sendMessage(
   function handleCliEvent(event: Record<string, unknown>): void {
     const type = event.type
     if (type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
-      void db.updateChatSession(session!.id, { claude_session_id: event.session_id })
+      // Losing this write silently would mean the CLI's session id (needed for
+      // --resume) never lands in the DB — the next message would open a FRESH
+      // CLI session, silently discarding the agent's prior context. Surface a
+      // failure on the same chat:stream error path the rest of the pipeline
+      // uses, so it's visible instead of a silent, confusing context loss.
+      db.updateChatSession(session!.id, { claude_session_id: event.session_id }).catch((error) => {
+        emit({
+          kind: 'error',
+          message: `failed to save chat session id: ${error instanceof Error ? error.message : String(error)}`
+        })
+      })
       session!.claude_session_id = event.session_id
       return
     }
@@ -285,12 +327,23 @@ export async function sendMessage(
   child.on('close', (code) => {
     void (async () => {
       activeChildren.delete(session!.id)
-      if (assistantText.trim().length > 0) {
-        messages.push({ role: 'assistant', content: assistantText, ts: new Date().toISOString() })
-        await db.updateChatSession(session!.id, { messages })
+      try {
+        if (assistantText.trim().length > 0) {
+          messages.push({ role: 'assistant', content: assistantText, ts: new Date().toISOString() })
+          await db.updateChatSession(session!.id, { messages })
+        }
+        if (code === 0 || stopped) emit({ kind: 'done' })
+        else emit({ kind: 'error', message: stderr.trim() || `claude exited with code ${code}` })
+      } catch (error) {
+        // The assistant's reply streamed to the renderer fine, but persisting
+        // it to the DB just failed — without this catch that failure is
+        // silently swallowed (this whole handler is a `void`-invoked async
+        // IIFE) and the reply looks saved but is gone on reload. Surface it.
+        emit({
+          kind: 'error',
+          message: `reply generated but failed to save: ${error instanceof Error ? error.message : String(error)}`
+        })
       }
-      if (code === 0 || stopped) emit({ kind: 'done' })
-      else emit({ kind: 'error', message: stderr.trim() || `claude exited with code ${code}` })
     })()
   })
 

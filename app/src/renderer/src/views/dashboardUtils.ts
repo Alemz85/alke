@@ -4,22 +4,39 @@
 import type { UserConfig, Workout } from '@shared/types'
 import { EM_DASH, fmtDelta, fmtNum } from '../lib/format'
 import { workoutMatchesGoal } from '../lib/modality'
+import { addDays, isoWeekStart, ymdKey, ymdToIsoStart, type YMD } from '../hooks/sessionsDate'
 
-/** Monday 00:00:00 local (of `date`'s calendar day) — ISO week start. */
-export function startOfIsoWeek(date: Date): Date {
-  const d = new Date(date)
-  const day = d.getDay() // 0 = Sun .. 6 = Sat
-  const diff = day === 0 ? -6 : 1 - day // days to subtract to reach Monday
-  d.setDate(d.getDate() + diff)
-  d.setHours(0, 0, 0, 0)
-  return d
+/**
+ * The [start, end) ISO-week window containing `todayYmd`, as "YYYY-MM-DD"
+ * date keys (end is EXCLUSIVE, matching the `>= start && < end` filters this
+ * powers) plus ISO instant boundaries for range-querying workouts.
+ *
+ * Pure string/YMD math — no `Date`, no machine timezone. Callers resolve
+ * "today" via `todayYMD(timezone)` (hooks/sessionsDate.ts) in the user's
+ * configured IANA timezone first, so the window this returns is anchored to
+ * the SAME calendar day computed_daily rows are keyed by (also user-tz), not
+ * whatever day it happens to be on the machine running the app.
+ */
+export interface IsoWeekWindow {
+  /** Monday of the week, "YYYY-MM-DD". */
+  startKey: string
+  /** Monday of the FOLLOWING week, "YYYY-MM-DD" — exclusive upper bound. */
+  endKey: string
+  /** startKey as a UTC-midnight ISO instant, for range-querying workouts. */
+  startIso: string
+  /** endKey as a UTC-midnight ISO instant, for range-querying workouts. */
+  endIso: string
 }
 
-export function endOfIsoWeek(date: Date): Date {
-  const start = startOfIsoWeek(date)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 7)
-  return end
+export function isoWeekWindowFor(todayYmd: YMD): IsoWeekWindow {
+  const start = isoWeekStart(todayYmd)
+  const end = addDays(start, 7)
+  return {
+    startKey: ymdKey(start),
+    endKey: ymdKey(end),
+    startIso: ymdToIsoStart(start),
+    endIso: ymdToIsoStart(end)
+  }
 }
 
 /** Humanizes a workout `type` string, e.g. "open_water_swim" -> "Open Water Swim". */

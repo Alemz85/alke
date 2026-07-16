@@ -1,4 +1,4 @@
-import type { Workout, WorkoutPlace } from '@shared/types'
+import type { Workout } from '@shared/types'
 import { localDateKey, toZonedYMD } from '../hooks/sessionsDate'
 
 export interface RunBenchmark {
@@ -12,14 +12,6 @@ export interface MonthlyRunningStat {
   durationS: number
   runs: number
   paceSecPerKm: number | null
-}
-
-export interface RunningPlaceStat {
-  key: string
-  city: string | null
-  country: string
-  runs: number
-  distanceKm: number
 }
 
 export interface PeriodRunningTotals {
@@ -166,30 +158,4 @@ export function yearlyRunningTotals(
   now: Date = new Date()
 ): PeriodRunningTotals {
   return periodRunningTotals(workouts, timezone, 'year', now)
-}
-
-export function runningPlaces(workouts: Workout[], places: WorkoutPlace[]): RunningPlaceStat[] {
-  const workoutById = new Map(workouts.map((workout) => [workout.id, workout]))
-  const grouped = new Map<string, RunningPlaceStat>()
-
-  for (const place of places) {
-    const workout = workoutById.get(place.workout_id)
-    if (!workout || (!place.city && !place.country)) continue
-    const country = place.country ?? 'Unknown country'
-    const key = place.city ? `${place.city}|${country}` : country
-    const row = grouped.get(key) ?? {
-      key,
-      city: place.city,
-      country,
-      runs: 0,
-      distanceKm: 0
-    }
-    row.runs += 1
-    row.distanceKm += (workout.distance_m ?? 0) / 1000
-    grouped.set(key, row)
-  }
-
-  return [...grouped.values()].sort(
-    (a, b) => b.distanceKm - a.distanceKm || b.runs - a.runs || a.key.localeCompare(b.key)
-  )
 }

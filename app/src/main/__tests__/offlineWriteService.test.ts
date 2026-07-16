@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { OfflineWriteService } from '../offlineWriteService'
 
 describe('OfflineWriteService', () => {
@@ -70,29 +70,40 @@ describe('OfflineWriteService', () => {
     expect(service.status().pending).toBe(0)
   })
 
-  it('replays a queued operation with the same stable operation id', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'health-write-service-'))
-    const seen: string[] = []
-    let online = false
-    const service = new OfflineWriteService(
-      join(directory, 'queue.json'),
-      async (operation) => {
-        seen.push(operation.id)
-        if (!online) throw new TypeError('fetch failed')
-        return undefined
-      },
-      undefined,
-      () => '33333333-3333-4333-8333-333333333333'
-    )
-    await service.run('addGymTemplate', [{}])
-    online = true
+  it('replays a queued operation with the same stable operation id once backoff elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      const directory = mkdtempSync(join(tmpdir(), 'health-write-service-'))
+      const seen: string[] = []
+      let online = false
+      const service = new OfflineWriteService(
+        join(directory, 'queue.json'),
+        async (operation) => {
+          seen.push(operation.id)
+          if (!online) throw new TypeError('fetch failed')
+          return undefined
+        },
+        undefined,
+        () => '33333333-3333-4333-8333-333333333333'
+      )
+      await service.run('addGymTemplate', [{}])
+      online = true
 
-    await service.flush()
+      // Within the 30s backoff window the flush must SKIP the item — a
+      // just-failed head is no longer hammered on every tick.
+      await service.flush()
+      expect(seen).toEqual(['33333333-3333-4333-8333-333333333333'])
 
-    expect(seen).toEqual([
-      '33333333-3333-4333-8333-333333333333',
-      '33333333-3333-4333-8333-333333333333'
-    ])
-    expect(service.status().pending).toBe(0)
+      vi.advanceTimersByTime(31_000)
+      await service.flush()
+
+      expect(seen).toEqual([
+        '33333333-3333-4333-8333-333333333333',
+        '33333333-3333-4333-8333-333333333333'
+      ])
+      expect(service.status().pending).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

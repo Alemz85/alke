@@ -50,7 +50,6 @@ import {
   type Workout,
   type WorkoutDetail,
   type WorkoutGeo,
-  type WorkoutPlace,
   type WorkoutHrSample,
   type Zone2Fitness
 } from '@shared/types'
@@ -114,7 +113,9 @@ const DAILY_METRIC_NUMERIC_KEYS: (keyof DailyMetric)[] = [
   'steps',
   'active_energy_kcal',
   'wrist_temp_deviation_c',
-  'weight_kg'
+  'weight_kg',
+  'walking_running_distance_m',
+  'flights_climbed'
 ]
 
 const COMPUTED_DAILY_NUMERIC_KEYS: (keyof ComputedDaily)[] = [
@@ -173,14 +174,16 @@ const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
   'about_me'
 ]
 
+// `raw` (the ingest archive column) is deliberately not selected — nothing in
+// the app reads it, and it can be large; the DB column itself stays as the archive.
 const WORKOUT_COLUMNS =
-  'id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, avg_hr, max_hr, source, raw'
+  'id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, avg_hr, max_hr, source'
 
 const COMPUTED_WORKOUT_COLUMNS =
   'workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60, computed_at'
 
 const DAILY_METRIC_COLUMNS =
-  'date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, weight_kg, state_of_mind'
+  'date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, weight_kg, walking_running_distance_m, flights_climbed'
 
 const COMPUTED_DAILY_COLUMNS =
   'date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags, computed_at'
@@ -212,6 +215,11 @@ const WORKOUT_GEO_COLUMNS = 'workout_id, city, country, admin, lat, lon, geocode
 const WORKOUT_GEO_NUMERIC_KEYS: (keyof WorkoutGeo)[] = ['lat', 'lon']
 
 export async function getWorkouts(fromIso: string, toIso: string): Promise<Workout[]> {
+  // fromIso/toIso are full ISO instants (callers pass e.g. '1970-01-01T00:00:00.000Z'),
+  // not plain dates — assertInstant is the correct validator here, not assertDate.
+  assertInstant(fromIso, 'fromIso')
+  assertInstant(toIso, 'toIso')
+
   const supabase = getClient()
 
   const { data: workouts, error } = await supabase
@@ -248,6 +256,8 @@ export async function getWorkouts(fromIso: string, toIso: string): Promise<Worko
 }
 
 export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
+  assertUuid(id, 'id')
+
   const supabase = getClient()
 
   const { data: workout, error } = await supabase
@@ -304,21 +314,12 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
   }
 }
 
-/** Batched place labels for history views. Avoids fetching full workout detail N times. */
-export async function getWorkoutPlaces(workoutIds: string[]): Promise<WorkoutPlace[]> {
-  if (workoutIds.length === 0) return []
-  const supabase = getClient()
-  const { data, error } = await supabase
-    .from('workout_geo')
-    .select('workout_id, city, country, admin')
-    .in('workout_id', workoutIds)
-
-  if (error) throw new Error(`getWorkoutPlaces: ${error.message}`)
-  return (data ?? []) as WorkoutPlace[]
-}
-
 /** Swim sets for all swim workouts starting in [fromIso, toIso], for trend views. */
 export async function getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]> {
+  // fromIso/toIso are full ISO instants — see getWorkouts for the same note.
+  assertInstant(fromIso, 'fromIso')
+  assertInstant(toIso, 'toIso')
+
   const supabase = getClient()
 
   const { data: swims, error: swimsError } = await supabase
@@ -342,6 +343,9 @@ export async function getSwimSets(fromIso: string, toIso: string): Promise<SwimS
 }
 
 export async function getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]> {
+  assertDate(fromDate, 'fromDate')
+  assertDate(toDate, 'toDate')
+
   const supabase = getClient()
 
   const { data, error } = await supabase
@@ -569,6 +573,8 @@ export async function getInjuries(): Promise<Injury[]> {
 }
 
 export async function getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]> {
+  assertUuid(injuryId, 'injury_id')
+
   const supabase = getClient()
 
   const { data, error } = await supabase
@@ -1472,6 +1478,11 @@ async function getGymSessionById(id: string): Promise<GymSession> {
 }
 
 export async function getGymSessions(fromIso: string, toIso: string): Promise<GymSession[]> {
+  // fromIso/toIso are full ISO instants (matched against performed_at, a
+  // timestamptz column) — see getWorkouts for the same note.
+  assertInstant(fromIso, 'fromIso')
+  assertInstant(toIso, 'toIso')
+
   const supabase = getClient()
   const { data: sessions, error } = await supabase
     .from('gym_sessions')
@@ -2028,15 +2039,26 @@ export async function getGoalProgress(goalId: string): Promise<GoalProgressPoint
 
 // Metric columns are agent-owned (written by chatctx/goals.py); the app only
 // creates/edits the card fields the user declares.
-export async function addGoal(goal: NewGoal): Promise<Goal> {
+//
+// mutationId is the row's own id (upsert onConflict: 'id'), same pattern as
+// addGymTemplate/addGymSession — makes an offline-queue replay idempotent
+// without a migration: a retried create with the same mutationId updates the
+// same row instead of inserting a second goal. The goal_status_events insert
+// below is NOT similarly deduped (that table has no unique-mutation-id column
+// either); a replay after a lost response can append a harmless duplicate
+// 'active' timeline event — acceptable since the timeline is display-only
+// context, not the source of truth for status.
+export async function addGoal(goal: NewGoal, mutationId: string): Promise<Goal> {
   const supabase = getClient()
 
   assertGoalTitle(goal.title)
   assertGoalDescription(goal.description)
   assertGoalDuration(goal.duration_days)
   if (goal.started_at !== undefined) assertDate(goal.started_at, 'started_at')
+  assertUuid(mutationId, 'mutationId')
 
   const row: Record<string, unknown> = {
+    id: mutationId,
     title: goal.title.trim(),
     description: goal.description,
     duration_days: goal.duration_days,
@@ -2044,7 +2066,11 @@ export async function addGoal(goal: NewGoal): Promise<Goal> {
   }
   if (goal.started_at !== undefined) row.started_at = goal.started_at
 
-  const { data, error } = await supabase.from('goals').insert(row).select(GOAL_COLUMNS).single()
+  const { data, error } = await supabase
+    .from('goals')
+    .upsert(row, { onConflict: 'id' })
+    .select(GOAL_COLUMNS)
+    .single()
 
   if (error) throw new Error(`addGoal: ${error.message}`)
 
@@ -2153,9 +2179,14 @@ export async function getInsightCorrelations(): Promise<InsightCorrelation[]> {
     .from('insight_correlations')
     .select('var_x, var_y, lag_days, r, n, p_value')
   if (error) throw new Error(error.message)
-  return (data ?? []).map((row) =>
+  const normalized = (data ?? []).map((row) =>
     normalizeNumeric(row as unknown as InsightCorrelation, ['r', 'n', 'p_value', 'lag_days'])
   )
+  // Shield, not a behavior change: insights.py always writes r/n/p_value together,
+  // so a null here would mean a partially-written row. InsightCorrelation types
+  // these as non-null and the renderer calls .toFixed on them unguarded — drop
+  // any row missing one so a data anomaly can't crash the Insights tab.
+  return normalized.filter((row) => row.r !== null && row.n !== null && row.p_value !== null)
 }
 
 export async function getInsightModels(): Promise<InsightModel[]> {
@@ -2166,16 +2197,21 @@ export async function getInsightModels(): Promise<InsightModel[]> {
   return (data ?? []) as InsightModel[]
 }
 
+// Bounded to the 100 most recent sessions — this is a single-user desktop app's
+// session picker, not a paginated list; a cap avoids an unbounded row scan/payload
+// as history grows indefinitely.
 export async function listChatSessions(): Promise<ChatSessionMeta[]> {
   const { data, error } = await getClient()
     .from('chat_sessions')
     .select('id, started_at, title')
     .order('started_at', { ascending: false })
+    .limit(100)
   if (error) throw new Error(`listChatSessions: ${error.message}`)
   return (data ?? []) as ChatSessionMeta[]
 }
 
 export async function getChatSession(id: string): Promise<ChatSession | null> {
+  assertSessionId(id)
   const { data, error } = await getClient()
     .from('chat_sessions')
     .select('id, started_at, title, claude_session_id, messages')
@@ -2195,10 +2231,16 @@ export async function createChatSession(title: string): Promise<ChatSession> {
   return data as ChatSession
 }
 
+// `messages` is a single jsonb column: every turn does a full read-modify-write
+// of the whole array (see chat.ts's sendMessage), not an append. Acceptable for
+// a single-user app with bounded session lengths; if a session's message count
+// grows very large this becomes an O(n) payload per turn — revisit (e.g. a
+// separate chat_messages table) if that's ever observed in practice.
 export async function updateChatSession(
   id: string,
   patch: { messages?: ChatMessage[]; claude_session_id?: string }
 ): Promise<void> {
+  assertSessionId(id)
   const { error } = await getClient().from('chat_sessions').update(patch).eq('id', id)
   if (error) throw new Error(`updateChatSession: ${error.message}`)
 }

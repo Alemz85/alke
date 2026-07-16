@@ -25,7 +25,8 @@ function metric(date: string, steps: number | null): DailyMetric {
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
     weight_kg: null,
-    state_of_mind: null
+    walking_running_distance_m: null,
+    flights_climbed: null,
   }
 }
 
@@ -42,7 +43,6 @@ function workout(id: string, startAt: string, distanceM: number | null, duration
     avg_hr: null,
     max_hr: null,
     source: 'healthkit',
-    raw: null,
     computed: null
   }
 }

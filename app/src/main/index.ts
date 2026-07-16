@@ -140,6 +140,10 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // sandbox:true would be preferable defense-in-depth, but Electron does
+      // not load ESM preloads (.mjs) in a sandboxed renderer — window.api
+      // silently vanishes and the whole app breaks (verified via CDP smoke
+      // test). Revisit if the preload build ever switches to CJS.
       sandbox: false
     }
   })
@@ -154,7 +158,12 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Only ever hand off plain http(s) links to the OS browser — refuse
+    // file:/javascript:/data: etc. so a malicious or malformed link can't
+    // trigger a local file open or script execution via shell.openExternal.
+    if (/^https?:\/\//.test(details.url)) {
+      shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 
@@ -189,9 +198,6 @@ function registerIpcHandlers(): void {
     db.getWorkouts(fromIso, toIso)
   )
   ipcMain.handle(IPC_CHANNELS.getWorkoutDetail, (_event, id: string) => db.getWorkoutDetail(id))
-  ipcMain.handle(IPC_CHANNELS.getWorkoutPlaces, (_event, workoutIds: string[]) =>
-    db.getWorkoutPlaces(workoutIds)
-  )
   ipcMain.handle(IPC_CHANNELS.getSwimSets, (_event, fromIso: string, toIso: string) =>
     db.getSwimSets(fromIso, toIso)
   )
@@ -206,7 +212,7 @@ function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC_CHANNELS.getUserConfig, () => db.getUserConfig())
   ipcMain.handle(IPC_CHANNELS.updateUserConfig, (_event, patch: UserConfigPatch) =>
-    db.updateUserConfig(patch)
+    offlineWrites.run('updateUserConfig', [patch])
   )
   ipcMain.handle(IPC_CHANNELS.getTodayFlags, async () => {
     const flags = await db.getTodayFlags()
@@ -252,7 +258,7 @@ function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC_CHANNELS.getExercises, () => db.getExercises())
   ipcMain.handle(IPC_CHANNELS.addExercise, (_event, name: string, bodyPart: GymBodyPart | null) =>
-    db.addExercise(name, bodyPart)
+    offlineWrites.run('addExercise', [name, bodyPart])
   )
   ipcMain.handle(IPC_CHANNELS.getGymTemplates, () => db.getGymTemplates())
   ipcMain.handle(IPC_CHANNELS.addGymTemplate, (_event, template: NewGymTemplate) =>
@@ -294,11 +300,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getGoalProgress, (_event, goalId: string) =>
     db.getGoalProgress(goalId)
   )
-  ipcMain.handle(IPC_CHANNELS.addGoal, (_event, goal: NewGoal) => db.addGoal(goal))
+  ipcMain.handle(IPC_CHANNELS.addGoal, (_event, goal: NewGoal) => offlineWrites.run('addGoal', [goal]))
   ipcMain.handle(IPC_CHANNELS.updateGoal, (_event, id: string, patch: GoalPatch) =>
-    db.updateGoal(id, patch)
+    offlineWrites.run('updateGoal', [id, patch])
   )
-  ipcMain.handle(IPC_CHANNELS.deleteGoal, (_event, id: string) => db.deleteGoal(id))
+  ipcMain.handle(IPC_CHANNELS.deleteGoal, (_event, id: string) =>
+    offlineWrites.run('deleteGoal', [id])
+  )
   ipcMain.handle(IPC_CHANNELS.buildGoalMetric, (_event, goalId: string) =>
     chat.buildGoalMetric(goalId)
   )

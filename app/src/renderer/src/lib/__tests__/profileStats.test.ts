@@ -20,7 +20,6 @@ function workout(partial: Partial<Workout> & { start_at: string }): Workout {
     avg_hr: null,
     max_hr: null,
     source: null,
-    raw: null,
     computed: null,
     ...partial
   }

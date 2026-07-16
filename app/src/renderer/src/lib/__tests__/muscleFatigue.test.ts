@@ -71,7 +71,6 @@ function workout(
     avg_hr: null,
     max_hr: null,
     source: null,
-    raw: null,
     computed: {
       workout_id: id,
       time_in_zones: { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, ...zones },

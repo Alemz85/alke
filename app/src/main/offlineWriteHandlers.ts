@@ -1,10 +1,14 @@
 import type {
+  GoalPatch,
+  GymBodyPart,
   GymSessionPatch,
   GymTemplatePatch,
   Injury,
+  NewGoal,
   NewGymSession,
   NewGymTemplate,
-  NewInjuryLog
+  NewInjuryLog,
+  UserConfigPatch
 } from '@shared/types'
 import type { QueuedWriteOperation } from './offlineQueue'
 
@@ -27,6 +31,11 @@ export type OfflineWriteType =
   | 'deleteGymSession'
   | 'addProtein'
   | 'setProtein'
+  | 'addGoal'
+  | 'updateGoal'
+  | 'deleteGoal'
+  | 'addExercise'
+  | 'updateUserConfig'
 
 export interface OfflineWriteDatabase {
   addInjuryLog(entry: NewInjuryLog, mutationId: string): Promise<unknown>
@@ -51,6 +60,13 @@ export interface OfflineWriteDatabase {
   deleteGymSession(id: string): Promise<unknown>
   addProtein(date: string, grams: number, mutationId: string): Promise<unknown>
   setProtein(date: string, grams: number): Promise<unknown>
+  addGoal(goal: NewGoal, mutationId: string): Promise<unknown>
+  updateGoal(id: string, patch: GoalPatch): Promise<unknown>
+  deleteGoal(id: string): Promise<unknown>
+  // Idempotent by name already (exercises.name_key is unique — a retried add
+  // with the same name resolves to the existing row), so no mutationId param.
+  addExercise(name: string, bodyPart: GymBodyPart | null): Promise<unknown>
+  updateUserConfig(patch: UserConfigPatch): Promise<unknown>
 }
 
 /** Execute a serialized write using its stable queue operation id. */
@@ -96,6 +112,16 @@ export async function executeOfflineWrite(
       return db.addProtein(first as string, second as number, operation.id)
     case 'setProtein':
       return db.setProtein(first as string, second as number)
+    case 'addGoal':
+      return db.addGoal(first as NewGoal, operation.id)
+    case 'updateGoal':
+      return db.updateGoal(first as string, second as GoalPatch)
+    case 'deleteGoal':
+      return db.deleteGoal(first as string)
+    case 'addExercise':
+      return db.addExercise(first as string, second as GymBodyPart | null)
+    case 'updateUserConfig':
+      return db.updateUserConfig(first as UserConfigPatch)
     default:
       throw new Error(`unsupported offline write type: ${operation.type}`)
   }

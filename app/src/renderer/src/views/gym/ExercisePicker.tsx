@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { Exercise, GymBodyPart } from '@shared/types'
 import { useAddExercise, useExercises } from '../../hooks/useGymData'
+import { isQueuedWriteReceipt } from '../../lib/optimisticEntities'
 import { rankExercises, type ExerciseUsageEntry } from '../../lib/exerciseSearch'
 
 export function ExercisePicker({
@@ -57,7 +58,9 @@ export function ExercisePicker({
     if (!trimmed) return
     addExercise.mutate(
       { name: trimmed, bodyPart: bodyPart ?? null },
-      { onSuccess: (created) => select(created) }
+      // A queued (offline) create has no catalog id to select yet — leave the
+      // typed text in place so the user can re-commit once back online.
+      { onSuccess: (created) => { if (!isQueuedWriteReceipt(created)) select(created) } }
     )
   }
 

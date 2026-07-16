@@ -13,13 +13,17 @@ export interface SummaryItem {
   endMs?: number
 }
 
+// Case-insensitive: the canonical export — lib/calendarDayLabel.ts imports
+// these instead of keeping its own copy (its former copy lowercased before
+// testing; this one was case-sensitive, so the two silently disagreed on any
+// mixed-case type string, e.g. an "Other"/"Core_Training" variant).
 export function isGymType(type: string | null): boolean {
-  return !!type && /strength|core/.test(type)
+  return !!type && /strength|core/i.test(type)
 }
 
 /** Mirrors Zone2View's cardio test: anything that isn't gym/other. */
 export function isCardioType(type: string | null): boolean {
-  return !!type && !/strength|core|other/.test(type)
+  return !!type && !/strength|core|other/i.test(type)
 }
 
 /** 30 minutes, in milliseconds — the back-to-back merge gap threshold below. */

@@ -45,7 +45,6 @@ export function ProteinCard({
   const toKey = ymdKey(weekEnd)
 
   const proteinLogQuery = useProteinLog(fromKey, toKey)
-  const addProtein = useAddProtein()
 
   const week = useMemo(
     () => proteinWeekTable(proteinLogQuery.data ?? [], weekStart),
@@ -53,6 +52,10 @@ export function ProteinCard({
   )
 
   const selectedKey = ymdKey(selectedDate)
+  // Scoped to the currently-selected day (see useProteinData.ts) — this hook
+  // call is re-created whenever selectedKey changes, which is fine since the
+  // Add button only ever targets the day currently shown.
+  const addProtein = useAddProtein(selectedKey)
   const selectedGrams = week.days.find((d) => d.dateKey === selectedKey)?.grams ?? 0
   const isToday = ymdEquals(selectedDate, today)
 

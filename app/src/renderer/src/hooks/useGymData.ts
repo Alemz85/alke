@@ -238,7 +238,12 @@ export function useAddGymSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (session: NewGymSession) => window.api.addGymSession(session),
-    scope: { id: 'gym-sessions' },
+    // No scope: each add creates a brand-new session with no server id yet, so
+    // there is nothing for concurrent adds to race over — every add gets its
+    // own temporaryId and inserts into whichever range queries it falls
+    // within (see sessionFallsWithinQuery below). Two adds firing in parallel
+    // never touch the same row, so there is nothing that needs serializing
+    // (unlike update/delete below, which target an existing session by id).
     meta: { errorMessage: 'Couldn’t save the session. It was removed from the log.' },
     onMutate: async (session) => {
       const queryKey = ['health', 'gym', 'sessions'] as const
@@ -268,12 +273,22 @@ export function useAddGymSession() {
   })
 }
 
-export function useUpdateGymSession() {
+/**
+ * Updates one gym session. Takes the session id up front (not just at
+ * `.mutate()` time) so `scope` — fixed at `useMutation()` construction — can
+ * be keyed per-session: mutations sharing a scope run serially, one at a
+ * time, and a flat 'gym-sessions' scope meant editing session A queued
+ * behind an in-flight edit of unrelated session B, even though the two
+ * writes touch different rows and have no reason to serialize. Mirrors the
+ * injury-log-delete fix (InjuriesView.tsx). Callers (SessionEditorModal) are
+ * naturally one-session-at-a-time already, so this costs nothing at the call site.
+ */
+export function useUpdateGymSession(sessionId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: GymSessionPatch }) =>
       window.api.updateGymSession(id, patch),
-    scope: { id: 'gym-sessions' },
+    scope: { id: `gym-session:${sessionId}` },
     meta: { errorMessage: 'Couldn’t update the session. Your previous version was restored.' },
     onMutate: async ({ id, patch }) => {
       const queryKey = ['health', 'gym', 'sessions'] as const
@@ -297,11 +312,12 @@ export function useUpdateGymSession() {
   })
 }
 
-export function useDeleteGymSession() {
+/** Deletes one gym session. Takes the id up front — see useUpdateGymSession above for why. */
+export function useDeleteGymSession(sessionId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => window.api.deleteGymSession(id),
-    scope: { id: 'gym-sessions' },
+    scope: { id: `gym-session:${sessionId}` },
     meta: { errorMessage: 'Couldn’t delete the session. It has been put back.' },
     onMutate: async (id) => {
       const queryKey = ['health', 'gym', 'sessions'] as const

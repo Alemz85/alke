@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Workout, WorkoutPlace } from '@shared/types'
+import type { Workout } from '@shared/types'
 import {
   bestRunAtLeast,
   longestRun,
@@ -8,7 +8,6 @@ import {
   paceSecPerKm,
   periodRunningTotals,
   runningLifetime,
-  runningPlaces,
   yearlyRunningTotals
 } from '../runningStats'
 
@@ -30,7 +29,6 @@ function workout(
     avg_hr: null,
     max_hr: null,
     source: 'runkeeper',
-    raw: null,
     computed: null
   }
 }
@@ -167,25 +165,5 @@ describe('periodRunningTotals', () => {
   it('monthlyRunningTotals and yearlyRunningTotals delegate to periodRunningTotals', () => {
     expect(monthlyRunningTotals(runs, 'UTC', now)).toEqual(periodRunningTotals(runs, 'UTC', 'month', now))
     expect(yearlyRunningTotals(runs, 'UTC', now)).toEqual(periodRunningTotals(runs, 'UTC', 'year', now))
-  })
-})
-
-describe('runningPlaces', () => {
-  it('ranks places by distance with deterministic labels and counts', () => {
-    const runs = [
-      workout('a', '2025-01-02T10:00:00Z', 5000, 1500),
-      workout('b', '2025-01-20T10:00:00Z', 6000, 1800),
-      workout('c', '2025-02-01T10:00:00Z', 3000, 900)
-    ]
-    const places: WorkoutPlace[] = [
-      { workout_id: 'a', city: 'Berlin', country: 'Germany', admin: 'Berlin' },
-      { workout_id: 'b', city: 'Berlin', country: 'Germany', admin: 'Berlin' },
-      { workout_id: 'c', city: null, country: 'France', admin: null }
-    ]
-
-    expect(runningPlaces(runs, places)).toEqual([
-      { key: 'Berlin|Germany', city: 'Berlin', country: 'Germany', runs: 2, distanceKm: 11 },
-      { key: 'France', city: null, country: 'France', runs: 1, distanceKm: 3 }
-    ])
   })
 })

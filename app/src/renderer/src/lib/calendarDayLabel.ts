@@ -6,6 +6,7 @@ import type { Workout } from '@shared/types'
 import type { DayBucket } from '../hooks/sessionsCompute'
 import { cardioModalityByKey, cardioModalityOf } from './cardioModality'
 import { formatDurationHM } from './format'
+import { isCardioType, isGymType } from './periodSummary'
 
 /**
  * A short, human display name for a workout `type`. Every strength/core variant
@@ -47,18 +48,6 @@ export interface CalendarDayLabel {
   name: string
   /** The day's TOTAL duration ("44m" / "1h 45m"). */
   duration: string
-}
-
-/** Does `type` look like a gym workout (strength/core)? Mirrors lib/periodSummary.ts's isGymType. */
-function isGymType(type: string | null | undefined): boolean {
-  return !!type && /strength|core/.test(type.toLowerCase())
-}
-
-/** Does `type` look like cardio (anything but gym/other)? Mirrors lib/periodSummary.ts's isCardioType. */
-function isCardioType(type: string | null | undefined): boolean {
-  if (!type) return false
-  const t = type.toLowerCase()
-  return !/strength|core|other/.test(t)
 }
 
 /**

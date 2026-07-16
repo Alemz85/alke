@@ -1,8 +1,12 @@
 // Formatting, date, and small-stats helpers scoped to the Recovery view.
+// fmtNum/fmtDelta/EM_DASH are pure format-only helpers that live in
+// lib/format.ts (THE formatting module — see its header comment) and are
+// re-exported here so existing call sites (Recovery view + its tests) keep
+// compiling unchanged.
 import type { DailyMetric } from '@shared/types'
 import { scaleLinear } from 'd3-scale'
-
-const EM_DASH = '—'
+import { EM_DASH, fmtDelta, fmtNum } from '../lib/format'
+import { addDays, todayYMD, ymdKey } from '../hooks/sessionsDate'
 
 export function chartAxis(
   values: number[],
@@ -46,19 +50,6 @@ export function clockGoalMinutesOnSleepAxis(minutesAfterMidnight: number): numbe
 export function fmtSleepAxisTime(minutes: number): string {
   const normalized = ((Math.round(minutes) % (24 * 60)) + 24 * 60) % (24 * 60)
   return `${Math.floor(normalized / 60).toString().padStart(2, '0')}:${(normalized % 60).toString().padStart(2, '0')}`
-}
-
-/** Formats a number with fixed decimals, or an em-dash if null/undefined/NaN. */
-export function fmtNum(value: number | null | undefined, decimals = 1): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH
-  return value.toFixed(decimals)
-}
-
-/** Formats a signed delta, e.g. "+2.3" / "-1.1", or an em-dash. */
-export function fmtDelta(value: number | null | undefined, decimals = 1): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH
-  const sign = value > 0 ? '+' : value < 0 ? '' : '±'
-  return `${sign}${value.toFixed(decimals)}`
 }
 
 /** Formats minutes as "7h 31m" / "42m", or an em-dash. */
@@ -119,10 +110,18 @@ export function fmtClockTime(
   }).format(d)
 }
 
-/** Number of whole days between a "YYYY-MM-DD" date string and today (UTC-anchored). */
-export function daysAgo(dateStr: string): number {
+/**
+ * Number of whole days between a "YYYY-MM-DD" date string and "today". Both
+ * ends are plain date-key math (no time component), but "today" itself must
+ * be resolved in the user's configured IANA timezone — daily_metrics rows
+ * are keyed by the user's local calendar date, so anchoring "today" to UTC
+ * instead skewed this by a day for part of the day in every timezone west of
+ * UTC (and every timezone at all, near midnight). `timezone` defaults to
+ * undefined (→ UTC via toZonedYMD's fallback) for callers that don't have it.
+ */
+export function daysAgo(dateStr: string, timezone?: string | null): number {
   const then = new Date(`${dateStr}T00:00:00Z`).getTime()
-  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()
+  const today = new Date(`${ymdKey(todayYMD(timezone))}T00:00:00Z`).getTime()
   return Math.round((today - then) / 86_400_000)
 }
 
@@ -131,10 +130,23 @@ export function sortByDate(rows: DailyMetric[]): DailyMetric[] {
   return [...rows].sort((a, b) => a.date.localeCompare(b.date))
 }
 
-/** Slices a date-sorted-ascending array of daily metrics to the last N days (inclusive window ending today). */
-export function sliceLastNDays(rows: DailyMetric[], days: number): DailyMetric[] {
-  const toDate = new Date().toISOString().slice(0, 10)
-  const fromDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+/**
+ * Slices a date-sorted-ascending array of daily metrics to the last N days
+ * (inclusive window ending "today"). "Today" and the N-days-back boundary
+ * are both resolved via the user's configured timezone (see daysAgo above
+ * for why this must not be UTC) — `timezone` defaults to undefined (UTC)
+ * for callers that don't have it.
+ */
+export function sliceLastNDays(
+  rows: DailyMetric[],
+  days: number,
+  timezone?: string | null
+): DailyMetric[] {
+  const today = todayYMD(timezone)
+  const toDate = ymdKey(today)
+  // -(days - 1): the window is `days` calendar days ENDING today — a "30d"
+  // slice is today plus the 29 before it, not 31 dates (old off-by-one).
+  const fromDate = ymdKey(addDays(today, -(days - 1)))
   return rows.filter((r) => r.date >= fromDate && r.date <= toDate)
 }
 
@@ -179,12 +191,21 @@ export function rollingAverage(
 ): Map<string, number> {
   const out = new Map<string, number>()
   for (let i = 0; i < rows.length; i++) {
-    const windowStart = Math.max(0, i - windowDays + 1)
-    const windowRows = rows.slice(windowStart, i + 1)
+    // Window by CALENDAR distance, not row count — with gaps in
+    // daily_metrics a rows-based slice silently averaged a longer period.
+    const minKey = shiftDateKey(rows[i].date, -(windowDays - 1))
+    const windowRows: DailyMetric[] = []
+    for (let j = i; j >= 0 && rows[j].date >= minKey; j--) windowRows.push(rows[j])
     const avg = mean(windowRows.map((r) => r[field] as number | null))
     if (avg !== null) out.set(rows[i].date, avg)
   }
   return out
+}
+
+/** Shift a 'YYYY-MM-DD' key by n days (UTC-safe pure string math). */
+function shiftDateKey(key: string, n: number): string {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
 }
 
 /**
@@ -375,4 +396,4 @@ export function fmtBucketLabel(
   return fmtLocalDate(dateStr, timezone)
 }
 
-export { EM_DASH }
+export { EM_DASH, fmtDelta, fmtNum }

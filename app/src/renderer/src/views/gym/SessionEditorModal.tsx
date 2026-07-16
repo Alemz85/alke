@@ -367,8 +367,14 @@ export function SessionEditorModal({
   const [error, setError] = useState<string | null>(null)
 
   const addMutation = useAddGymSession()
-  const updateMutation = useUpdateGymSession()
-  const deleteMutation = useDeleteGymSession()
+  // useUpdateGymSession/useDeleteGymSession take the session id up front so
+  // their mutation scope can be keyed per-session (see useGymData.ts) — this
+  // modal only ever edits/deletes existingSession, so the id is stable for
+  // its lifetime. The sentinel covers new-session mode, where these two
+  // mutations are simply never invoked (handleDelete/edit branch of
+  // handleSave both guard on existingSession first).
+  const updateMutation = useUpdateGymSession(existingSession?.id ?? 'new')
+  const deleteMutation = useDeleteGymSession(existingSession?.id ?? 'new')
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {

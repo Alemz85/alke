@@ -15,7 +15,8 @@ export interface Workout {
   avg_hr: number | null
   max_hr: number | null
   source: string | null
-  raw: Record<string, unknown> | null
+  // `raw` (the ingest archive column) is intentionally NOT projected here —
+  // nothing in the app reads it; db.ts's WORKOUT_COLUMNS omits it too.
   // Joined from computed_workout (left join — may be null if not yet computed)
   computed: ComputedWorkout | null
 }
@@ -96,7 +97,8 @@ export interface DailyMetric {
   active_energy_kcal: number | null
   wrist_temp_deviation_c: number | null
   weight_kg: number | null
-  state_of_mind: Record<string, unknown> | null
+  walking_running_distance_m: number | null
+  flights_climbed: number | null
 }
 
 export interface ComputedDaily {
@@ -561,12 +563,11 @@ export interface Zone2Fitness {
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
   getWorkoutDetail(id: string): Promise<WorkoutDetail>
-  getWorkoutPlaces(workoutIds: string[]): Promise<WorkoutPlace[]>
   getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]>
   getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
   getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
   getUserConfig(): Promise<UserConfig>
-  updateUserConfig(patch: UserConfigPatch): Promise<UserConfig>
+  updateUserConfig(patch: UserConfigPatch): Promise<QueueableWriteResult<UserConfig>>
   getTodayFlags(): Promise<Flag[]>
   getInjuries(): Promise<Injury[]>
   getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]>
@@ -588,7 +589,7 @@ export interface HealthApi {
   getInjuryPlanChecks(injuryId: string, fromDate: string): Promise<PlanItemCheck[]>
   setPlanItemCheck(itemId: string, doneDate: string, done: boolean): Promise<QueueableWriteResult<void>>
   getExercises(): Promise<Exercise[]>
-  addExercise(name: string, bodyPart: GymBodyPart | null): Promise<Exercise>
+  addExercise(name: string, bodyPart: GymBodyPart | null): Promise<QueueableWriteResult<Exercise>>
   getGymTemplates(): Promise<GymTemplate[]>
   addGymTemplate(template: NewGymTemplate): Promise<QueueableWriteResult<GymTemplate>>
   updateGymTemplate(id: string, patch: GymTemplatePatch): Promise<QueueableWriteResult<GymTemplate>>
@@ -611,11 +612,11 @@ export interface HealthApi {
   deleteGymSession(id: string): Promise<QueueableWriteResult<void>>
   getGoals(): Promise<Goal[]>
   getGoalProgress(goalId: string): Promise<GoalProgressPoint[]>
-  addGoal(goal: NewGoal): Promise<Goal>
-  updateGoal(id: string, patch: GoalPatch): Promise<Goal>
+  addGoal(goal: NewGoal): Promise<QueueableWriteResult<Goal>>
+  updateGoal(id: string, patch: GoalPatch): Promise<QueueableWriteResult<Goal>>
   // Permanently delete a goal and its metric/progress (cascade). Distinct from
   // abandoning, which keeps it archived.
-  deleteGoal(id: string): Promise<void>
+  deleteGoal(id: string): Promise<QueueableWriteResult<void>>
   // Spawns a headless chat-agent run (cwd chatctx/) that designs the goal's
   // progress metric via goals.py; resolves when the run exits. Long-running.
   buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }>
@@ -659,7 +660,6 @@ export interface HealthApi {
 export const IPC_CHANNELS = {
   getWorkouts: 'db:getWorkouts',
   getWorkoutDetail: 'db:getWorkoutDetail',
-  getWorkoutPlaces: 'db:getWorkoutPlaces',
   getSwimSets: 'db:getSwimSets',
   getDailyMetrics: 'db:getDailyMetrics',
   getComputedDaily: 'db:getComputedDaily',

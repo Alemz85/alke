@@ -3,14 +3,13 @@ import type { UserConfig, Workout } from '@shared/types'
 import {
   countSessionsForGoal,
   EM_DASH,
-  endOfIsoWeek,
   fmtDelta,
   fmtDistance,
   fmtDuration,
   fmtNum,
   humanizeWorkoutType,
-  parseWeeklyMinSessions,
-  startOfIsoWeek
+  isoWeekWindowFor,
+  parseWeeklyMinSessions
 } from '../dashboardUtils'
 
 function makeWorkout(overrides: Partial<Workout> & { type: string }): Workout {
@@ -26,7 +25,6 @@ function makeWorkout(overrides: Partial<Workout> & { type: string }): Workout {
     avg_hr: null,
     max_hr: null,
     source: null,
-    raw: null,
     computed: null
   }
 }
@@ -82,28 +80,35 @@ describe('parseWeeklyMinSessions', () => {
   })
 })
 
-describe('startOfIsoWeek / endOfIsoWeek', () => {
-  it('rolls a Wednesday back to the preceding Monday at local midnight', () => {
-    const wed = new Date(2026, 0, 14, 15, 30) // Wed 14 Jan 2026, 15:30 local
-    const start = startOfIsoWeek(wed)
-    expect(start.getFullYear()).toBe(2026)
-    expect(start.getMonth()).toBe(0)
-    expect(start.getDate()).toBe(12) // Monday
-    expect(start.getHours()).toBe(0)
-    expect(start.getMinutes()).toBe(0)
+describe('isoWeekWindowFor', () => {
+  // Explicit YMD inputs throughout — no `new Date()`/machine-local getters,
+  // so these assert the same thing regardless of the machine's timezone.
+  it('rolls a Wednesday back to the preceding Monday', () => {
+    const wed = { year: 2026, month: 1, day: 14 } // Wed 14 Jan 2026
+    const window = isoWeekWindowFor(wed)
+    expect(window.startKey).toBe('2026-01-12') // Monday
+    expect(window.startIso).toBe('2026-01-12T00:00:00.000Z')
   })
 
   it('treats Sunday as the end of the ISO week, rolling back 6 days to Monday', () => {
-    const sun = new Date(2026, 0, 18, 10, 0) // Sun 18 Jan 2026
-    const start = startOfIsoWeek(sun)
-    expect(start.getDate()).toBe(12) // Monday of the same week
+    const sun = { year: 2026, month: 1, day: 18 } // Sun 18 Jan 2026
+    const window = isoWeekWindowFor(sun)
+    expect(window.startKey).toBe('2026-01-12') // Monday of the same week
   })
 
-  it('endOfIsoWeek is exactly 7 days after startOfIsoWeek', () => {
-    const anyDay = new Date(2026, 0, 14, 15, 30)
-    const start = startOfIsoWeek(anyDay)
-    const end = endOfIsoWeek(anyDay)
-    expect(end.getTime() - start.getTime()).toBe(7 * 24 * 60 * 60 * 1000)
+  it('endKey is exactly 7 days after startKey', () => {
+    const anyDay = { year: 2026, month: 1, day: 14 }
+    const window = isoWeekWindowFor(anyDay)
+    expect(window.startKey).toBe('2026-01-12')
+    expect(window.endKey).toBe('2026-01-19')
+    expect(Date.parse(window.endIso) - Date.parse(window.startIso)).toBe(7 * 24 * 60 * 60 * 1000)
+  })
+
+  it('handles a month/year boundary (window spans Dec into Jan)', () => {
+    const thu = { year: 2026, month: 1, day: 1 } // Thu 1 Jan 2026 — week starts Mon 29 Dec 2025
+    const window = isoWeekWindowFor(thu)
+    expect(window.startKey).toBe('2025-12-29')
+    expect(window.endKey).toBe('2026-01-05')
   })
 })
 

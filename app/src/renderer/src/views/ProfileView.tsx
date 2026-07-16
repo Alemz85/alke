@@ -28,7 +28,7 @@ import {
   timeProgress,
   type Achievement
 } from '../lib/profileStats'
-import { applyGoalPatch, replaceById } from '../lib/optimisticEntities'
+import { applyGoalPatch, isQueuedWriteReceipt, replaceById } from '../lib/optimisticEntities'
 import './ProfileView.css'
 
 const ABOUT_ME_MAX = 5000
@@ -484,6 +484,9 @@ function useOptimisticGoalUpdate(goalId: string, errorMessage: string) {
       return { previous }
     },
     onSuccess: (saved) => {
+      // Queued (offline) write: the optimistic patch from onMutate stands in
+      // until the queue flushes — there is no server row to reconcile yet.
+      if (isQueuedWriteReceipt(saved)) return
       queryClient.setQueryData<Goal[]>(['goals'], (goals = []) =>
         replaceById(goals, goalId, saved)
       )
@@ -733,8 +736,11 @@ function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ['goals'] })
       // The agent activates once the card is done being compiled: fire the
-      // metric build immediately after creation.
-      buildMutation.mutate(created.id)
+      // metric build immediately after creation. Skipped for a queued
+      // (offline) create — there's no goal id yet and the headless build
+      // needs connectivity anyway; the metric can be built from the card
+      // once back online.
+      if (!isQueuedWriteReceipt(created)) buildMutation.mutate(created.id)
       onClose()
     }
   })

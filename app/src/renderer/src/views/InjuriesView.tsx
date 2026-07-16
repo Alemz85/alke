@@ -1086,6 +1086,7 @@ function checkableColumns(plan: RecoveryPlanItem[]): {
 }
 
 function ThisWeekTable({
+  injuryId,
   plan,
   checks,
   todayYMD,
@@ -1093,6 +1094,7 @@ function ThisWeekTable({
   readOnly,
   planStartedAt
 }: {
+  injuryId: string
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
   todayYMD: string
@@ -1105,7 +1107,18 @@ function ThisWeekTable({
   const checkMutation = useMutation({
     mutationFn: ({ itemId, dateYMD, done }: { itemId: string; dateYMD: string; done: boolean }) =>
       window.api.setPlanItemCheck(itemId, dateYMD, done),
-    scope: { id: 'injury-plan-checks' },
+    // Scoped per-injury (not a single flat string): mutations sharing a
+    // scope run serially, one at a time. A flat 'injury-plan-checks' scope
+    // meant toggling a check for injury A queued behind an in-flight toggle
+    // for unrelated injury B — worse, `useMutation`'s scope is fixed at
+    // construction time, so it can't vary per (itemId, dateYMD) click the
+    // way the finding's ideal key would; injuryId is the finest key stable
+    // across this table's lifetime (one ThisWeekTable per injury's full
+    // view), and different items/dates within the SAME injury toggling in
+    // quick succession is an acceptable, rare serialization cost — the same
+    // tradeoff useUpdateGymSession/useAddProtein make at their own stable
+    // per-render key.
+    scope: { id: `injury-plan-checks:${injuryId}` },
     meta: { errorMessage: 'Couldn’t update the recovery check. The checkbox was restored.' },
     onMutate: async ({ itemId, dateYMD, done }) => {
       await queryClient.cancelQueries({ queryKey: ['injuries', 'checks'] })
@@ -1127,6 +1140,12 @@ function ThisWeekTable({
     onSuccess: (result) => {
       if (!isQueuedWriteReceipt(result)) {
         void queryClient.invalidateQueries({ queryKey: ['injuries'] })
+        // The Gym tab's recovery-plan bundles (useRecoveryPlanBundles in
+        // useGymData.ts) read the view-neutral ['health', 'injuries'] /
+        // ['health', 'injuryPlan', id] families, not this view's ['injuries', ...]
+        // keys — without this, a plan-check toggled here never refreshed the
+        // Gym tab's copy of the same plan.
+        void queryClient.invalidateQueries({ queryKey: ['health', 'injuries'] })
       }
     }
   })
@@ -1859,6 +1878,7 @@ function InjuryFullView({
           <section className="injury-section">
             <SectionTitle eyebrow="Current" title="This week" />
             <ThisWeekTable
+              injuryId={injury.id}
               plan={plan}
               checks={checks}
               todayYMD={todayYMD}

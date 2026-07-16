@@ -21,7 +21,6 @@ function makeWorkout(overrides: Partial<Workout> & { start_at: string }): Workou
     avg_hr: null,
     max_hr: null,
     source: null,
-    raw: null,
     computed: null
   }
 }
