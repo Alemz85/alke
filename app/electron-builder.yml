@@ -76,12 +76,15 @@ extraResources:
   # python3 to already have metrics/requirements.txt installed (true on the
   # owner's machine); metricsJob.ts's spawn-error handling reports a clear
   # "pip install -r metrics/requirements.txt" hint if it isn't.
+  # The job needs only the .py sources + requirements.txt (~150 KB) — allowlist
+  # them instead of blocklisting, so local dev debris (a 316 MB .venv once
+  # snuck in and tripled the .app; .DS_Store, caches) can never bloat the
+  # bundle again.
   - from: ../metrics
     to: metrics
     filter:
-      - '**/*'
-      - '!**/__pycache__{,/**/*}'
-      - '!tests{,/**/*}'
+      - '*.py'
+      - 'requirements.txt'
 mac:
   icon: build/icon.icns
   identity: null
