@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
-import { invalidateWorkoutViews } from '../useGymData'
+import { invalidateWorkoutViews, resolveGymSessionLookupWindow } from '../useGymData'
 
 // invalidateWorkoutViews is the fix for the bug where logging/editing/deleting
 // a gym session (mutations that only ever patched ['health','gym','sessions',...]
@@ -111,5 +111,33 @@ describe('invalidateWorkoutViews', () => {
     expect(queryClient.getQueryCache().find({ queryKey: ['health', 'exercises'] })?.isStale()).toBe(
       false
     )
+  })
+})
+
+// resolveGymSessionLookupWindow backs useGymSessionForWorkout — the
+// DayDetailDrawer's self-sufficient gym-log lookup (opening a strength day
+// from Dashboard/Sessions now shows the same workout log the Gym tab shows).
+// Extracted as a pure function because the hook itself calls useQuery and
+// can't run outside a QueryClientProvider/DOM environment; this covers the
+// windowing math directly.
+describe('resolveGymSessionLookupWindow', () => {
+  it('returns a window padded a day either side of the workout start when enabled', () => {
+    const result = resolveGymSessionLookupWindow('2026-07-12T09:00:00.000Z', true)
+    expect(result).toEqual({
+      fromIso: '2026-07-11T09:00:00.000Z',
+      toIso: '2026-07-13T09:00:00.000Z'
+    })
+  })
+
+  it('returns null when disabled (e.g. a non-strength workout)', () => {
+    expect(resolveGymSessionLookupWindow('2026-07-12T09:00:00.000Z', false)).toBeNull()
+  })
+
+  it('returns null for a null start time even when enabled', () => {
+    expect(resolveGymSessionLookupWindow(null, true)).toBeNull()
+  })
+
+  it('returns null for an unparseable start time', () => {
+    expect(resolveGymSessionLookupWindow('not-a-date', true)).toBeNull()
   })
 })

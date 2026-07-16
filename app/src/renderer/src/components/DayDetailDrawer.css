@@ -397,3 +397,223 @@
   font-size: var(--type-caption-size);
   color: var(--color-text-tertiary);
 }
+
+/* ── Gym log section (read-only) — visual parity with the Gym tab's
+   GymSessionReadView (views/GymView.css .gym-log-*), reimplemented with its
+   own class names so this component doesn't depend on GymView.css being
+   loaded (Dashboard/Sessions never import it). No "Edit log" button: see the
+   rationale on GymLogSection in DayDetailDrawer.tsx. */
+.day-drawer-gymlog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.day-drawer-gymlog-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.day-drawer-gymlog-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.day-drawer-gymlog-title {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: 500;
+  line-height: var(--type-heading-sm-line-height);
+}
+
+.day-drawer-gymlog-count {
+  flex-shrink: 0;
+  padding-top: 2px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+}
+
+.day-drawer-gymlog-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.day-drawer-gymlog-chip {
+  border-radius: var(--radius-full);
+  padding: 4px 11px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 400;
+}
+
+.day-drawer-gymlog-chip--template {
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+}
+
+.day-drawer-gymlog-exercises {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.day-drawer-gymlog-muscle-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.day-drawer-gymlog-muscle-group-title {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.day-drawer-gymlog-muscle-group-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.day-drawer-gymlog-exercise {
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.day-drawer-gymlog-exercise:last-child {
+  border-bottom: none;
+}
+
+.day-drawer-gymlog-exercise-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-sm);
+  width: calc(100% + 24px);
+  margin-left: -12px;
+  padding: 11px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.day-drawer-gymlog-exercise-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.day-drawer-gymlog-exercise-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.day-drawer-gymlog-exercise-name {
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-heading-sm-size);
+  font-weight: 600;
+  line-height: var(--type-heading-sm-line-height);
+}
+
+.day-drawer-gymlog-exercise-summary {
+  color: var(--color-zone1);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  white-space: nowrap;
+}
+
+.day-drawer-gymlog-exercise-chevron {
+  color: var(--color-text-secondary);
+  transition: transform var(--motion-hover);
+}
+
+.day-drawer-gymlog-exercise--expanded .day-drawer-gymlog-exercise-chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-drawer-gymlog-exercise-chevron {
+    transition: none;
+  }
+}
+
+.day-drawer-gymlog-set-table {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-xxs) 0 var(--space-xs);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.day-drawer-gymlog-set-row {
+  display: grid;
+  grid-template-columns: 44px 0.8fr 1fr 1.2fr;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--color-divider-soft);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+}
+
+.day-drawer-gymlog-set-row:last-child {
+  border-bottom: none;
+}
+
+.day-drawer-gymlog-set-row--head {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  text-transform: uppercase;
+}
+
+.day-drawer-gymlog-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.day-drawer-gymlog-notes-label {
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+}
+
+.day-drawer-gymlog-notes p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  letter-spacing: var(--type-body-md-letter-spacing);
+}
+
+@media (max-width: 760px) {
+  .day-drawer-gymlog-set-row {
+    grid-template-columns: 32px 0.7fr 0.9fr 1fr;
+  }
+}

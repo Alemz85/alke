@@ -256,6 +256,67 @@ export function useGymSessions(fromIso: string, toIso: string) {
   })
 }
 
+// A day either side of the workout start is generous slack for timezone-
+// boundary edge cases (a late-evening session logged just past local
+// midnight) while staying a cheap, tightly-bounded read.
+const GYM_SESSION_LOOKUP_PAD_MS = 24 * 60 * 60 * 1000
+
+export interface GymSessionLookupWindow {
+  fromIso: string
+  toIso: string
+}
+
+/**
+ * Pure: the [fromIso, toIso] window useGymSessionForWorkout queries to find
+ * one workout's logged session, or null when there isn't enough information
+ * yet (gated off, no workout, or an unparseable start time). Exported and
+ * tested standalone since the hook itself calls useQuery and can't run
+ * outside a QueryClientProvider/DOM environment.
+ */
+export function resolveGymSessionLookupWindow(
+  startAtIso: string | null,
+  enabled: boolean
+): GymSessionLookupWindow | null {
+  const startMs = startAtIso ? Date.parse(startAtIso) : NaN
+  if (!enabled || Number.isNaN(startMs)) return null
+  return {
+    fromIso: new Date(startMs - GYM_SESSION_LOOKUP_PAD_MS).toISOString(),
+    toIso: new Date(startMs + GYM_SESSION_LOOKUP_PAD_MS).toISOString()
+  }
+}
+
+/**
+ * The logged GymSession for one strength workout, if any — self-sufficient
+ * lookup for callers that only know a single workout (e.g. DayDetailDrawer,
+ * which shows this outside the Gym tab too). Reuses useGymSessions' cache
+ * entry when another caller already fetched the same window (e.g. GymView),
+ * and is gated by `enabled` so it never fires for non-strength workouts or
+ * while the caller isn't ready (mirrors useWorkoutDetail's `enabled: id !== null`).
+ */
+export function useGymSessionForWorkout(
+  workoutId: string | null,
+  startAtIso: string | null,
+  enabled: boolean
+): { data: GymSession | null; isLoading: boolean } {
+  const lookupWindow = resolveGymSessionLookupWindow(startAtIso, enabled && workoutId !== null)
+  const fromIso = lookupWindow?.fromIso ?? ''
+  const toIso = lookupWindow?.toIso ?? ''
+
+  const query = useQuery<GymSession[]>({
+    queryKey: ['health', 'gym', 'sessions', fromIso, toIso],
+    queryFn: () => window.api.getGymSessions(fromIso, toIso),
+    enabled: lookupWindow !== null,
+    staleTime: 60_000
+  })
+
+  const data =
+    lookupWindow !== null
+      ? (query.data ?? []).find((session) => session.workout_id === workoutId) ?? null
+      : null
+
+  return { data, isLoading: lookupWindow !== null && query.isLoading }
+}
+
 export function useAddGymSession() {
   const queryClient = useQueryClient()
   return useMutation({

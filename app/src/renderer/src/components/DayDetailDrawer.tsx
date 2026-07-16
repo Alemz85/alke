@@ -1,8 +1,8 @@
-import { useEffect, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Heart, X } from 'lucide-react'
+import { ChevronDown, Heart, X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
-import type { SwimSet, Workout, WorkoutHrSample } from '@shared/types'
+import type { GymSession, SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
 import { ModalityIcon } from './ModalityIcon'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
@@ -10,8 +10,17 @@ import { RouteMap } from './RouteMap'
 import { formatLocalTime } from '../hooks/sessionsDate'
 import { formatDuration } from '../hooks/sessionsCompute'
 import { useWorkoutDetail } from '../hooks/useSessionsData'
+import { useExercises, useGymSessionForWorkout, useGymTemplates } from '../hooks/useGymData'
 import { CHART, chartAxisTickSm } from '../lib/chartTheme'
 import { EM_DASH, formatClock, formatPace100 } from '../lib/format'
+import {
+  displayBodyPart,
+  formatExerciseSetSummary,
+  groupExerciseBlocksByBodyPart,
+  groupSetsIntoBlocks,
+  sessionBodyParts,
+  type ExerciseBlock
+} from '../lib/gymLog'
 import { isGymType } from '../lib/periodSummary'
 import {
   activeTimePercent,
@@ -125,6 +134,11 @@ function SessionCard({
   const distanceKm = workout.distance_m !== null ? (workout.distance_m / 1000).toFixed(2) : null
   const isStrength = isGymType(workout.type)
 
+  // The Gym tab's logged workout details (exercises/sets/notes) — self-sufficient
+  // lookup so this section renders identically from Dashboard/Sessions/Gym,
+  // not just when opened from the Gym tab. Gated to strength workouts only.
+  const gymSessionQuery = useGymSessionForWorkout(workout.id, workout.start_at, isStrength)
+
   const hrSamples = detailQuery.data?.hrSamples ?? []
   const hrChartData = hrSamples.map((s) => ({
     min: Math.round((s.offset_s / 60) * 10) / 10,
@@ -236,6 +250,10 @@ function SessionCard({
         )}
       </div>
 
+      {isStrength && (
+        <GymLogSection isLoading={gymSessionQuery.isLoading} session={gymSessionQuery.data} />
+      )}
+
       <RouteMap route={detailQuery.data?.route ?? []} geo={detailQuery.data?.geo ?? null} />
 
       {!isStrength && (
@@ -295,6 +313,216 @@ function SessionCard({
 
       {swimSets.length > 0 && (
         <SprintsSection sets={swimSets} currentWorkoutId={workout.id} />
+      )}
+    </div>
+  )
+}
+
+/** One exercise's set table, collapsed by default — mirrors the Gym tab's
+ *  ExerciseDisclosure, minus the edit affordance (this view is read-only). */
+function GymLogExerciseDisclosure({
+  block,
+  blockKey,
+  muscleGroup,
+  expanded,
+  onToggle
+}: {
+  block: ExerciseBlock
+  blockKey: string
+  muscleGroup: string | null
+  expanded: boolean
+  onToggle: () => void
+}): ReactElement {
+  return (
+    <div
+      className={
+        expanded
+          ? 'day-drawer-gymlog-exercise day-drawer-gymlog-exercise--expanded'
+          : 'day-drawer-gymlog-exercise'
+      }
+    >
+      <button
+        type="button"
+        className="day-drawer-gymlog-exercise-toggle"
+        aria-expanded={expanded}
+        aria-controls={`day-drawer-gymlog-sets-${blockKey}`}
+        onClick={onToggle}
+      >
+        <span className="day-drawer-gymlog-exercise-name">{block.exerciseName}</span>
+        <span className="day-drawer-gymlog-exercise-summary tabular-nums">
+          {formatExerciseSetSummary(block.sets)}
+        </span>
+        <ChevronDown
+          className="day-drawer-gymlog-exercise-chevron"
+          size={16}
+          strokeWidth={1.75}
+          aria-hidden="true"
+        />
+      </button>
+      {expanded && (
+        <div id={`day-drawer-gymlog-sets-${blockKey}`} className="day-drawer-gymlog-set-table">
+          <div className="day-drawer-gymlog-set-row day-drawer-gymlog-set-row--head">
+            <span>Set</span>
+            <span>Reps</span>
+            <span>Load</span>
+            <span>Muscle group</span>
+          </div>
+          {block.sets.map((set, index) => (
+            <div key={set.id} className="day-drawer-gymlog-set-row">
+              <span className="tabular-nums">{index + 1}</span>
+              <span className="tabular-nums">{set.reps ?? EM_DASH}</span>
+              <span className="tabular-nums">
+                {set.weight_kg == null ? 'BW' : `${set.weight_kg} kg`}
+              </span>
+              <span>{muscleGroup ? displayBodyPart(muscleGroup) : EM_DASH}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Read-only rendering of a logged strength workout's exercises/sets/notes —
+ * the same section the Gym tab shows (GymWorkoutPanel's GymSessionReadView),
+ * so opening a strength day from Dashboard or Sessions is no longer a
+ * stats-only dead end. No "Edit log" button here: SessionEditorModal pulls in
+ * the whole Gym tab's template/exercise-picker machinery, which isn't worth
+ * dragging into Dashboard/Sessions — editing stays a Gym-tab action, this is
+ * a viewer. `exercisesById`/`templateNameById` are the same cheap, shared,
+ * view-neutral queries the Gym tab already uses (staleTime 60s), so mounting
+ * them here for the first time (e.g. opening straight into Dashboard) costs
+ * one extra pair of small fetches, not a duplicate of Gym-tab state.
+ */
+function GymLogSection({
+  session,
+  isLoading
+}: {
+  session: GymSession | null
+  isLoading: boolean
+}): ReactElement | null {
+  const exercisesQuery = useExercises()
+  const templatesQuery = useGymTemplates()
+  const exercisesById = useMemo(
+    () => new Map((exercisesQuery.data ?? []).map((e) => [e.id, e] as const)),
+    [exercisesQuery.data]
+  )
+  const templateNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const t of templatesQuery.data ?? []) m.set(t.id, t.name)
+    return m
+  }, [templatesQuery.data])
+
+  const blocks = useMemo(() => (session ? groupSetsIntoBlocks(session.sets) : []), [session])
+  const exerciseGroups = useMemo(
+    () => groupExerciseBlocksByBodyPart(blocks, exercisesById),
+    [blocks, exercisesById]
+  )
+  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(() => new Set())
+
+  if (isLoading) {
+    return (
+      <div className="day-drawer-gymlog">
+        <div className="day-drawer-section-label">Workout log</div>
+        <div className="day-drawer-zones-empty">
+          <span className="day-drawer-empty-text">Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="day-drawer-gymlog">
+        <div className="day-drawer-section-label">Workout log</div>
+        <div className="day-drawer-zones-empty">
+          <span className="day-drawer-empty-text">
+            Not logged yet — log this session from the Gym tab.
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const bodyParts = sessionBodyParts(session, exercisesById)
+  const appliedTemplates = session.template_ids.flatMap((id) => {
+    const name = templateNameById.get(id)
+    return name ? [name] : []
+  })
+
+  return (
+    <div className="day-drawer-gymlog">
+      <div className="day-drawer-gymlog-toolbar">
+        <div className="day-drawer-gymlog-heading">
+          <span className="day-drawer-section-label">Workout log</span>
+          <h4 className="day-drawer-gymlog-title">
+            {session.title ??
+              (session.template_ids[0] ? templateNameById.get(session.template_ids[0]) : null) ??
+              'Gym session'}
+          </h4>
+        </div>
+        <span className="day-drawer-gymlog-count tabular-nums">
+          {session.sets.filter((set) => !set.is_warmup).length} working sets
+        </span>
+      </div>
+
+      {(bodyParts.length > 0 || appliedTemplates.length > 0) && (
+        <div className="day-drawer-gymlog-chips">
+          {bodyParts.map((part) => (
+            <span key={part} className="day-drawer-gymlog-chip">
+              {displayBodyPart(part)}
+            </span>
+          ))}
+          {appliedTemplates.map((name) => (
+            <span key={name} className="day-drawer-gymlog-chip day-drawer-gymlog-chip--template">
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {blocks.length === 0 ? (
+        <p className="day-drawer-empty-text">Quick log only. No exercise sets were recorded.</p>
+      ) : (
+        <div className="day-drawer-gymlog-exercises">
+          {exerciseGroups.map((group) => (
+            <section key={group.bodyPart} className="day-drawer-gymlog-muscle-group">
+              <h5 className="day-drawer-gymlog-muscle-group-title">
+                {displayBodyPart(group.bodyPart)}
+              </h5>
+              <div className="day-drawer-gymlog-muscle-group-list">
+                {group.blocks.map((block, blockIndex) => {
+                  const blockKey = `${group.bodyPart}-${block.exerciseId}-${blockIndex}`
+                  return (
+                    <GymLogExerciseDisclosure
+                      key={blockKey}
+                      block={block}
+                      blockKey={blockKey}
+                      muscleGroup={group.bodyPart === 'other' ? null : group.bodyPart}
+                      expanded={expandedBlocks.has(blockKey)}
+                      onToggle={() =>
+                        setExpandedBlocks((current) => {
+                          const next = new Set(current)
+                          if (next.has(blockKey)) next.delete(blockKey)
+                          else next.add(blockKey)
+                          return next
+                        })
+                      }
+                    />
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      {session.notes && (
+        <div className="day-drawer-gymlog-notes">
+          <span className="day-drawer-gymlog-notes-label">Notes</span>
+          <p>{session.notes}</p>
+        </div>
       )}
     </div>
   )

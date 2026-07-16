@@ -18,32 +18,24 @@
   margin: 0;
 }
 
+/* Compact squares (user request): self-sizing columns instead of thirds of
+   the view width — at ~220-280px per card the content fills the tile instead
+   of floating in a wide slab, and wide windows get more cards per row. */
 .goal-strip-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--space-md);
-}
-
-@media (max-width: 1099px) {
-  .goal-strip-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 640px) {
-  .goal-strip-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .goal-strip-card {
   background: var(--color-surface-elevated);
   border: none;
   border-radius: var(--radius-lg);
-  padding: var(--space-lg);
+  padding: var(--space-md);
+  min-height: 148px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   cursor: pointer;
   text-align: left;
   font: inherit;
@@ -137,6 +129,8 @@
   border-radius: var(--radius-full);
   background: var(--color-divider-soft);
   overflow: hidden;
+  /* Pin to the tile foot so short cards keep a consistent silhouette. */
+  margin-top: auto;
 }
 
 .goal-strip-bar-fill {
