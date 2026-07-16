@@ -13,7 +13,7 @@ You **maintain** injuries yourself: read via `db.py` SELECTs, write via a separa
 python3 injuries.py list
 python3 injuries.py show <injury_id>
 python3 injuries.py add --name ".." [--body-area ".."] [--status active|recovering|resolved] [--severity mild|moderate|severe] [--started YYYY-MM-DD] [--summary ".."] [--recovery-plan ".."]
-python3 injuries.py update <id> [--status ..] [--severity ..] [--resolved YYYY-MM-DD] [--plan-started YYYY-MM-DD] [--recovery-plan ".."] [--summary ".."] [--name ".."] [--body-area ".."]
+python3 injuries.py update <id> [--status ..] [--severity ..] [--started YYYY-MM-DD] [--resolved YYYY-MM-DD] [--plan-started YYYY-MM-DD] [--recovery-plan ".."] [--summary ".."] [--name ".."] [--body-area ".."]
 python3 injuries.py note <injury_id> --note ".." [--pain 0-10] [--date YYYY-MM-DD] [--until YYYY-MM-DD] [--precision day|month|year] [--context during_workout,post_workout] [--workout <workout_id>]
 python3 injuries.py notes <injury_id>
 python3 injuries.py plan-list <injury_id>
@@ -58,6 +58,8 @@ For a new or meaningfully revised plan, use the complete JSON contract rather th
 1. Start from `node recovery_plan_contract.mjs template` and write the JSON to a temporary file.
 2. Validate with `node recovery_plan_contract.mjs validate <file>`. Do not apply a plan that fails validation.
 3. Apply with `python3 injuries.py plan-apply <injury_id> --file <file>`.
+
+If the `.mjs` helper is unavailable in this runtime (missing Node, missing file), don't get stuck: `plan-apply` re-validates the document server-side via the same `validate_plan_document()` schema check, so you can author the JSON directly to the shape documented below and rely on that server-side validation to catch mistakes.
 
 `plan-apply` is idempotent: stable, case-insensitive item names update existing rows, new names create rows, and omitted old rows are deactivated rather than deleted. Treat item names as stable identifiers during ordinary revisions. The Injury comprehensive view and the Gym Recovery template are two presentations of these same rows—never write display-only prose that cannot be represented by the contract.
 

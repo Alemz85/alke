@@ -12,6 +12,8 @@ Subcommands:
   delete         <session_id>             remove a mis-logged session (cascades its sets)
   template-list                           list reusable Gym templates
   template-apply --file <plan.json>       validate + idempotently apply named templates
+  template-archive <template_id>          archive a single template version (runs/other versions untouched)
+  template-delete  <template_id>          hard-delete a template version; refuses if referenced by a session/run
   run-start      <template_id>            start/resurrect a run on that template version
   run-complete   <template_id>            close the family's open run
   create-version <base_template_id> --file <plan.json>  save a new version of a template family
@@ -52,6 +54,12 @@ different rest than the template default (e.g. a heavy compound needs longer,
 an isolation finisher needs less) — do NOT stamp the same rest value onto
 every exercise; omit it and let the template default apply.
 
+template-apply matches by name against each family's CURRENT version only
+(is_current=true) — every version in a family shares its name by design, so
+a template with several versions is edited IN PLACE on its current version,
+not duplicated or aborted on its own history. It still hard-aborts if two
+DIFFERENT families' current versions collide on the same name.
+
 Template versioning + runs (mirrors the app's db.ts exactly):
   run-start      <template_id>  start/resurrect a run on that template version
   run-complete   <template_id>  close the family's open run (archive/complete)
@@ -82,6 +90,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import zoneinfo
 
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
@@ -266,13 +275,18 @@ def apply_template_document(plan: object) -> list[tuple[str, str, str]]:
             })
         resolved.append({**template, "exercises": exercises})
 
+    # Only each family's CURRENT version competes for a name match — every
+    # version in a family shares its name by design (versioning), so matching
+    # against all rows would hard-abort on a template's own history. A hard
+    # abort is still correct if two DIFFERENT families' current versions
+    # collide on the same name (genuine ambiguity, not versioning noise).
     existing = _request("GET", "gym_templates", params={
-        "select": "id,name", "order": "created_at"
+        "is_current": "is.true", "select": "id,name,family_id", "order": "created_at"
     })
     by_name: dict[str, dict] = {}
     for row in existing:
         key = row["name"].strip().lower()
-        if key in by_name:
+        if key in by_name and by_name[key]["family_id"] != row["family_id"]:
             sys.exit(f"cannot apply templates: duplicate existing template name {row['name']!r}")
         by_name[key] = row
 
@@ -296,6 +310,7 @@ def apply_template_document(plan: object) -> list[tuple[str, str, str]]:
             rows = _request("POST", "gym_templates", body={
                 "name": template["name"], "notes": template["notes"],
                 "default_rest_s": template["default_rest_s"], "archived": False,
+                "family_id": str(uuid.uuid4()), "version": 1, "is_current": True,
             }, prefer="return=representation")
             template_id = rows[0]["id"]
             action = "created"
@@ -354,6 +369,49 @@ def complete_template_run(template_id: str) -> dict | None:
         "template_id": f"in.({','.join(family_ids)})", "ended_at": "is.null",
     }, body={"ended_at": today}, prefer="return=representation")
     return closed[0] if closed else None
+
+
+def archive_template_version(template_id: str) -> None:
+    """Archive exactly this template version — no other version, no run."""
+    _family_id_of(template_id)  # 404s clearly if the id doesn't exist
+    _request("PATCH", "gym_templates", params={"id": f"eq.{template_id}"},
+             body={"archived": True, "updated_at": "now()"}, prefer="return=minimal")
+
+
+def delete_template_version(template_id: str) -> None:
+    """Hard-delete exactly this template version and its exercise rows.
+    Refuses if any gym_sessions or gym_template_runs still reference it —
+    those need `template-archive` instead, since deleting out from under a
+    logged session or run history would orphan/cascade data the user cares
+    about."""
+    _family_id_of(template_id)  # 404s clearly if the id doesn't exist
+    sessions = _request("GET", "gym_sessions", params={
+        "template_id": f"eq.{template_id}", "select": "id", "limit": "1",
+    })
+    if sessions:
+        sys.exit(
+            f"cannot delete template {template_id}: referenced by gym_sessions "
+            "(logged sessions point at it) — use template-archive instead"
+        )
+    session_templates = _request("GET", "gym_session_templates", params={
+        "template_id": f"eq.{template_id}", "select": "session_id", "limit": "1",
+    })
+    if session_templates:
+        sys.exit(
+            f"cannot delete template {template_id}: referenced by gym_session_templates "
+            "(a logged session draws from it) — use template-archive instead"
+        )
+    runs = _request("GET", "gym_template_runs", params={
+        "template_id": f"eq.{template_id}", "select": "id", "limit": "1",
+    })
+    if runs:
+        sys.exit(
+            f"cannot delete template {template_id}: it has gym_template_runs history "
+            "— use template-archive instead"
+        )
+    _request("DELETE", "gym_template_exercises",
+             params={"template_id": f"eq.{template_id}"}, prefer="return=minimal")
+    _request("DELETE", "gym_templates", params={"id": f"eq.{template_id}"}, prefer="return=minimal")
 
 
 def create_template_version(base_template_id: str, plan: object) -> dict:
@@ -425,6 +483,16 @@ def cmd_run_complete(args) -> None:
         print("no open run for that template's family")
         return
     print(f"closed run {run['id']} on template {run['template_id']} (ended {run['ended_at']})")
+
+
+def cmd_template_archive(args) -> None:
+    archive_template_version(args.template_id)
+    print(f"archived template {args.template_id}")
+
+
+def cmd_template_delete(args) -> None:
+    delete_template_version(args.template_id)
+    print(f"deleted template {args.template_id}")
 
 
 def cmd_create_version(args) -> None:
@@ -654,6 +722,19 @@ def main() -> None:
     )
     p_template_apply.add_argument("--file", required=True)
     p_template_apply.set_defaults(func=cmd_template_apply)
+
+    p_template_archive = sub.add_parser(
+        "template-archive", help="Archive a single template version (leaves runs/other versions untouched)"
+    )
+    p_template_archive.add_argument("template_id")
+    p_template_archive.set_defaults(func=cmd_template_archive)
+
+    p_template_delete = sub.add_parser(
+        "template-delete",
+        help="Hard-delete a template version; refuses if a session or run history references it",
+    )
+    p_template_delete.add_argument("template_id")
+    p_template_delete.set_defaults(func=cmd_template_delete)
 
     p_run_start = sub.add_parser("run-start", help="Start/resurrect a run on a template version")
     p_run_start.add_argument("template_id")
