@@ -159,7 +159,8 @@ const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
   'zone2_weekly_target_min',
   'sleep_goal_min',
   'bedtime_goal_min',
-  'height_cm'
+  'height_cm',
+  'protein_target_g'
 ]
 
 // Whitelist of user_config columns that may be modified via updateUserConfig.
@@ -177,7 +178,8 @@ const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
   'about_me',
   'sex',
   'birthdate',
-  'height_cm'
+  'height_cm',
+  'protein_target_g'
 ]
 
 // `raw` (the ingest archive column) is deliberately not selected — nothing in
@@ -198,7 +200,7 @@ const ZONE2_FITNESS_COLUMNS =
   'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, maintain_horizon_days, build_interval_days, expected_session_build, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
-  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me, sex, birthdate, height_cm'
+  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me, sex, birthdate, height_cm, protein_target_g'
 
 const SWIM_SET_COLUMNS =
   'workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s'
@@ -442,7 +444,8 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     'zone2_weekly_target_min',
     'sleep_goal_min',
     'bedtime_goal_min',
-    'height_cm'
+    'height_cm',
+    'protein_target_g'
   ]
   for (const field of numericFields) {
     if (field in update) {
@@ -503,6 +506,18 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     const height = update.height_cm
     if (height !== null && ((height as number) <= 0 || (height as number) >= 300)) {
       throw new Error('updateUserConfig: height_cm must be greater than 0 and less than 300, or null')
+    }
+  }
+
+  if ('protein_target_g' in update) {
+    const target = update.protein_target_g
+    if (
+      target !== null &&
+      (!Number.isInteger(target) || (target as number) <= 0 || (target as number) >= 400)
+    ) {
+      throw new Error(
+        'updateUserConfig: protein_target_g must be a whole number greater than 0 and less than 400, or null'
+      )
     }
   }
 

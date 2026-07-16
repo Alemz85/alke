@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProteinDay } from '@shared/types'
-import { deriveProteinGlance } from '../ProteinPill'
+import { deriveProteinGlance, deriveProteinTargetFraction } from '../ProteinPill'
 import { isoWeekStart } from '../../hooks/sessionsDate'
 
 // Mon 2026-07-13 anchors the ISO week containing Thu 2026-07-16.
@@ -36,5 +36,35 @@ describe('deriveProteinGlance', () => {
     )
     expect(glance.weekAvg).toBeCloseTo(20, 5)
     expect(glance.todayGrams).toBe(0) // nothing logged for 07-16 yet
+  })
+})
+
+describe('deriveProteinTargetFraction', () => {
+  it('returns null when no target is set', () => {
+    expect(deriveProteinTargetFraction(84, null)).toBeNull()
+  })
+
+  it('returns null for a non-positive target (defensive, should not occur post-validation)', () => {
+    expect(deriveProteinTargetFraction(84, 0)).toBeNull()
+    expect(deriveProteinTargetFraction(84, -10)).toBeNull()
+  })
+
+  it('computes the fraction and remaining grams under target', () => {
+    const result = deriveProteinTargetFraction(84, 120)
+    expect(result).not.toBeNull()
+    expect(result?.fraction).toBeCloseTo(0.7, 5)
+    expect(result?.remainingG).toBe(36)
+  })
+
+  it('clamps the fraction at 1 and floors remaining at 0 when over target', () => {
+    const result = deriveProteinTargetFraction(150, 120)
+    expect(result?.fraction).toBe(1)
+    expect(result?.remainingG).toBe(0)
+  })
+
+  it('reports 0 fraction and full remaining grams when nothing is logged yet', () => {
+    const result = deriveProteinTargetFraction(0, 120)
+    expect(result?.fraction).toBe(0)
+    expect(result?.remainingG).toBe(120)
   })
 })

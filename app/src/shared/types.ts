@@ -139,6 +139,9 @@ export interface UserConfig {
   sex: UserSex | null
   birthdate: string | null
   height_cm: number | null
+  // Daily protein target in grams, nullable until the owner sets one in
+  // Settings. Check constraint on the column: 0 < x < 400.
+  protein_target_g: number | null
 }
 
 // Editable subset of UserConfig — excludes `id`, which is fixed at 1.
@@ -158,6 +161,7 @@ export type UserConfigPatch = Partial<
     | 'sex'
     | 'birthdate'
     | 'height_cm'
+    | 'protein_target_g'
   >
 >
 

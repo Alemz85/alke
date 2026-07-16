@@ -46,11 +46,39 @@
   color: var(--color-text-tertiary);
 }
 
+.protein-pill-unit-g {
+  margin-left: 1px;
+}
+
 .protein-pill-avg {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   font-weight: 600;
   color: var(--color-text-secondary);
+}
+
+/* Quiet fraction bar shown only once a daily target is set. Reuses the
+   --color-load "achievement" accent (ProfileView's goal bars, ProteinCard's
+   total) — falling short of protein is not a warning, so no flag color. */
+.protein-pill-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-divider-soft);
+  overflow: hidden;
+}
+
+.protein-pill-bar-fill {
+  height: 100%;
+  background: var(--color-load);
+  border-radius: var(--radius-full);
+  transition: width var(--motion-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .protein-pill-bar-fill {
+    transition: none;
+  }
 }
 
 .protein-pill-meta {

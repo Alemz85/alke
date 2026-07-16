@@ -3,8 +3,15 @@
 // total and the weekly table from proteinWeekTable (lib/proteinWeek.ts) —
 // same one-card-owns-its-queries shape as MuscleLoadCard. Not wired into
 // GymMainTab here; the caller places <ProteinCard timezone={...} />.
+//
+// Also reads user_config (same ['userConfig'] query IdentityCard/ProteinPill
+// use) for an optional daily target: when set, a "target 120 g" caption sits
+// under the daily total, and the weekly grid marks days that met it with a
+// small quiet dot (title text spells it out for a11y/tooltip).
 import { useMemo, useState, type ReactElement } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import type { UserConfig } from '@shared/types'
 import { fmtNum } from '../../lib/format'
 import { proteinWeekTable } from '../../lib/proteinWeek'
 import { useAddProtein, useProteinLog } from '../../hooks/useProteinData'
@@ -45,6 +52,13 @@ export function ProteinCard({
   const toKey = ymdKey(weekEnd)
 
   const proteinLogQuery = useProteinLog(fromKey, toKey)
+
+  const configQuery = useQuery<UserConfig>({
+    queryKey: ['userConfig'],
+    queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
+  const target = configQuery.data?.protein_target_g ?? null
 
   const week = useMemo(
     () => proteinWeekTable(proteinLogQuery.data ?? [], weekStart),
@@ -112,6 +126,9 @@ export function ProteinCard({
             {fmtNum(selectedGrams, 0)}
             <span className="protein-total-unit">g</span>
           </span>
+          {target != null && (
+            <span className="protein-target-caption tabular-nums">target {fmtNum(target, 0)} g</span>
+          )}
         </div>
         <div className="protein-entry">
         <input
@@ -147,18 +164,23 @@ export function ProteinCard({
           <span className="protein-week-cell protein-week-label">Avg</span>
         </div>
         <div className="protein-week-row">
-          {week.days.map((d) => (
-            <span
-              key={d.dateKey}
-              className={
-                d.dateKey === selectedKey
-                  ? 'protein-week-cell protein-week-value tabular-nums protein-week-value--selected'
-                  : 'protein-week-cell protein-week-value tabular-nums'
-              }
-            >
-              {d.grams > 0 ? fmtNum(d.grams, 0) : '—'}
-            </span>
-          ))}
+          {week.days.map((d) => {
+            const metTarget = target != null && d.grams >= target
+            return (
+              <span
+                key={d.dateKey}
+                className={
+                  d.dateKey === selectedKey
+                    ? 'protein-week-cell protein-week-value tabular-nums protein-week-value--selected'
+                    : 'protein-week-cell protein-week-value tabular-nums'
+                }
+                title={metTarget ? `Met the ${fmtNum(target as number, 0)}g target` : undefined}
+              >
+                {d.grams > 0 ? fmtNum(d.grams, 0) : '—'}
+                {metTarget && <span className="protein-week-target-met" aria-hidden="true" />}
+              </span>
+            )
+          })}
           <span className="protein-week-cell protein-week-value protein-week-avg tabular-nums">
             {fmtNum(week.avg, 0)}
           </span>

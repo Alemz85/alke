@@ -35,6 +35,8 @@ interface Draft {
   // YYYY-MM-DD, or '' when unset — matches <input type="date">'s own idiom.
   birthdate: string
   height_cm: string
+  // '' = unset (maps to null on save) — daily protein target has no default.
+  protein_target_g: string
 }
 
 function minutesToClock(minutes: number | null | undefined): string {
@@ -78,7 +80,8 @@ function toDraft(cfg: UserConfig): Draft {
     timezone: cfg.timezone ?? '',
     sex: cfg.sex ?? '',
     birthdate: cfg.birthdate ?? '',
-    height_cm: numOrEmpty(cfg.height_cm)
+    height_cm: numOrEmpty(cfg.height_cm),
+    protein_target_g: numOrEmpty(cfg.protein_target_g)
   }
 }
 
@@ -216,6 +219,14 @@ export function SettingsView(): ReactElement {
     if (height === 'invalid') e.height_cm = 'Enter a number.'
     else if (height != null && (height <= 0 || height >= 300)) e.height_cm = 'Must be 0–300 cm.'
 
+    const proteinTarget = parseNumOrNull(draft.protein_target_g)
+    if (proteinTarget === 'invalid') e.protein_target_g = 'Enter a number.'
+    else if (
+      proteinTarget != null &&
+      (!Number.isInteger(proteinTarget) || proteinTarget <= 0 || proteinTarget >= 400)
+    )
+      e.protein_target_g = 'Must be a whole number, 1–399 g.'
+
     if (draft.birthdate.trim() !== '') {
       const today = new Date().toISOString().slice(0, 10)
       if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.birthdate)) e.birthdate = 'Enter a valid date.'
@@ -276,6 +287,10 @@ export function SettingsView(): ReactElement {
 
     const heightCm = parseNumOrNull(draft.height_cm)
     if (heightCm !== 'invalid' && heightCm !== loaded.height_cm) p.height_cm = heightCm
+
+    const proteinTargetG = parseNumOrNull(draft.protein_target_g)
+    if (proteinTargetG !== 'invalid' && proteinTargetG !== loaded.protein_target_g)
+      p.protein_target_g = proteinTargetG
 
     return p
   }, [draft, loaded])
@@ -577,6 +592,30 @@ export function SettingsView(): ReactElement {
               </div>
               {errors.zone2_weekly_target_min && (
                 <p className="settings-field-error">{errors.zone2_weekly_target_min}</p>
+              )}
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-label" htmlFor="protein_target_g">
+                Daily protein target
+              </label>
+              <div className="settings-input-row">
+                <input
+                  id="protein_target_g"
+                  className="text-input tabular-nums settings-input--num"
+                  type="number"
+                  inputMode="numeric"
+                  value={draft.protein_target_g}
+                  onChange={(e) => update('protein_target_g', e.target.value)}
+                  aria-invalid={!!errors.protein_target_g}
+                />
+                <span className="settings-unit">g / day</span>
+              </div>
+              <p className="settings-help">
+                A common evidence-backed anchor is ~1.6 g per kg of body weight.
+              </p>
+              {errors.protein_target_g && (
+                <p className="settings-field-error">{errors.protein_target_g}</p>
               )}
             </div>
 

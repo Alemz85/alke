@@ -110,6 +110,14 @@
   font-weight: 400;
 }
 
+/* Quiet reference caption shown only once a daily target is set (Settings).
+   Achievement framing, not a warning — no --color-flag. */
+.protein-target-caption {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 .protein-entry {
   display: flex;
   align-items: center;
@@ -161,6 +169,19 @@
 .protein-week-value--selected {
   color: var(--color-text);
   font-weight: 600;
+}
+
+/* Small quiet dot marking a day that met the target — achievement, not a
+   badge/alarm. Reuses --color-load, same accent as the total value/caption. */
+.protein-week-target-met {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 3px;
+  margin-bottom: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-load);
+  vertical-align: middle;
 }
 
 .protein-week-avg {
