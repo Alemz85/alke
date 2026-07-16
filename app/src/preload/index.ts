@@ -71,6 +71,7 @@ const api: HealthApi = {
   getLastIngestAt: () => ipcRenderer.invoke(IPC_CHANNELS.getLastIngestAt),
   getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),
   getInsightModels: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightModels),
+  runMetricsJob: () => ipcRenderer.invoke(IPC_CHANNELS.runMetricsJob),
   chatStatus: () => ipcRenderer.invoke(IPC_CHANNELS.chatStatus),
   chatListSessions: () => ipcRenderer.invoke(IPC_CHANNELS.chatListSessions),
   chatGetSession: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatGetSession, id),

@@ -634,6 +634,9 @@ export interface HealthApi {
   getLastIngestAt(): Promise<string | null>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
+  // Runs the nightly metrics job (`python -m metrics.compute`) on demand.
+  // Long-running (~30-90s locally, up to the 10-minute kill timeout).
+  runMetricsJob(): Promise<MetricsJobResult>
   chatStatus(): Promise<ChatStatus>
   chatListSessions(): Promise<ChatSessionMeta[]>
   chatGetSession(id: string): Promise<ChatSession | null>
@@ -709,6 +712,9 @@ export const IPC_CHANNELS = {
   getLastIngestAt: 'db:getLastIngestAt',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',
+  // Registered in index.ts, delegates to metricsJob.ts (owns the child-process
+  // lifecycle for the nightly metrics job — same split as chat.ts/chatStop).
+  runMetricsJob: 'metrics:run',
   chatStatus: 'chat:status',
   chatListSessions: 'chat:listSessions',
   chatGetSession: 'chat:getSession',
@@ -753,6 +759,16 @@ export interface InsightModel {
 export interface ChatStatus {
   available: boolean
   version?: string
+  error?: string
+}
+
+/** Result of an on-demand `python -m metrics.compute` run (see metricsJob.ts). */
+export interface MetricsJobResult {
+  ok: boolean
+  // Last ~6 meaningful stdout lines (one per compute.py stage), for a concise
+  // completion summary. Empty on a spawn failure before any output arrived.
+  summaryLines: string[]
+  durationMs: number
   error?: string
 }
 

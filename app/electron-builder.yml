@@ -69,6 +69,19 @@ extraResources:
       - '**/*'
       - '!.git{,/**/*}'
       - '!.DS_Store'
+  # metrics/ ships so the "Recompute metrics" button (metricsJob.ts) can run
+  # `python -m metrics.compute` from a packaged app — cwd is process.resourcesPath,
+  # so metrics/ must land directly under Resources/ (a sibling of chatctx/knowledge
+  # above), not nested under an "out" or "app" subdir. Requires the machine's
+  # python3 to already have metrics/requirements.txt installed (true on the
+  # owner's machine); metricsJob.ts's spawn-error handling reports a clear
+  # "pip install -r metrics/requirements.txt" hint if it isn't.
+  - from: ../metrics
+    to: metrics
+    filter:
+      - '**/*'
+      - '!**/__pycache__{,/**/*}'
+      - '!tests{,/**/*}'
 mac:
   icon: build/icon.icns
   identity: null

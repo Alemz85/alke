@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Moon, RefreshCw, Sun } from 'lucide-react'
+import { Calculator, Moon, RefreshCw, Sun } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import type { TabId } from './tabs'
 import { ButtonSoft, OfflineQueueStatus, Toast, type ToastTone } from './components'
@@ -65,6 +65,7 @@ function App(): ReactElement {
   const [sessionsActivity, setSessionsActivity] = useState<string | null>(null)
   const [theme, setTheme] = useState<Theme>(readInitialTheme)
   const [refreshing, setRefreshing] = useState(false)
+  const [recomputing, setRecomputing] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
   const queryClient = useQueryClient()
   const dbStatus = useDbStatus()
@@ -132,6 +133,38 @@ function App(): ReactElement {
       setRefreshing(false)
     }
   }, [offlineQueue, queryClient, refreshing])
+
+  const handleRecomputeMetrics = useCallback(async (): Promise<void> => {
+    if (recomputing) return
+    setRecomputing(true)
+    try {
+      const result = await window.api.runMetricsJob()
+      if (result.ok) {
+        const seconds = Math.round(result.durationMs / 1000)
+        setToast({
+          message: result.summaryLines[0] ?? `Metrics recomputed in ${seconds}s.`,
+          tone: 'success'
+        })
+        // Recomputed CTL/TSB, zone2, and insights only exist in the DB after
+        // this resolves — refetch so the new numbers show without a restart.
+        await queryClient.refetchQueries()
+      } else {
+        setToast({
+          message: `Couldn't recompute metrics — ${result.error ?? 'unknown error'}.`,
+          tone: 'error'
+        })
+      }
+    } catch (err) {
+      setToast({
+        message: `Couldn't recompute metrics — ${
+          err instanceof Error ? err.message : 'unknown error'
+        }.`,
+        tone: 'error'
+      })
+    } finally {
+      setRecomputing(false)
+    }
+  }, [queryClient, recomputing])
 
   const toggleTheme = useCallback((): void => {
     setTheme((prev) => {
@@ -225,6 +258,21 @@ function App(): ReactElement {
                 className={refreshing ? 'icon-spin' : undefined}
               />
               Refresh
+            </ButtonSoft>
+            <ButtonSoft
+              className="button-soft--icon"
+              onClick={() => {
+                void handleRecomputeMetrics()
+              }}
+              aria-label="Recompute metrics"
+              title="Run the nightly metrics job now"
+              disabled={recomputing}
+            >
+              <Calculator
+                size={16}
+                strokeWidth={1.5}
+                className={recomputing ? 'icon-spin' : undefined}
+              />
             </ButtonSoft>
           </div>
           {showDbError ? (

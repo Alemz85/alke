@@ -94,6 +94,7 @@ import {
 } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
+import { runMetricsJob } from './metricsJob'
 import { executeOfflineWrite } from './offlineWriteHandlers'
 import { OfflineWriteService } from './offlineWriteService'
 import { registerTileScheme, setupTileProtocol } from './tiles'
@@ -329,6 +330,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getLastIngestAt, () => db.getLastIngestAt())
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
+  ipcMain.handle(IPC_CHANNELS.runMetricsJob, () => runMetricsJob())
   ipcMain.handle(IPC_CHANNELS.chatStatus, () => chat.checkClaude())
   ipcMain.handle(IPC_CHANNELS.chatListSessions, () => db.listChatSessions())
   ipcMain.handle(IPC_CHANNELS.chatGetSession, (_event, id: string) => db.getChatSession(id))
