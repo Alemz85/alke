@@ -425,3 +425,24 @@
 .recovery-load-chart-swatch--atl {
   background: var(--color-sessions);
 }
+
+/* Unstyled-button reset for the clickable CTL hero — this rule lived in
+   DashboardView.css and was trimmed as dead when the hero moved here; without
+   it the button renders Chromium's default light-gray face (white-on-white
+   hero value in dark theme). */
+.hero-metric-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.hero-metric-button:hover .hero-metric-value,
+.hero-metric-button:focus-visible .hero-metric-value {
+  opacity: 0.85;
+}

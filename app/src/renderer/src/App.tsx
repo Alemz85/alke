@@ -6,6 +6,7 @@ import type { TabId } from './tabs'
 import { ButtonSoft, OfflineQueueStatus, Toast, type ToastTone } from './components'
 import { useDbStatus } from './hooks/useDbStatus'
 import { useOfflineQueue } from './hooks/useOfflineQueue'
+import { invalidateWorkoutViews } from './hooks/useGymData'
 import { subscribeMutationErrors } from './lib/mutationFeedback'
 import { DbErrorState } from './views/DbErrorState'
 import { DashboardView } from './views/DashboardView'
@@ -35,6 +36,19 @@ const VIEWS: Record<
   profile: ProfileView,
   settings: SettingsView
 }
+
+// Tabs whose views read the shared workout-range queries (useAllWorkouts,
+// useYearWorkouts, useMonthWorkouts, useRecentWorkouts, useWorkoutsInRange).
+// App.tsx renders exactly one tab's view at a time (see renderActiveView
+// below), so navigating to one of these is a fresh mount — but React
+// Query's refetchOnMount only refetches queries that are already stale;
+// data ingested (or a gym session logged) while this tab wasn't mounted can
+// sit in cache well within the 60s staleTime and never get picked up.
+// Invalidating on activation forces that refetch without lowering
+// staleTime/gcTime globally, so the localStorage persistence layer keeps
+// doing its job (instant cold-start paint, stale-but-shown data if the DB
+// is briefly unreachable) for every other query.
+const WORKOUT_VIEW_TABS: ReadonlySet<TabId> = new Set(['dashboard', 'sessions', 'zone2', 'gym'])
 
 type Theme = 'dark' | 'light'
 
@@ -195,21 +209,34 @@ function App(): ReactElement {
 
   // Open the Sessions tab, optionally pre-filtered to an activity group (e.g. a
   // cardio recent-sessions card passes "Swim"). No argument = show everything.
-  const openSessions = useCallback((activity?: string): void => {
-    setSessionsActivity(activity ?? null)
-    setActiveTab('sessions')
-  }, [])
+  const openSessions = useCallback(
+    (activity?: string): void => {
+      setSessionsActivity(activity ?? null)
+      setActiveTab('sessions')
+      invalidateWorkoutViews(queryClient)
+    },
+    [queryClient]
+  )
 
   // Sidebar navigation clears any pending Sessions filter so a manual tab click
   // always lands on the full, unfiltered list.
-  const handleSelectTab = useCallback((tab: TabId): void => {
-    if (tab === 'sessions') setSessionsActivity(null)
-    setActiveTab(tab)
-  }, [])
+  const handleSelectTab = useCallback(
+    (tab: TabId): void => {
+      if (tab === 'sessions') setSessionsActivity(null)
+      setActiveTab(tab)
+      if (WORKOUT_VIEW_TABS.has(tab)) invalidateWorkoutViews(queryClient)
+    },
+    [queryClient]
+  )
 
   function renderActiveView(): ReactElement {
     if (activeTab === 'dashboard') {
-      return <DashboardView onOpenSessions={() => openSessions()} />
+      return (
+        <DashboardView
+          onOpenSessions={() => openSessions()}
+          onOpenProfile={() => setActiveTab('profile')}
+        />
+      )
     }
     if (activeTab === 'sessions') {
       return (

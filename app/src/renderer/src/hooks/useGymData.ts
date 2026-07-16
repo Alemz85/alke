@@ -41,6 +41,28 @@ function cachedExercises(queryClient: ReturnType<typeof useQueryClient>): Exerci
   return queryClient.getQueryData<Exercise[]>(['health', 'exercises']) ?? []
 }
 
+// Workout-range query key prefixes read by the Dashboard and Sessions tabs
+// (useSessionsData.ts / useDashboardData.ts). A logged/edited/deleted gym
+// session changes what those lists should show (the newly-logged session
+// itself, plus any join-derived "N of M logged" / gym-vs-cardio classing),
+// but none of those hooks live on the ['health','gym',...] key family the
+// optimistic updates above already patch — so every gym session mutation
+// must also invalidate these explicitly, or the Dashboard/Sessions caches
+// silently go stale until they age out or the user hits manual Refresh.
+//
+// Exported so App.tsx's tab-activation handler can invalidate the same key
+// set on navigation (see invalidateWorkoutViews call site there) — that
+// covers the sibling case where a workout was ingested (or a gym session
+// logged) while the Dashboard/Sessions tab wasn't mounted, so no mutation
+// ever fired in this session to trigger the invalidation below.
+export function invalidateWorkoutViews(queryClient: ReturnType<typeof useQueryClient>): void {
+  queryClient.invalidateQueries({ queryKey: ['health', 'allWorkouts'] })
+  queryClient.invalidateQueries({ queryKey: ['health', 'yearWorkouts'] })
+  queryClient.invalidateQueries({ queryKey: ['health', 'monthWorkouts'] })
+  queryClient.invalidateQueries({ queryKey: ['dashboard', 'workouts'] })
+  queryClient.invalidateQueries({ queryKey: ['dashboard', 'workoutsRange'] })
+}
+
 export interface RecoveryPlanBundle {
   injury: Injury
   items: RecoveryPlanItem[]
@@ -268,6 +290,7 @@ export function useAddGymSession() {
       for (const [rangeKey, rows] of queryClient.getQueriesData<GymSession[]>({ queryKey: ['health', 'gym', 'sessions'] })) {
         queryClient.setQueryData(rangeKey, replaceById(rows ?? [], context.temporaryId, result))
       }
+      invalidateWorkoutViews(queryClient)
     },
     onError: (_error, _session, context) => restoreSnapshots(queryClient, context?.previous)
   })
@@ -307,6 +330,7 @@ export function useUpdateGymSession(sessionId: string) {
       for (const [rangeKey, rows] of queryClient.getQueriesData<GymSession[]>({ queryKey: ['health', 'gym', 'sessions'] })) {
         queryClient.setQueryData(rangeKey, replaceById(rows ?? [], id, result))
       }
+      invalidateWorkoutViews(queryClient)
     },
     onError: (_error, _variables, context) => restoreSnapshots(queryClient, context?.previous)
   })
@@ -328,6 +352,7 @@ export function useDeleteGymSession(sessionId: string) {
       }
       return { previous }
     },
+    onSuccess: () => invalidateWorkoutViews(queryClient),
     onError: (_error, _id, context) => restoreSnapshots(queryClient, context?.previous)
   })
 }

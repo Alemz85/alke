@@ -52,11 +52,11 @@ export type EditorTarget =
   | { kind: 'new-unlinked'; recoveryTemplateId?: string }
   | { kind: 'edit'; session: GymSession }
 
-interface SetRow extends PrefillSetRow {
+export interface SetRow extends PrefillSetRow {
   key: string
 }
 
-interface Block {
+export interface Block {
   key: string
   exerciseId: string | null
   exerciseName: string
@@ -128,6 +128,33 @@ function blocksToNewSets(blocks: Block[]): NewGymSession['sets'] {
   return out
 }
 
+/**
+ * The Sets/Reps quick-generator boxes have no state of their own: what they
+ * display is either (a) the field's own in-progress keystrokes, while it's
+ * focused, or (b) otherwise the true value derived from the row count/reps
+ * — so a manual +set/×-remove (which mutate rows, not these fields) is
+ * reflected immediately, and typing "1" on the way to "12" never gets
+ * clobbered by the derivation racing ahead of the keystroke.
+ */
+export function quickSetFieldValue(draft: string | null, derived: string): string {
+  return draft ?? derived
+}
+
+/** Body parts to show as derived tags: only those actually present across
+ *  the blocks' resolved exercises, in the canon GYM_BODY_PARTS order. */
+export function derivedBodyParts(
+  blocks: Block[],
+  exercisesById: Map<string, Exercise>
+): GymBodyPart[] {
+  const found = new Set<string>()
+  for (const block of blocks) {
+    if (!block.exerciseId) continue
+    const part = exercisesById.get(block.exerciseId)?.body_part
+    if (part) found.add(part)
+  }
+  return GYM_BODY_PARTS.filter((p) => found.has(p))
+}
+
 // ── set row ──────────────────────────────────────────────────────────────────
 
 function SetRowEditor({
@@ -190,9 +217,17 @@ function ExerciseBlockEditor({
   onChange: (block: Block) => void
   onRemove: () => void
 }): ReactElement {
-  const initialDose = uniformPrefillDose(block.rows)
-  const [quickSets, setQuickSets] = useState(initialDose.sets)
-  const [quickReps, setQuickReps] = useState(initialDose.reps)
+  // The Sets/Reps quick-generator boxes have no state of their own — they
+  // display a value *derived* from block.rows (uniformPrefillDose), so
+  // +set/×-remove (which mutate rows directly) are reflected immediately.
+  // While a field is focused we show the raw in-progress keystrokes instead
+  // (draft), so the derivation doesn't fight a mid-edit value like "1" on
+  // its way to "12"; on blur the field snaps back to the true derived count.
+  const derivedDose = uniformPrefillDose(block.rows)
+  const [setsDraft, setSetsDraft] = useState<string | null>(null)
+  const [repsDraft, setRepsDraft] = useState<string | null>(null)
+  const quickSets = quickSetFieldValue(setsDraft, derivedDose.sets)
+  const quickReps = quickSetFieldValue(repsDraft, derivedDose.reps)
   const setExercise = (exercise: Exercise): void => {
     onChange({
       ...block,
@@ -269,11 +304,13 @@ function ExerciseBlockEditor({
             inputMode="numeric"
             placeholder="3"
             value={quickSets}
+            onFocus={() => setSetsDraft(quickSets)}
             onChange={(event) => {
               const value = event.target.value
-              setQuickSets(value)
+              setSetsDraft(value)
               applyQuickSets(value, quickReps)
             }}
+            onBlur={() => setSetsDraft(null)}
           />
         </label>
         <span className="gym-quick-set-times" aria-hidden="true">×</span>
@@ -287,11 +324,13 @@ function ExerciseBlockEditor({
             inputMode="numeric"
             placeholder="8"
             value={quickReps}
+            onFocus={() => setRepsDraft(quickReps)}
             onChange={(event) => {
               const value = event.target.value
-              setQuickReps(value)
+              setRepsDraft(value)
               applyQuickSets(quickSets, value)
             }}
+            onBlur={() => setRepsDraft(null)}
           />
         </label>
         <span className="gym-quick-set-hint">updates rows automatically</span>
@@ -458,15 +497,10 @@ export function SessionEditorModal({
 
   // With set rows present the chips are display-only, derived from the blocks'
   // exercises; the freely-toggleable declared list only exists for set-less logs.
-  const derivedParts = useMemo(() => {
-    const found = new Set<string>()
-    for (const block of blocks) {
-      if (!block.exerciseId) continue
-      const part = exercisesById.get(block.exerciseId)?.body_part
-      if (part) found.add(part)
-    }
-    return GYM_BODY_PARTS.filter((p) => found.has(p))
-  }, [blocks, exercisesById])
+  const derivedParts = useMemo(
+    () => derivedBodyParts(blocks, exercisesById),
+    [blocks, exercisesById]
+  )
   const chipsDerived = setCount > 0
 
   const toggleBodyPart = (part: GymBodyPart): void => {
@@ -594,32 +628,49 @@ export function SessionEditorModal({
               {chipsDerived && <span className="gym-field-label-note"> · derived from sets</span>}
             </span>
             <div className="gym-bodypart-chips">
-              {GYM_BODY_PARTS.map((part) => {
-                const active = chipsDerived ? derivedParts.includes(part) : bodyParts.includes(part)
-                const className = [
-                  'gym-bodypart-chip',
-                  active ? 'gym-bodypart-chip--active' : '',
-                  chipsDerived ? 'gym-bodypart-chip--derived' : ''
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-                return (
-                  <button
-                    key={part}
-                    type="button"
-                    className={className}
-                    aria-pressed={active}
-                    disabled={chipsDerived}
-                    onClick={() => toggleBodyPart(part)}
-                  >
-                    {displayBodyPart(part)}
-                  </button>
-                )
-              })}
+              {chipsDerived
+                ? // Derived: passive read-only tags, not toggle buttons — the
+                  // form isn't "clicking its own buttons" as exercises fill
+                  // in, it's reporting a fact. Parts with no sets simply
+                  // don't render (nothing to mute-and-show).
+                  derivedParts.map((part) => (
+                    <span
+                      key={part}
+                      className="gym-bodypart-chip gym-bodypart-chip--derived"
+                      aria-disabled="true"
+                    >
+                      {displayBodyPart(part)}
+                    </span>
+                  ))
+                : GYM_BODY_PARTS.map((part) => {
+                    const active = bodyParts.includes(part)
+                    const className = [
+                      'gym-bodypart-chip',
+                      active ? 'gym-bodypart-chip--active' : ''
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                    return (
+                      <button
+                        key={part}
+                        type="button"
+                        className={className}
+                        aria-pressed={active}
+                        onClick={() => toggleBodyPart(part)}
+                      >
+                        {displayBodyPart(part)}
+                      </button>
+                    )
+                  })}
             </div>
             {!chipsDerived && setCount === 0 && (
               <p className="gym-quicklog-hint">
                 Tap what you trained and save — that alone is a valid log.
+              </p>
+            )}
+            {chipsDerived && derivedParts.length === 0 && (
+              <p className="gym-quicklog-hint">
+                No body parts yet — pick an exercise with one on record.
               </p>
             )}
           </div>
