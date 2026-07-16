@@ -47,11 +47,13 @@ import {
   type SwimSet,
   type UserConfig,
   type UserConfigPatch,
+  type UserSex,
   type Workout,
   type WorkoutDetail,
   type WorkoutGeo,
   type WorkoutHrSample,
-  type Zone2Fitness
+  type Zone2Fitness,
+  USER_SEXES
 } from '@shared/types'
 
 let client: SupabaseClient | null = null
@@ -156,7 +158,8 @@ const USER_CONFIG_NUMERIC_KEYS: (keyof UserConfig)[] = [
   'zone2_high_frac',
   'zone2_weekly_target_min',
   'sleep_goal_min',
-  'bedtime_goal_min'
+  'bedtime_goal_min',
+  'height_cm'
 ]
 
 // Whitelist of user_config columns that may be modified via updateUserConfig.
@@ -171,7 +174,10 @@ const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
   'bedtime_goal_min',
   'weekly_min_sessions',
   'timezone',
-  'about_me'
+  'about_me',
+  'sex',
+  'birthdate',
+  'height_cm'
 ]
 
 // `raw` (the ingest archive column) is deliberately not selected — nothing in
@@ -192,7 +198,7 @@ const ZONE2_FITNESS_COLUMNS =
   'date, durable_base, durable_band_lo, durable_band_hi, sharpness, vo2max_anchor_score, days_since_vo2max, durable_load, sharp_load, base_accum_b, tau_slow_days, floor_score, confidence, evidence_state, contributing, stage, maintenance_met, warn_after_days, maintain_horizon_days, build_interval_days, expected_session_build, flags, computed_at'
 
 const USER_CONFIG_COLUMNS =
-  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me'
+  'id, hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me, sex, birthdate, height_cm'
 
 const SWIM_SET_COLUMNS =
   'workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s'
@@ -435,7 +441,8 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     'zone2_high_frac',
     'zone2_weekly_target_min',
     'sleep_goal_min',
-    'bedtime_goal_min'
+    'bedtime_goal_min',
+    'height_cm'
   ]
   for (const field of numericFields) {
     if (field in update) {
@@ -489,6 +496,31 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     const about = update.about_me
     if (about !== null && (typeof about !== 'string' || about.length > 5000)) {
       throw new Error('updateUserConfig: about_me must be text up to 5000 characters or null')
+    }
+  }
+
+  if ('height_cm' in update) {
+    const height = update.height_cm
+    if (height !== null && ((height as number) <= 0 || (height as number) >= 300)) {
+      throw new Error('updateUserConfig: height_cm must be greater than 0 and less than 300, or null')
+    }
+  }
+
+  if ('sex' in update) {
+    const sex = update.sex
+    if (sex !== null && !USER_SEXES.includes(sex as UserSex)) {
+      throw new Error(`updateUserConfig: sex must be one of ${USER_SEXES.join(', ')}, or null`)
+    }
+  }
+
+  if ('birthdate' in update) {
+    const birthdate = update.birthdate
+    if (birthdate !== null) {
+      assertDate(birthdate, 'birthdate')
+      const today = new Date().toISOString().slice(0, 10)
+      if ((birthdate as string) > today) {
+        throw new Error('updateUserConfig: birthdate cannot be in the future')
+      }
     }
   }
 

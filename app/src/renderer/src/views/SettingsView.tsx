@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, X } from 'lucide-react'
-import type { UserConfig, UserConfigPatch } from '@shared/types'
+import { USER_SEXES, type UserConfig, type UserConfigPatch, type UserSex } from '@shared/types'
 import { isQueuedWriteReceipt } from '../lib/optimisticEntities'
 import { TabHeader } from './TabHeader'
 import './SettingsView.css'
@@ -30,6 +30,11 @@ interface Draft {
   bedtime_goal: string
   weekly_min_sessions: Record<string, number>
   timezone: string
+  // '' = unset (maps to null on save), otherwise a UserSex value.
+  sex: '' | UserSex
+  // YYYY-MM-DD, or '' when unset — matches <input type="date">'s own idiom.
+  birthdate: string
+  height_cm: string
 }
 
 function minutesToClock(minutes: number | null | undefined): string {
@@ -70,7 +75,10 @@ function toDraft(cfg: UserConfig): Draft {
     sleep_goal_hours: String((cfg.sleep_goal_min ?? 480) / 60),
     bedtime_goal: minutesToClock(cfg.bedtime_goal_min ?? 0),
     weekly_min_sessions: sessions,
-    timezone: cfg.timezone ?? ''
+    timezone: cfg.timezone ?? '',
+    sex: cfg.sex ?? '',
+    birthdate: cfg.birthdate ?? '',
+    height_cm: numOrEmpty(cfg.height_cm)
   }
 }
 
@@ -204,6 +212,16 @@ export function SettingsView(): ReactElement {
       e.timezone = 'Not a recognized IANA time zone.'
     else if (draft.timezone.trim() === '') e.timezone = 'Required.'
 
+    const height = parseNumOrNull(draft.height_cm)
+    if (height === 'invalid') e.height_cm = 'Enter a number.'
+    else if (height != null && (height <= 0 || height >= 300)) e.height_cm = 'Must be 0–300 cm.'
+
+    if (draft.birthdate.trim() !== '') {
+      const today = new Date().toISOString().slice(0, 10)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.birthdate)) e.birthdate = 'Enter a valid date.'
+      else if (draft.birthdate > today) e.birthdate = 'Cannot be in the future.'
+    }
+
     return e
   }, [draft])
 
@@ -249,6 +267,15 @@ export function SettingsView(): ReactElement {
 
     if (draft.timezone.trim() !== '' && draft.timezone !== loaded.timezone)
       p.timezone = draft.timezone.trim()
+
+    const sex = draft.sex === '' ? null : draft.sex
+    if (sex !== loaded.sex) p.sex = sex
+
+    const birthdate = draft.birthdate.trim() === '' ? null : draft.birthdate.trim()
+    if (birthdate !== loaded.birthdate) p.birthdate = birthdate
+
+    const heightCm = parseNumOrNull(draft.height_cm)
+    if (heightCm !== 'invalid' && heightCm !== loaded.height_cm) p.height_cm = heightCm
 
     return p
   }, [draft, loaded])
@@ -307,6 +334,74 @@ export function SettingsView(): ReactElement {
         <p className="settings-error-caption">Couldn’t load configuration.</p>
       ) : (
         <div className="settings-cards">
+          {/* ── Identity ───────────────────────────────────────────────── */}
+          <section className="settings-card" aria-labelledby="settings-identity-title">
+            <h2 className="settings-card-title" id="settings-identity-title">
+              Identity
+            </h2>
+
+            <div className="settings-field-pair">
+              <div className="settings-field">
+                <label className="settings-label" htmlFor="sex">
+                  Sex
+                </label>
+                <select
+                  id="sex"
+                  className="text-input settings-input--select"
+                  value={draft.sex}
+                  onChange={(e) => update('sex', e.target.value as Draft['sex'])}
+                >
+                  <option value="">—</option>
+                  {USER_SEXES.map((s) => (
+                    <option key={s} value={s}>
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="settings-field">
+                <label className="settings-label" htmlFor="birthdate">
+                  Birthdate
+                </label>
+                <input
+                  id="birthdate"
+                  className="text-input tabular-nums settings-input--time"
+                  type="date"
+                  value={draft.birthdate}
+                  onChange={(e) => update('birthdate', e.target.value)}
+                  aria-invalid={!!errors.birthdate}
+                />
+                {errors.birthdate && (
+                  <p className="settings-field-error">{errors.birthdate}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-label" htmlFor="height_cm">
+                Height
+              </label>
+              <div className="settings-input-row">
+                <input
+                  id="height_cm"
+                  className="text-input tabular-nums settings-input--num"
+                  type="number"
+                  inputMode="decimal"
+                  value={draft.height_cm}
+                  onChange={(e) => update('height_cm', e.target.value)}
+                  aria-invalid={!!errors.height_cm}
+                />
+                <span className="settings-unit">cm</span>
+              </div>
+              {errors.height_cm && <p className="settings-field-error">{errors.height_cm}</p>}
+            </div>
+
+            <p className="settings-card-footnote">
+              Used for the Profile "About me" card — age is computed from birthdate, never stored.
+            </p>
+          </section>
+
           {/* ── Heart rate ─────────────────────────────────────────────── */}
           <section className="settings-card" aria-labelledby="settings-hr-title">
             <h2 className="settings-card-title" id="settings-hr-title">

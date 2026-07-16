@@ -22,6 +22,7 @@ import { BadgeDomain, ButtonSoft, EmptyState, MetricCard } from '../components'
 import type { Domain } from '../components/domain'
 import {
   achievements,
+  ageFromBirthdate,
   metricProgress,
   profileStats,
   sinceLabel,
@@ -50,6 +51,93 @@ function formatDate(ymd: string | null | undefined): string {
 
 function formatHours(h: number): string {
   return h < 10 ? h.toFixed(1) : String(Math.round(h))
+}
+
+const SEX_LABEL: Record<string, string> = {
+  male: 'Male',
+  female: 'Female',
+  other: 'Other'
+}
+
+// ── identity card ────────────────────────────────────────────────────────────
+
+/** One identity field: value or an honest em-dash placeholder with a
+ *  "set in Settings" hint — never a fabricated default. */
+function IdentityField({
+  label,
+  value,
+  unset
+}: {
+  label: string
+  value: string
+  unset: boolean
+}): ReactElement {
+  return (
+    <div className="profile-identity-field">
+      <span className="profile-identity-label">{label}</span>
+      <span className={unset ? 'profile-identity-value profile-identity-value--unset' : 'profile-identity-value'}>
+        {value}
+      </span>
+      {unset && <span className="profile-identity-hint">Set in Settings</span>}
+    </div>
+  )
+}
+
+/**
+ * Structured "About me" identity card: sex, age (computed from birthdate,
+ * never stored), height, plus echoes of training identity already known
+ * elsewhere in the app (timezone, hr_max) so this reads as one place to see
+ * "who is this athlete" at a glance. Placed above the Goals/Stats sub-tabs
+ * (rather than inside one of them) since it's identity context relevant to
+ * both — goals are read in light of it, and it's not itself a stat.
+ *
+ * Distinct from the free-text AboutMeSection below the tabs: that's prose
+ * for the chat agent; this is the structured facts the Settings form edits.
+ */
+function IdentityCard({ now }: { now: Date }): ReactElement {
+  const configQuery = useQuery({
+    queryKey: ['userConfig'],
+    queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
+
+  const cfg = configQuery.data
+
+  if (configQuery.isLoading) {
+    return (
+      <section className="profile-identity-card" aria-label="About me">
+        <p className="profile-loading">Loading…</p>
+      </section>
+    )
+  }
+  if (configQuery.isError || !cfg) {
+    return (
+      <section className="profile-identity-card" aria-label="About me">
+        <p className="profile-error">Could not load identity fields.</p>
+      </section>
+    )
+  }
+
+  const age = ageFromBirthdate(cfg.birthdate, now, cfg.timezone)
+  const ageValue =
+    age != null && cfg.birthdate ? `${age} — born ${cfg.birthdate.slice(0, 10)}` : '—'
+
+  const sexValue = cfg.sex ? (SEX_LABEL[cfg.sex] ?? cfg.sex) : '—'
+  const heightValue = cfg.height_cm != null ? `${cfg.height_cm} cm` : '—'
+  const timezoneValue = cfg.timezone ?? '—'
+  const hrMaxValue = cfg.hr_max != null ? `${cfg.hr_max} bpm` : '—'
+
+  return (
+    <section className="profile-identity-card" aria-label="About me">
+      <div className="profile-identity-grid">
+        <IdentityField label="Sex" value={sexValue} unset={!cfg.sex} />
+        <IdentityField label="Age" value={ageValue} unset={age == null} />
+        <IdentityField label="Height" value={heightValue} unset={cfg.height_cm == null} />
+        <IdentityField label="Time zone" value={timezoneValue} unset={!cfg.timezone} />
+        <IdentityField label="Max heart rate" value={hrMaxValue} unset={cfg.hr_max == null} />
+      </div>
+    </section>
+  )
 }
 
 // ── stats row ─────────────────────────────────────────────────────────────────
@@ -1019,6 +1107,8 @@ export function ProfileView(): ReactElement {
   return (
     <div className="view">
       <TabHeader eyebrow="You" title="Profile" />
+
+      <IdentityCard now={now} />
 
       <div className="profile-tabs" role="tablist" aria-label="Profile sections">
         <button

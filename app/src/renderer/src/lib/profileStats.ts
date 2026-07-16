@@ -43,6 +43,67 @@ function isSwim(w: Workout): boolean {
   return cardioModalityOf(w.type) === 'swim'
 }
 
+/** "today" as a YMD string in `timezone` (IANA name), given an instant `now`.
+ *  Falls back to UTC when timezone is null/unrecognized — mirrors the
+ *  Intl.DateTimeFormat pattern used in zone2Fitness.ts's localKey helper. */
+function todayYMDInTz(now: Date, timezone: string | null | undefined): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone ?? 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(now)
+    const part = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find((p) => p.type === type)?.value ?? ''
+    const y = part('year')
+    const m = part('month')
+    const d = part('day')
+    return y && m && d ? `${y}-${m}-${d}` : toYMD(now)
+  } catch {
+    return toYMD(now)
+  }
+}
+
+/**
+ * Integer age from a YYYY-MM-DD birthdate, as of "today" in `timezone`
+ * (defaults to UTC when null/unset). Null-safe: a null/malformed birthdate
+ * returns null rather than throwing. Correct around the birthday boundary —
+ * age only increments once the birthday's month/day has been reached in the
+ * target timezone, including Feb 29 birthdates on non-leap years (treated as
+ * "not yet had the birthday" until Mar 1).
+ */
+export function ageFromBirthdate(
+  birthdate: string | null | undefined,
+  now: Date,
+  timezone?: string | null
+): number | null {
+  if (!birthdate) return null
+  const ymd = birthdate.slice(0, 10)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (!match) return null
+  const [, byStr, bmStr, bdStr] = match
+  const birthYear = Number(byStr)
+  const birthMonth = Number(bmStr)
+  const birthDay = Number(bdStr)
+  if (birthMonth < 1 || birthMonth > 12 || birthDay < 1 || birthDay > 31) return null
+
+  const todayYMD = todayYMDInTz(now, timezone)
+  const [tyStr, tmStr, tdStr] = todayYMD.split('-')
+  const todayYear = Number(tyStr)
+  const todayMonth = Number(tmStr)
+  const todayDay = Number(tdStr)
+
+  if (todayYMD < ymd) return null // birthdate is in the future — not a valid age
+
+  let age = todayYear - birthYear
+  const hadBirthdayThisYear =
+    todayMonth > birthMonth || (todayMonth === birthMonth && todayDay >= birthDay)
+  if (!hadBirthdayThisYear) age -= 1
+
+  return age < 0 ? null : age
+}
+
 // ── lifetime stats ───────────────────────────────────────────────────────────
 
 export interface ProfileStats {

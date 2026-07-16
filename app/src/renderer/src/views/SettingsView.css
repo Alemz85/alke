@@ -119,6 +119,11 @@
   max-width: 340px;
 }
 
+.settings-input--select {
+  width: 140px;
+  color: var(--color-text);
+}
+
 .settings-help {
   font-family: var(--font-body);
   font-size: var(--type-caption-size);

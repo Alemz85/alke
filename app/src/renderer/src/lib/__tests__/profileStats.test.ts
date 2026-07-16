@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Goal, GoalProgressPoint, Workout } from '@shared/types'
-import { achievements, metricProgress, profileStats, sinceLabel, timeProgress } from '../profileStats'
+import {
+  achievements,
+  ageFromBirthdate,
+  metricProgress,
+  profileStats,
+  sinceLabel,
+  timeProgress
+} from '../profileStats'
 
 // Fixed "now" so all windows are deterministic. 2026-07-10 is a Friday, ISO
 // week starting Mon 2026-07-06.
@@ -405,5 +412,76 @@ describe('sinceLabel', () => {
   it('clamps to 0 days for a future anchor', () => {
     const g = goal({ id: 'g1', status: 'active', started_at: '2026-08-01', status_changed_at: null })
     expect(sinceLabel(g, NOW).text).toBe('Active for 0 days · since')
+  })
+})
+
+// ── ageFromBirthdate ─────────────────────────────────────────────────────────
+
+describe('ageFromBirthdate', () => {
+  it('returns null for a null/undefined birthdate', () => {
+    expect(ageFromBirthdate(null, NOW)).toBeNull()
+    expect(ageFromBirthdate(undefined, NOW)).toBeNull()
+  })
+
+  it('returns null for a malformed birthdate', () => {
+    expect(ageFromBirthdate('not-a-date', NOW)).toBeNull()
+    expect(ageFromBirthdate('1997-13-40', NOW)).toBeNull()
+    expect(ageFromBirthdate('', NOW)).toBeNull()
+  })
+
+  it('computes a straightforward age (birthday already passed this year)', () => {
+    // NOW is 2026-07-10; birthday 03-14 already passed.
+    expect(ageFromBirthdate('1997-03-14', NOW)).toBe(29)
+  })
+
+  it('has not yet had the birthday this year — age is one less', () => {
+    // NOW is 2026-07-10; birthday 12-25 hasn't happened yet this year.
+    expect(ageFromBirthdate('1997-12-25', NOW)).toBe(28)
+  })
+
+  it('birthday is exactly today — age increments on the day itself', () => {
+    const now = new Date('2026-07-10T12:00:00Z')
+    expect(ageFromBirthdate('1997-07-10', now)).toBe(29)
+  })
+
+  it('the day before the birthday — still the pre-birthday age', () => {
+    const now = new Date('2026-07-09T12:00:00Z')
+    expect(ageFromBirthdate('1997-07-10', now)).toBe(28)
+  })
+
+  it('Feb 29 birthdate on a non-leap year counts the birthday as not yet reached until Mar 1', () => {
+    // 2027 is not a leap year. On Feb 28, 2027 the birthday hasn't occurred yet.
+    const feb28 = new Date('2027-02-28T12:00:00Z')
+    expect(ageFromBirthdate('2000-02-29', feb28)).toBe(26)
+    const mar1 = new Date('2027-03-01T12:00:00Z')
+    expect(ageFromBirthdate('2000-02-29', mar1)).toBe(27)
+  })
+
+  it('Feb 29 birthdate on a leap year hits exactly on Feb 29', () => {
+    const feb29 = new Date('2028-02-29T12:00:00Z')
+    expect(ageFromBirthdate('2000-02-29', feb29)).toBe(28)
+  })
+
+  it('returns null for a future birthdate', () => {
+    expect(ageFromBirthdate('2099-01-01', NOW)).toBeNull()
+  })
+
+  it('returns 0 for a birthdate earlier this year (newborn case)', () => {
+    const now = new Date('2026-07-10T12:00:00Z')
+    expect(ageFromBirthdate('2026-01-01', now)).toBe(0)
+  })
+
+  it('respects a timezone that shifts "today" relative to UTC', () => {
+    // 2026-07-10T23:30:00Z is still 2026-07-10 in UTC, but already
+    // 2026-07-11 in a timezone ahead of UTC (e.g. Pacific/Auckland, UTC+12).
+    // Birthday is 07-11, so in Auckland the birthday has just occurred.
+    const lateUtc = new Date('2026-07-10T23:30:00Z')
+    expect(ageFromBirthdate('1997-07-11', lateUtc, 'UTC')).toBe(28)
+    expect(ageFromBirthdate('1997-07-11', lateUtc, 'Pacific/Auckland')).toBe(29)
+  })
+
+  it('falls back to UTC for a null/unrecognized timezone', () => {
+    expect(ageFromBirthdate('1997-03-14', NOW, null)).toBe(29)
+    expect(ageFromBirthdate('1997-03-14', NOW, 'Not/A_Zone')).toBe(29)
   })
 })

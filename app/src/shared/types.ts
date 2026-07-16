@@ -116,6 +116,9 @@ export interface ComputedDaily {
   computed_at: string | null
 }
 
+export const USER_SEXES = ['male', 'female', 'other'] as const
+export type UserSex = (typeof USER_SEXES)[number]
+
 export interface UserConfig {
   id: number
   hr_max: number | null
@@ -130,6 +133,12 @@ export interface UserConfig {
   // Free-text personal context the user maintains on the Profile tab; read by
   // the chat agent so it knows who it's coaching.
   about_me: string | null
+  // Structured identity fields for the Profile "About me" card. All nullable
+  // until the owner fills them in Settings; age is never stored — it's
+  // computed from birthdate at read time (see lib/profileStats.ts).
+  sex: UserSex | null
+  birthdate: string | null
+  height_cm: number | null
 }
 
 // Editable subset of UserConfig — excludes `id`, which is fixed at 1.
@@ -146,6 +155,9 @@ export type UserConfigPatch = Partial<
     | 'weekly_min_sessions'
     | 'timezone'
     | 'about_me'
+    | 'sex'
+    | 'birthdate'
+    | 'height_cm'
   >
 >
 

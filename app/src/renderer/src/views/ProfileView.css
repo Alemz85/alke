@@ -55,6 +55,67 @@
   margin: 0;
 }
 
+/* ── identity card ───────────────────────────────────────────────────────── */
+/* Structured facts summary, same surface/radius/padding language as the goal
+   metric block below — quiet chrome, no domain accent (DESIGN.md "color on
+   data only"; this is identity, not a metric). */
+.profile-identity-card {
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+
+.profile-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-md);
+}
+
+@media (max-width: 1099px) {
+  .profile-identity-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .profile-identity-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.profile-identity-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-identity-label {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.profile-identity-value {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line-height);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-identity-value--unset {
+  color: var(--color-text-disabled);
+}
+
+.profile-identity-hint {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  color: var(--color-text-disabled);
+}
+
 /* ── about me ────────────────────────────────────────────────────────────── */
 .profile-about-hint {
   margin: calc(-1 * var(--space-xs)) 0 0;
