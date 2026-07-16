@@ -1,5 +1,5 @@
-import { useState, type ReactElement } from 'react'
-import { Timer } from 'lucide-react'
+import { useMemo, useState, type DragEvent, type ReactElement } from 'react'
+import { CheckCircle2, ChevronDown, ChevronUp, GripVertical, Play, Timer } from 'lucide-react'
 import type { GymTemplate } from '@shared/types'
 import { ButtonSoft } from '../../components/ButtonSoft'
 import { EmptyState } from '../../components/EmptyState'
@@ -9,9 +9,23 @@ import {
   useStartGymTemplateRun,
   useUpdateGymTemplate
 } from '../../hooks/useGymData'
+import { useCardOrder } from '../../hooks/useCardOrder'
 import { formatRest } from '../../lib/gymLog'
 import { recoveryOverviewPreview, type RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
 import { RecoveryTemplateViewModal } from './RecoveryTemplateViewModal'
+
+/**
+ * An injury only earns a card here once its recovery plan has actually been
+ * started (Injuries tab "Set plan start" / plan_started_at) — an injury with
+ * no plan yet (the common case right after logging an injury) has an empty
+ * bundle but was still rendering a card before this fix. A prose-only plan
+ * with no linked exercises yet is still a real, active plan and keeps
+ * showing (its card just can't offer "Use in log" until exercises resolve —
+ * the same gate the session-editor template picker applies there).
+ */
+function hasActivePlan(template: RecoveryLogTemplate): boolean {
+  return template.planStartedAt != null
+}
 
 const PREVIEW_LIMIT = 4
 const RECOVERY_OVERVIEW_PREVIEW_CHARS = 180
@@ -23,31 +37,162 @@ function fmtLifecycleDate(dateIso: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/** Shared delete zone (confirm/cancel dance) for both the active and archived cards. */
+function DeleteAction({ templateId }: { templateId: string }): ReactElement {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deleteMutation = useDeleteGymTemplate()
+
+  if (!confirmDelete) {
+    return (
+      <button
+        type="button"
+        className="gym-quiet-action gym-quiet-action--danger"
+        onClick={(event) => {
+          event.stopPropagation()
+          setConfirmDelete(true)
+        }}
+      >
+        Delete
+      </button>
+    )
+  }
+  return (
+    <span className="gym-tpl-card-confirm" onClick={(event) => event.stopPropagation()}>
+      <span className="gym-delete-confirm-label">Delete?</span>
+      <button
+        type="button"
+        className="gym-quiet-action gym-quiet-action--danger"
+        disabled={deleteMutation.isPending}
+        onClick={(event) => {
+          event.stopPropagation()
+          deleteMutation.mutate(templateId)
+        }}
+      >
+        {deleteMutation.isPending ? 'Deleting…' : 'Confirm'}
+      </button>
+      <button
+        type="button"
+        className="gym-quiet-action"
+        disabled={deleteMutation.isPending}
+        onClick={(event) => {
+          event.stopPropagation()
+          setConfirmDelete(false)
+        }}
+      >
+        Cancel
+      </button>
+    </span>
+  )
+}
+
+// ── reorder handle (drag + keyboard-accessible up/down fallback) ──────────
+// Same mechanism as InjuriesView's active-card list: an HTML5 drag source
+// plus up/down buttons so reordering never depends on drag-and-drop actually
+// landing (trackpad, screen reader, keyboard-only use). All controls stop
+// click/drag propagation so they never trigger the card's own onView.
+function ReorderHandle({
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onMoveUp,
+  onMoveDown,
+  disableUp,
+  disableDown
+}: {
+  dragging: boolean
+  onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+  onDragEnd: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  disableUp: boolean
+  disableDown: boolean
+}): ReactElement {
+  return (
+    <span className={`reorder-handle${dragging ? ' reorder-handle--dragging' : ''}`}>
+      <span
+        className="reorder-grip"
+        draggable
+        role="button"
+        tabIndex={-1}
+        aria-hidden="true"
+        title="Drag to reorder"
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={14} strokeWidth={1.75} />
+      </span>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move up"
+        disabled={disableUp}
+        onClick={(e) => {
+          e.stopPropagation()
+          onMoveUp()
+        }}
+      >
+        <ChevronUp size={13} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move down"
+        disabled={disableDown}
+        onClick={(e) => {
+          e.stopPropagation()
+          onMoveDown()
+        }}
+      >
+        <ChevronDown size={13} strokeWidth={2} />
+      </button>
+    </span>
+  )
+}
+
 function TemplateCard({
   template,
   usageCount,
   onView,
-  onUnarchive
+  reorder
 }: {
   template: GymTemplate
   usageCount: number
   onView: () => void
-  onUnarchive?: () => void
+  reorder: {
+    dragging: boolean
+    isFirst: boolean
+    isLast: boolean
+    onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+    onDragEnd: () => void
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void
+    onDrop: (e: DragEvent<HTMLDivElement>) => void
+    onMoveUp: () => void
+    onMoveDown: () => void
+  }
 }): ReactElement {
   const items = [...template.items].sort((a, b) => a.position - b.position)
   const preview = items.slice(0, PREVIEW_LIMIT)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const deleteMutation = useDeleteGymTemplate()
   const startRunMutation = useStartGymTemplateRun()
   const completeRunMutation = useCompleteGymTemplateRun()
+  const archiveMutation = useUpdateGymTemplate()
 
   const latestRun = template.runs[0]
   const isActive = latestRun != null && latestRun.ended_at === null
-  const lifecyclePending = startRunMutation.isPending || completeRunMutation.isPending
+  const lifecyclePending =
+    startRunMutation.isPending || completeRunMutation.isPending || archiveMutation.isPending
+
+  // Marking complete both closes the run and archives the template — it
+  // moves out of this grid into the Archive section below Recovery plans.
+  const handleMarkComplete = (): void => {
+    completeRunMutation.mutate(template.id, {
+      onSuccess: () => archiveMutation.mutate({ id: template.id, patch: { archived: true } })
+    })
+  }
 
   return (
     <div
-      className={`gym-tpl-card${template.archived ? ' gym-tpl-card--archived' : ''}`}
+      className={`gym-tpl-card${reorder.dragging ? ' gym-tpl-card--dragging' : ''}`}
       role="button"
       tabIndex={0}
       aria-label={`View ${template.name} template`}
@@ -58,7 +203,18 @@ function TemplateCard({
           onView()
         }
       }}
+      onDragOver={reorder.onDragOver}
+      onDrop={reorder.onDrop}
     >
+      <ReorderHandle
+        dragging={reorder.dragging}
+        onDragStart={reorder.onDragStart}
+        onDragEnd={reorder.onDragEnd}
+        onMoveUp={reorder.onMoveUp}
+        onMoveDown={reorder.onMoveDown}
+        disableUp={reorder.isFirst}
+        disableDown={reorder.isLast}
+      />
       <div className="gym-tpl-card-click">
         <span className="gym-tpl-card-name-row">
           <span className="gym-tpl-card-name">{template.name}</span>
@@ -103,78 +259,111 @@ function TemplateCard({
           {isActive ? (
             <button
               type="button"
-              className="gym-quiet-action"
+              className="gym-btn gym-tpl-card-lifecycle-btn"
               disabled={lifecyclePending}
               onClick={(event) => {
                 event.stopPropagation()
-                completeRunMutation.mutate(template.id)
+                handleMarkComplete()
               }}
             >
-              {completeRunMutation.isPending ? 'Completing…' : 'Mark complete'}
+              <CheckCircle2 size={13} strokeWidth={2} />
+              {completeRunMutation.isPending || archiveMutation.isPending
+                ? 'Completing…'
+                : 'Mark complete'}
             </button>
           ) : (
             <button
               type="button"
-              className="gym-quiet-action"
+              className="gym-btn gym-tpl-card-lifecycle-btn"
               disabled={lifecyclePending}
               onClick={(event) => {
                 event.stopPropagation()
                 startRunMutation.mutate(template.id)
               }}
             >
+              <Play size={13} strokeWidth={2} />
               {startRunMutation.isPending ? 'Starting…' : latestRun ? 'Resurrect' : 'Start'}
             </button>
           )}
-          {onUnarchive && (
-            <button
-              type="button"
-              className="gym-quiet-action"
-              onClick={(event) => {
-                event.stopPropagation()
-                onUnarchive()
-              }}
-            >
-              Unarchive
-            </button>
+          <DeleteAction templateId={template.id} />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** Archived template card: no lifecycle actions (those live on the active
+ * card / view modal) — just enough to bring it back or remove it for good. */
+function ArchivedTemplateCard({
+  template,
+  usageCount,
+  onView,
+  onUnarchive
+}: {
+  template: GymTemplate
+  usageCount: number
+  onView: () => void
+  onUnarchive: () => void
+}): ReactElement {
+  const items = [...template.items].sort((a, b) => a.position - b.position)
+  const preview = items.slice(0, PREVIEW_LIMIT)
+
+  return (
+    <div
+      className="gym-tpl-card gym-tpl-card--archived"
+      role="button"
+      tabIndex={0}
+      aria-label={`View ${template.name} template`}
+      onClick={onView}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onView()
+        }
+      }}
+    >
+      <div className="gym-tpl-card-click">
+        <span className="gym-tpl-card-name-row">
+          <span className="gym-tpl-card-name">{template.name}</span>
+          {template.version > 1 && (
+            <span className="gym-tpl-card-version">v{template.version}</span>
           )}
-          {!confirmDelete ? (
-            <button
-              type="button"
-              className="gym-quiet-action gym-quiet-action--danger"
-              onClick={(event) => {
-                event.stopPropagation()
-                setConfirmDelete(true)
-              }}
-            >
-              Delete
-            </button>
-          ) : (
-            <span className="gym-tpl-card-confirm" onClick={(event) => event.stopPropagation()}>
-              <span className="gym-delete-confirm-label">Delete?</span>
-              <button
-                type="button"
-                className="gym-quiet-action gym-quiet-action--danger"
-                disabled={deleteMutation.isPending}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  deleteMutation.mutate(template.id)
-                }}
-              >
-                {deleteMutation.isPending ? 'Deleting…' : 'Confirm'}
-              </button>
-              <button
-                type="button"
-                className="gym-quiet-action"
-                disabled={deleteMutation.isPending}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setConfirmDelete(false)
-                }}
-              >
-                Cancel
-              </button>
-            </span>
-          )}
+        </span>
+        {template.runs[0]?.ended_at && (
+          <span className="gym-tpl-card-lifecycle">Last done {fmtLifecycleDate(template.runs[0].ended_at)}</span>
+        )}
+        {items.length === 0 ? (
+          <span className="gym-tpl-card-empty">No exercises yet</span>
+        ) : (
+          <ul className="gym-tpl-card-items">
+            {preview.map((it, i) => (
+              <li key={i} className="gym-tpl-card-item">
+                <span className="gym-tpl-card-item-name">{it.exercise_name}</span>
+                <span className="gym-tpl-card-item-target tabular-nums">
+                  {it.target_sets ?? '—'}×{it.target_reps ?? '—'}
+                </span>
+              </li>
+            ))}
+            {items.length > PREVIEW_LIMIT && (
+              <li className="gym-tpl-card-more">+{items.length - PREVIEW_LIMIT} more</li>
+            )}
+          </ul>
+        )}
+      </div>
+      <div className="gym-tpl-card-foot">
+        <span className="gym-tpl-card-meta tabular-nums">Done {usageCount}×</span>
+        <span className="gym-tpl-card-actions">
+          <button
+            type="button"
+            className="gym-quiet-action"
+            onClick={(event) => {
+              event.stopPropagation()
+              onUnarchive()
+            }}
+          >
+            Unarchive
+          </button>
+          <DeleteAction templateId={template.id} />
         </span>
       </div>
     </div>
@@ -228,7 +417,10 @@ function RecoveryPlansSection({
   templates: RecoveryLogTemplate[]
   onView: (template: RecoveryLogTemplate) => void
 }): ReactElement | null {
-  if (templates.length === 0) return null
+  // Only show a card for injuries that actually have an active recovery plan
+  // — an injury with no plan started yet shouldn't surface a card here.
+  const loggable = templates.filter(hasActivePlan)
+  if (loggable.length === 0) return null
   return (
     <section className="gym-section">
       <div className="gym-section-head gym-rp-section-head">
@@ -238,7 +430,7 @@ function RecoveryPlansSection({
         </div>
       </div>
       <div className="gym-rp-grid">
-        {templates.map((template) => (
+        {loggable.map((template) => (
           <RecoveryTemplateCard
             key={template.id}
             template={template}
@@ -250,11 +442,44 @@ function RecoveryPlansSection({
   )
 }
 
+/** Completed/archived templates, kept out of the active grid but still reachable. */
+function ArchiveSection({
+  templates,
+  usageById,
+  onView
+}: {
+  templates: GymTemplate[]
+  usageById: Map<string, number>
+  onView: (template: GymTemplate) => void
+}): ReactElement | null {
+  const unarchiveMutation = useUpdateGymTemplate()
+  if (templates.length === 0) return null
+  return (
+    <section className="gym-section">
+      <div className="gym-section-head">
+        <h2 className="gym-section-title">Archive</h2>
+      </div>
+      <div className="gym-tpl-grid gym-tpl-grid--archived">
+        {templates.map((t) => (
+          <ArchivedTemplateCard
+            key={t.id}
+            template={t}
+            usageCount={usageById.get(t.id) ?? 0}
+            onView={() => onView(t)}
+            onUnarchive={() => unarchiveMutation.mutate({ id: t.id, patch: { archived: false } })}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
 /**
  * Templates sub-tab. Uniform rectangular cards whose full surface opens the
- * read-only view. A click
- * opens the read-only view; editing happens from there. Recovery plans are
- * separate logging-capable templates sourced from active injury plans.
+ * read-only view; editing happens from there. Recovery plans are separate
+ * logging-capable templates sourced from active injury plans. Marking a
+ * template complete archives it out of the active grid; archived templates
+ * live in the Archive section below Recovery plans until unarchived/deleted.
  */
 export function GymTemplatesTab({
   templates,
@@ -271,11 +496,20 @@ export function GymTemplatesTab({
   onNew: () => void
   onUseRecovery: (template: RecoveryLogTemplate) => void
 }): ReactElement {
-  const [showArchived, setShowArchived] = useState(false)
   const [recoveryView, setRecoveryView] = useState<RecoveryLogTemplate | null>(null)
   const active = templates.filter((t) => !t.archived)
   const archived = templates.filter((t) => t.archived)
-  const unarchiveMutation = useUpdateGymTemplate()
+
+  // Card order is frontend-only (no backend write) and scoped to the active
+  // templates grid only — Archive and Recovery plans keep their own order.
+  const activeIds = useMemo(() => active.map((t) => t.id), [active])
+  const cardOrder = useCardOrder('gym:templates:active:order', activeIds)
+  const activeById = useMemo(() => new Map(active.map((t) => [t.id, t])), [active])
+  const orderedActive = cardOrder.orderedIds
+    .map((id) => activeById.get(id))
+    .filter((t): t is GymTemplate => t != null)
+
+  const [draggedId, setDraggedId] = useState<string | null>(null)
 
   return (
     <div className="gym-subtab">
@@ -292,38 +526,44 @@ export function GymTemplatesTab({
           />
         ) : (
           <div className="gym-tpl-grid">
-            {active.map((t) => (
+            {orderedActive.map((t) => (
               <TemplateCard
                 key={t.id}
                 template={t}
                 usageCount={usageById.get(t.id) ?? 0}
                 onView={() => onView(t)}
+                reorder={{
+                  dragging: draggedId === t.id,
+                  isFirst: cardOrder.isFirst(t.id),
+                  isLast: cardOrder.isLast(t.id),
+                  onDragStart: (e) => {
+                    setDraggedId(t.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                  },
+                  onDragEnd: () => setDraggedId(null),
+                  onDragOver: (e) => {
+                    if (draggedId == null || draggedId === t.id) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  },
+                  onDrop: (e) => {
+                    e.preventDefault()
+                    if (draggedId == null || draggedId === t.id) return
+                    cardOrder.moveBefore(draggedId, t.id)
+                    setDraggedId(null)
+                  },
+                  onMoveUp: () => cardOrder.moveUp(t.id),
+                  onMoveDown: () => cardOrder.moveDown(t.id)
+                }}
               />
             ))}
           </div>
         )}
-
-        {archived.length > 0 &&
-          (!showArchived ? (
-            <button type="button" className="gym-quiet-action" onClick={() => setShowArchived(true)}>
-              Show archived ({archived.length})
-            </button>
-          ) : (
-            <div className="gym-tpl-grid gym-tpl-grid--archived">
-              {archived.map((t) => (
-                <TemplateCard
-                  key={t.id}
-                  template={t}
-                  usageCount={usageById.get(t.id) ?? 0}
-                  onView={() => onView(t)}
-                  onUnarchive={() => unarchiveMutation.mutate({ id: t.id, patch: { archived: false } })}
-                />
-              ))}
-            </div>
-          ))}
       </section>
 
       <RecoveryPlansSection templates={recoveryTemplates} onView={setRecoveryView} />
+
+      <ArchiveSection templates={archived} usageById={usageById} onView={onView} />
 
       {recoveryView && (
         <RecoveryTemplateViewModal

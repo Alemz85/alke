@@ -28,6 +28,22 @@ function entryYMD(e: InjuryLogEntry): string {
   return e.entry_date.slice(0, 10)
 }
 
+/**
+ * Today's single-day, user-authored log entry, if one exists — mirrors the
+ * server's same-day merge scope in `addInjuryLog` (source 'user', no
+ * entry_end_date, entry_date = today). Used to make the quick-log UI reflect
+ * "already logged today" instead of relying on a client-side timer: a repeat
+ * "Feeling fine" click is then a visible no-op rather than an extra optimistic
+ * row, while a flare-up log (different content) still goes through and, per
+ * the server merge rule, overwrites today's row instead of duplicating it.
+ */
+export function todayUserEntry(entries: InjuryLogEntry[], todayYMD: string): InjuryLogEntry | null {
+  for (const e of entries) {
+    if (e.source === 'user' && e.entry_end_date == null && entryYMD(e) === todayYMD) return e
+  }
+  return null
+}
+
 /** Whole days between two YMD strings (b - a), can be negative. */
 export function daysBetween(aYMD: string, bYMD: string): number {
   const a = parseYMD(aYMD).getTime()

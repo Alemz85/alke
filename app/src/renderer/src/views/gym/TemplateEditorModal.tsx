@@ -1,8 +1,8 @@
 // Template create/edit modal: name, notes, an ordered item list (exercise +
 // optional targets), and an archive toggle for existing templates.
-import { useEffect, useState, type ReactElement } from 'react'
-import { GYM_BODY_PARTS, type GymBodyPart, type GymTemplate, type NewGymTemplateItem } from '@shared/types'
-import { useAddGymTemplate, useCreateGymTemplateVersion, useUpdateGymTemplate } from '../../hooks/useGymData'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { GYM_BODY_PARTS, type Exercise, type GymBodyPart, type GymTemplate, type NewGymTemplateItem } from '@shared/types'
+import { useAddGymTemplate, useCreateGymTemplateVersion, useExercises, useUpdateGymTemplate } from '../../hooks/useGymData'
 import { Dropdown } from '../../components/Dropdown'
 import { formatRest } from '../../lib/gymLog'
 import { ExercisePicker } from './ExercisePicker'
@@ -13,7 +13,7 @@ const BODY_PART_OPTIONS = [
 ]
 import '../GymView.css'
 
-interface ItemRow {
+export interface ItemRow {
   key: string
   exerciseId: string | null
   exerciseName: string
@@ -47,14 +47,22 @@ function blankItem(): ItemRow {
   }
 }
 
-function itemsFromTemplate(template: GymTemplate): ItemRow[] {
+/**
+ * Seeds the editor rows from a saved template. bodyPartFilter is resolved
+ * from the catalog by exercise_id (not just from local ExercisePicker
+ * selections) so AI-generated templates — which reference catalog exercises
+ * directly rather than going through the picker — still autoselect a body
+ * part whenever the catalog row has one. Exported for direct unit testing
+ * (pure function: template + catalog map in, rows out).
+ */
+export function itemsFromTemplate(template: GymTemplate, exercisesById: Map<string, Exercise>): ItemRow[] {
   return [...template.items]
     .sort((a, b) => a.position - b.position)
     .map((item) => ({
       key: nextItemKey(),
       exerciseId: item.exercise_id,
       exerciseName: item.exercise_name,
-      bodyPartFilter: null,
+      bodyPartFilter: (exercisesById.get(item.exercise_id)?.body_part as GymBodyPart | null) ?? null,
       targetSets: item.target_sets != null ? String(item.target_sets) : '',
       targetReps: item.target_reps != null ? String(item.target_reps) : '',
       targetWeightKg: item.target_weight_kg != null ? String(item.target_weight_kg) : '',
@@ -164,9 +172,16 @@ export function TemplateEditorModal({
   onClose: () => void
 }): ReactElement {
   const isEdit = template != null
+  const exercisesQuery = useExercises()
+  const exercisesById = useMemo(() => {
+    const m = new Map<string, Exercise>()
+    for (const exercise of exercisesQuery.data ?? []) m.set(exercise.id, exercise)
+    return m
+  }, [exercisesQuery.data])
+
   const [name, setName] = useState(template?.name ?? '')
   const [notes, setNotes] = useState(template?.notes ?? '')
-  const [items, setItems] = useState<ItemRow[]>(template ? itemsFromTemplate(template) : [])
+  const [items, setItems] = useState<ItemRow[]>(template ? itemsFromTemplate(template, exercisesById) : [])
   const [archived, setArchived] = useState(template?.archived ?? false)
   const [defaultRestSeconds, setDefaultRestSeconds] = useState(
     template?.default_rest_s != null ? String(template.default_rest_s) : ''
@@ -185,6 +200,24 @@ export function TemplateEditorModal({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // Cold-cache safety net: if the exercise catalog wasn't loaded yet when the
+  // rows were first seeded (bodyPartFilter left null for every row), backfill
+  // once it arrives. Only touches rows still at null so it never overwrites a
+  // body part the user has since picked or explicitly cleared to "Any".
+  useEffect(() => {
+    if (exercisesById.size === 0) return
+    setItems((prev) =>
+      prev.map((it) =>
+        it.bodyPartFilter == null && it.exerciseId
+          ? { ...it, bodyPartFilter: (exercisesById.get(it.exerciseId)?.body_part as GymBodyPart | null) ?? null }
+          : it
+      )
+    )
+    // Runs once per catalog load transition, not on every keystroke — items
+    // is deliberately excluded to avoid fighting the user's own edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exercisesById])
 
   const addItem = (): void => setItems((prev) => [...prev, blankItem()])
   const updateItem = (key: string, patch: Partial<ItemRow>): void =>

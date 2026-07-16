@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { Pencil, Timer } from 'lucide-react'
+import { CheckCircle2, Pencil, Play, Timer } from 'lucide-react'
 import type { GymTemplate } from '@shared/types'
 import { Dropdown } from '../../components/Dropdown'
 import {
   useCompleteGymTemplateRun,
+  useExercises,
   useGymTemplateVersions,
-  useStartGymTemplateRun
+  useStartGymTemplateRun,
+  useUpdateGymTemplate
 } from '../../hooks/useGymData'
-import { formatRest } from '../../lib/gymLog'
+import { displayBodyPart, formatRest } from '../../lib/gymLog'
+import { estimateTemplateDurationSeconds, formatEstimatedDuration } from './gymFormat'
 import '../GymView.css'
 
 type Item = GymTemplate['items'][number]
@@ -64,6 +67,15 @@ export function TemplateViewModal({
   const versions = versionsQuery.data ?? []
   const hasMultipleVersions = versions.length > 1
 
+  const exercisesQuery = useExercises()
+  const bodyPartByExerciseId = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const exercise of exercisesQuery.data ?? []) {
+      if (exercise.body_part) m.set(exercise.id, exercise.body_part)
+    }
+    return m
+  }, [exercisesQuery.data])
+
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
   useEffect(() => {
     // Reset the selection back to the current version whenever the viewed
@@ -78,11 +90,22 @@ export function TemplateViewModal({
 
   const startRunMutation = useStartGymTemplateRun()
   const completeRunMutation = useCompleteGymTemplateRun()
-  const lifecyclePending = startRunMutation.isPending || completeRunMutation.isPending
+  const archiveMutation = useUpdateGymTemplate()
+  const lifecyclePending =
+    startRunMutation.isPending || completeRunMutation.isPending || archiveMutation.isPending
 
   const items = [...shown.items].sort((a, b) => a.position - b.position)
   const runs = [...shown.runs].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
   const isActive = runs.length > 0 && runs[0].ended_at === null
+
+  // Marking a template complete both closes its active run and archives it —
+  // it moves out of the active Templates grid into the Archive section below
+  // Recovery plans, rather than staying visible with no further action.
+  const handleMarkComplete = (): void => {
+    completeRunMutation.mutate(shown.id, {
+      onSuccess: () => archiveMutation.mutate({ id: shown.id, patch: { archived: true } })
+    })
+  }
 
   const versionOptions = [...versions]
     .sort((a, b) => a.version - b.version)
@@ -112,6 +135,30 @@ export function TemplateViewModal({
                 align="left"
               />
             )}
+            {!shown.archived &&
+              (isActive ? (
+                <button
+                  type="button"
+                  className="gym-btn gym-tv-lifecycle-btn"
+                  disabled={lifecyclePending}
+                  onClick={handleMarkComplete}
+                >
+                  <CheckCircle2 size={14} strokeWidth={2} />
+                  {completeRunMutation.isPending || archiveMutation.isPending
+                    ? 'Completing…'
+                    : 'Mark complete'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="gym-btn gym-tv-lifecycle-btn"
+                  disabled={lifecyclePending}
+                  onClick={() => startRunMutation.mutate(shown.id)}
+                >
+                  <Play size={14} strokeWidth={2} />
+                  {startRunMutation.isPending ? 'Starting…' : runs.length > 0 ? 'Resurrect' : 'Start'}
+                </button>
+              ))}
             <button type="button" className="gym-btn gym-btn--primary gym-tv-edit" onClick={onEdit}>
               <Pencil size={14} strokeWidth={2} />
               Edit
@@ -138,31 +185,14 @@ export function TemplateViewModal({
                 Rest {formatRest(shown.default_rest_s)}
               </span>
             )}
+            {items.length > 0 && (
+              <span className="gym-tv-chip" title="Rough estimate based on sets, reps, and rest">
+                {formatEstimatedDuration(estimateTemplateDurationSeconds(shown))}
+              </span>
+            )}
           </div>
 
           {shown.notes && <p className="gym-tv-notes">{shown.notes}</p>}
-
-          <div className="gym-tv-lifecycle">
-            {isActive ? (
-              <button
-                type="button"
-                className="gym-quiet-action"
-                disabled={lifecyclePending}
-                onClick={() => completeRunMutation.mutate(shown.id)}
-              >
-                {completeRunMutation.isPending ? 'Completing…' : 'Mark complete'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="gym-quiet-action"
-                disabled={lifecyclePending}
-                onClick={() => startRunMutation.mutate(shown.id)}
-              >
-                {startRunMutation.isPending ? 'Starting…' : runs.length > 0 ? 'Resurrect' : 'Start'}
-              </button>
-            )}
-          </div>
 
           <h4 className="gym-modal-section-title">Exercises</h4>
           {items.length === 0 ? (
@@ -172,11 +202,17 @@ export function TemplateViewModal({
               {items.map((item, i) => {
                 const rest = effectiveRest(item, shown)
                 const isOverride = item.rest_after_s != null
+                const bodyPart = bodyPartByExerciseId.get(item.exercise_id)
                 return (
                   <li key={i} className="gym-tv-exercise">
                     <span className="gym-tv-exercise-index tabular-nums">{i + 1}</span>
                     <span className="gym-tv-exercise-main">
-                      <span className="gym-tv-exercise-name">{item.exercise_name}</span>
+                      <span className="gym-tv-exercise-name-row">
+                        <span className="gym-tv-exercise-name">{item.exercise_name}</span>
+                        {bodyPart && (
+                          <span className="gym-tv-exercise-bodypart">{displayBodyPart(bodyPart)}</span>
+                        )}
+                      </span>
                       {item.note && <span className="gym-tv-exercise-note">{item.note}</span>}
                       {isOverride && rest != null && (
                         <span className="gym-tv-exercise-rest">

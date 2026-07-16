@@ -331,6 +331,7 @@
 .gym-modal-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-sm);
   padding: var(--space-lg) var(--space-lg) var(--space-md);
@@ -1640,12 +1641,15 @@ select.gym-input {
 }
 
 .gym-tpl-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  height: 224px;
+  /* min-height (not a fixed height): uniform-looking cards without clipping
+     the footer's action buttons when the name/lifecycle/exercise-list content
+     runs taller than the nominal card — see gym-tpl-card-click below. */
+  min-height: 224px;
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
-  overflow: hidden;
   cursor: pointer;
   transition: background var(--motion-hover);
 }
@@ -1654,9 +1658,87 @@ select.gym-input {
   background: var(--color-surface-hover);
 }
 
+.gym-tpl-card:hover .reorder-handle {
+  opacity: 1;
+}
+
 .gym-tpl-card:focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: -2px;
+}
+
+/* Dragged card: de-emphasized while it's the drag source, so the drop
+   target under the pointer is what reads as the active surface. */
+.gym-tpl-card--dragging {
+  opacity: 0.5;
+}
+
+/* ── reorder handle (drag grip + up/down fallback) ────────────────────────
+   Same mechanism/markup as InjuriesView's active-card list — quiet by
+   default and steps up to full visibility on card hover or when any of its
+   own controls has focus. */
+.reorder-handle {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.reorder-handle:focus-within {
+  opacity: 1;
+}
+
+.reorder-handle--dragging {
+  opacity: 1;
+}
+
+.reorder-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: grab;
+}
+
+.reorder-grip:active {
+  cursor: grabbing;
+}
+
+.reorder-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.reorder-step:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.reorder-step:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.reorder-step:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
 }
 
 .gym-tpl-card-click {
@@ -1676,6 +1758,10 @@ select.gym-input {
   display: flex;
   align-items: baseline;
   gap: var(--space-xs);
+  /* Reserve room so a long template name wraps clear of the absolutely
+     positioned reorder handle in the card's top-right corner instead of
+     running underneath it. */
+  padding-right: 76px;
 }
 
 .gym-tpl-card-name {
@@ -1747,9 +1833,10 @@ select.gym-input {
 .gym-tpl-card-foot {
   margin-top: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-xs) var(--space-sm);
   padding: var(--space-sm) var(--space-lg) var(--space-md);
 }
 
@@ -1770,7 +1857,21 @@ select.gym-input {
 .gym-tpl-card-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-sm);
+}
+
+/* Compact real-button treatment for the card footer's lifecycle action
+   (Mark complete / Start / Resurrect) — same gym-btn chrome as the modal's
+   Edit button, just sized to fit the tight card footer alongside Delete. */
+.gym-tpl-card-lifecycle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--type-caption-size);
 }
 
 .gym-quiet-action--danger {
@@ -1787,6 +1888,8 @@ select.gym-input {
 .gym-tv-head-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-sm);
 }
 
@@ -1797,15 +1900,17 @@ select.gym-input {
   height: 34px;
 }
 
+.gym-tv-lifecycle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  height: 34px;
+}
+
 .gym-tv-meta {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
-}
-
-.gym-tv-lifecycle {
-  display: flex;
-  align-items: center;
 }
 
 .gym-tv-runs {
@@ -1885,9 +1990,26 @@ select.gym-input {
   font-size: var(--type-body-sm-size);
 }
 
+.gym-tv-exercise-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
 .gym-tv-exercise-name {
   font-size: var(--type-body-md-size);
   color: var(--color-text);
+}
+
+.gym-tv-exercise-bodypart {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
 }
 
 .gym-tv-exercise-note {

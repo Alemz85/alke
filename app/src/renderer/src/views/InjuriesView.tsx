@@ -1,4 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type ReactElement
+} from 'react'
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query'
 import {
   ArrowLeft,
@@ -6,6 +15,9 @@ import {
   ArrowDownRight,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
   Minus,
   Trash2,
   X
@@ -35,6 +47,7 @@ import { EmptyState } from '../components'
 import { BadgeDomain } from '../components/BadgeDomain'
 import type { Domain } from '../components/domain'
 import { RecoveryPlanDetail } from '../components/RecoveryPlanDetail'
+import { useCardOrder } from '../hooks/useCardOrder'
 import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 import {
   adherencePct,
@@ -51,6 +64,7 @@ import {
   isoWeekStart,
   maxWeeksAvailable,
   shiftYMD,
+  todayUserEntry,
   weeklyAdherence,
   weeklyMatrix,
   weeklyProgress,
@@ -510,18 +524,27 @@ function FlareForm({
 function ActionRow({
   injury,
   todayYMD,
+  log,
   flareOpen,
   onToggleFlare,
   onOpenPlan
 }: {
   injury: Injury
   todayYMD: string
+  log: InjuryLogEntry[]
   flareOpen: boolean
   onToggleFlare: () => void
   onOpenPlan: () => void
 }): ReactElement {
   const queryClient = useQueryClient()
-  const [justLogged, setJustLogged] = useState(false)
+
+  // Ground "already logged today" in the actual log rather than a timer:
+  // the button stays disabled/labelled for as long as today's entry exists,
+  // however long that is, and re-enables the instant it's edited away (e.g.
+  // the user deletes today's entry). This is also what stops repeat clicks
+  // from appending duplicate optimistic rows — see logFeelingFine below.
+  const todaysEntry = useMemo(() => todayUserEntry(log, todayYMD), [log, todayYMD])
+  const loggedFineToday = todaysEntry != null && todaysEntry.note === 'Feeling fine'
 
   const fineMutation = useMutation({
     mutationFn: () =>
@@ -538,7 +561,14 @@ function ActionRow({
         temporaryId,
         todayYMD
       )
-      queryClient.setQueryData<InjuryLogEntry[]>(queryKey, (rows = []) => [temporary, ...rows])
+      // Mirror the server's same-day merge: replace today's existing
+      // single-day user entry in place rather than always prepending a new
+      // one, so a stray repeat click can never produce a second row.
+      queryClient.setQueryData<InjuryLogEntry[]>(queryKey, (rows = []) => {
+        const existing = todayUserEntry(rows, todayYMD)
+        if (existing) return rows.map((row) => (row.id === existing.id ? temporary : row))
+        return [temporary, ...rows]
+      })
       return { previous, temporaryId }
     },
     onSuccess: (result, _variables, context) => {
@@ -547,16 +577,15 @@ function ActionRow({
         rows.map((row) => (row.id === context.temporaryId ? result : row))
       )
     },
-    onError: (_error, _variables, context) => {
-      setJustLogged(false)
-      restoreInjurySnapshots(queryClient, context?.previous)
-    }
+    onError: (_error, _variables, context) => restoreInjurySnapshots(queryClient, context?.previous)
   })
 
   const logFeelingFine = (): void => {
-    setJustLogged(true)
+    // Already-logged-today is a no-op at the source, not just a disabled
+    // button: guards against a click that lands between the disabled prop
+    // updating and the next render (e.g. rapid double-click).
+    if (loggedFineToday || fineMutation.isPending) return
     fineMutation.mutate()
-    window.setTimeout(() => setJustLogged(false), 2000)
   }
 
   // Buttons stop propagation so they never trigger the card's navigation.
@@ -570,10 +599,11 @@ function ActionRow({
       <button
         type="button"
         className="injury-btn injury-action-btn"
-        disabled={fineMutation.isPending}
+        disabled={fineMutation.isPending || loggedFineToday}
+        aria-pressed={loggedFineToday}
         onClick={stop(logFeelingFine)}
       >
-        {justLogged ? '✓ Logged' : 'Feeling fine'}
+        {loggedFineToday ? '✓ Logged today' : 'Feeling fine'}
       </button>
       <button
         type="button"
@@ -677,10 +707,10 @@ function PlanStartControl({
       for (const [queryKey, rows] of previous as Array<[QueryKey, Injury[] | undefined]>) {
         queryClient.setQueryData(queryKey, patchInjuryPlanStart(rows ?? [], injury.id, planStartedAt))
       }
-      setEditing(false)
       return { previous }
     },
     onSuccess: (result) => {
+      setEditing(false)
       if (isQueuedWriteReceipt(result)) return
       for (const [queryKey, rows] of queryClient.getQueriesData<Injury[]>({
         predicate: (query) => isInjuryListQuery(query.queryKey)
@@ -696,22 +726,14 @@ function PlanStartControl({
     <div className="injury-plan-timing">
       <CalendarDays size={15} strokeWidth={1.75} aria-hidden="true" />
       {editing && !readOnly ? (
-        <label className="injury-plan-date-field">
-          <span>Plan start</span>
-          <input
-            type="date"
-            value={injury.plan_started_at ?? todayYMD}
-            max={todayYMD}
-            disabled={mutation.isPending}
-            autoFocus
-            onChange={(event) => {
-              if (event.target.value) mutation.mutate(event.target.value)
-            }}
-            onBlur={() => {
-              if (!mutation.isPending) setEditing(false)
-            }}
-          />
-        </label>
+        <DateEditField
+          label="Plan start"
+          value={injury.plan_started_at ?? todayYMD}
+          max={todayYMD}
+          disabled={mutation.isPending}
+          onCommit={(nextValue) => mutation.mutate(nextValue)}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <button
           type="button"
@@ -760,10 +782,10 @@ function StartedAtControl({
           )
         )
       }
-      setEditing(false)
       return { previous }
     },
     onSuccess: (result) => {
+      setEditing(false)
       if (isQueuedWriteReceipt(result)) return
       for (const [queryKey, rows] of queryClient.getQueriesData<Injury[]>({
         predicate: (query) => isInjuryListQuery(query.queryKey)
@@ -778,22 +800,14 @@ function StartedAtControl({
     <div className="injury-plan-timing">
       <CalendarDays size={15} strokeWidth={1.75} aria-hidden="true" />
       {editing && !readOnly ? (
-        <label className="injury-plan-date-field">
-          <span>Injury started</span>
-          <input
-            type="date"
-            value={injury.started_at ?? todayYMD}
-            max={todayYMD}
-            disabled={mutation.isPending}
-            autoFocus
-            onChange={(event) => {
-              if (event.target.value) mutation.mutate(event.target.value)
-            }}
-            onBlur={() => {
-              if (!mutation.isPending) setEditing(false)
-            }}
-          />
-        </label>
+        <DateEditField
+          label="Injury started"
+          value={injury.started_at ?? todayYMD}
+          max={todayYMD}
+          disabled={mutation.isPending}
+          onCommit={(nextValue) => mutation.mutate(nextValue)}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <button
           type="button"
@@ -806,6 +820,67 @@ function StartedAtControl({
       )}
       {mutation.isError && <span className="injury-plan-date-error">Could not update date</span>}
     </div>
+  )
+}
+
+/**
+ * Shared editing mechanism for the `type="date"` fields in this view
+ * (plan start, injury start — and any future date field). The browser fires
+ * `onChange` on every keystroke into a date subfield and on every calendar
+ * click, long before the user is done composing a value, so `onChange` must
+ * never itself commit. Instead: track a local draft, and commit exactly once
+ * — on blur (if the draft changed and is a complete, valid date) or on
+ * Enter. Escape cancels back to the last committed value without saving.
+ */
+function DateEditField({
+  label,
+  value,
+  max,
+  disabled,
+  onCommit,
+  onCancel
+}: {
+  label: string
+  value: string
+  max?: string
+  disabled?: boolean
+  onCommit: (nextValue: string) => void
+  onCancel: () => void
+}): ReactElement {
+  const [draft, setDraft] = useState(value)
+
+  const commitIfChanged = (): void => {
+    if (draft && draft !== value) onCommit(draft)
+    else onCancel()
+  }
+
+  return (
+    <label className="injury-plan-date-field">
+      <span>{label}</span>
+      <input
+        type="date"
+        value={draft}
+        max={max}
+        disabled={disabled}
+        autoFocus
+        // Composing only — never commits. The native picker and manual typing
+        // both fire this repeatedly before the user has finished choosing.
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (!disabled) commitIfChanged()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            if (!disabled) commitIfChanged()
+          } else if (event.key === 'Escape') {
+            event.preventDefault()
+            setDraft(value)
+            onCancel()
+          }
+        }}
+      />
+    </label>
   )
 }
 
@@ -1146,12 +1221,15 @@ function ThisWeekTable({
     const on = (checkedByDay.get(ymd) ?? new Set<string>()).has(item.id)
     const met = isMet(item)
     const accountable = isPlanItemAccountable(item, planStartedAt, ymd)
+    // A recorded completion always renders at full strength, even in a phase
+    // that hasn't started (done ahead of schedule, e.g. via the gym bridge) —
+    // future-muting means "not expected yet", never "not done".
     const tdCls = [
       'injury-adh-cell',
       isActivity ? 'injury-adh-cell-activity' : '',
       isActivity && i === 0 ? 'injury-adh-cell-divider' : '',
       met ? 'injury-adh-cell--met' : '',
-      !accountable ? 'injury-adh-cell--future' : ''
+      !accountable && !on ? 'injury-adh-cell--future' : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -1376,7 +1454,15 @@ function LogRowDelete({ entryId }: { entryId: number }): ReactElement {
 
   const mutation = useMutation({
     mutationFn: () => window.api.deleteInjuryLog(entryId),
-    scope: { id: 'injury-log-deletes' },
+    // Scoped per-entry (not a single shared string): mutations sharing a
+    // scope run serially, one at a time. A shared 'injury-log-deletes' scope
+    // meant deleting one entry silently queued behind any other still-in-
+    // flight delete anywhere in the app — its onMutate would still fire
+    // (so the row visibly vanished) but the actual IPC call, and thus the
+    // eventual settle, waited for the earlier mutation, reading as "stuck"
+    // until something else (e.g. leaving and reopening the card) forced a
+    // fresh fetch that incidentally matched the now-completed server state.
+    scope: { id: `injury-log-delete:${entryId}` },
     meta: { errorMessage: 'Couldn’t delete the injury note. It has been put back.' },
     onMutate: async () => {
       const prefix = ['injuries', 'log'] as const
@@ -1389,6 +1475,11 @@ function LogRowDelete({ entryId }: { entryId: number }): ReactElement {
       setConfirming(false)
       return { previous }
     },
+    // No further action needed on success: the optimistic removal in
+    // onMutate already reflects the end state, and a deleted id can't be
+    // "restored" from a result the way add/update mutations reconcile a
+    // temporary id with server data. onError is what undoes onMutate if the
+    // delete didn't actually happen.
     onError: (_error, _variables, context) =>
       restoreInjurySnapshots(queryClient, context?.previous)
   })
@@ -1503,16 +1594,97 @@ function InjuryHeader({
   )
 }
 
+// ── reorder handle (drag + keyboard-accessible up/down fallback) ──────────────
+
+/**
+ * Card reordering affordance shared by the active injury list here and the
+ * templates grid (GymTemplatesTab): a small grip that's an HTML5 drag source,
+ * plus up/down buttons so reordering never depends on drag-and-drop actually
+ * working (trackpad, screen reader, keyboard-only use). All three controls
+ * stop click/drag propagation so they never trigger the card's own onOpen.
+ */
+function ReorderHandle({
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onMoveUp,
+  onMoveDown,
+  disableUp,
+  disableDown
+}: {
+  dragging: boolean
+  onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+  onDragEnd: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  disableUp: boolean
+  disableDown: boolean
+}): ReactElement {
+  return (
+    <span className={`reorder-handle${dragging ? ' reorder-handle--dragging' : ''}`}>
+      <span
+        className="reorder-grip"
+        draggable
+        role="button"
+        tabIndex={-1}
+        aria-hidden="true"
+        title="Drag to reorder"
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical size={14} strokeWidth={1.75} />
+      </span>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move up"
+        disabled={disableUp}
+        onClick={(e) => {
+          e.stopPropagation()
+          onMoveUp()
+        }}
+      >
+        <ChevronUp size={13} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move down"
+        disabled={disableDown}
+        onClick={(e) => {
+          e.stopPropagation()
+          onMoveDown()
+        }}
+      >
+        <ChevronDown size={13} strokeWidth={2} />
+      </button>
+    </span>
+  )
+}
+
 // ── active injury card (glance + actions, navigates to full view) ─────────────
 
 function ActiveInjuryCard({
   injury,
   todayYMD,
-  onOpen
+  onOpen,
+  reorder
 }: {
   injury: Injury
   todayYMD: string
   onOpen: () => void
+  reorder: {
+    dragging: boolean
+    isFirst: boolean
+    isLast: boolean
+    onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+    onDragEnd: () => void
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void
+    onDrop: (e: DragEvent<HTMLDivElement>) => void
+    onMoveUp: () => void
+    onMoveDown: () => void
+  }
 }): ReactElement {
   const { log, plan, checks, loading } = useInjuryData(injury.id, true, todayYMD)
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
@@ -1532,7 +1704,7 @@ function ActiveInjuryCard({
   return (
     <>
       <div
-        className="injury-card injury-card--active injury-card--clickable"
+        className={`injury-card injury-card--active injury-card--clickable${reorder.dragging ? ' injury-card--dragging' : ''}`}
         role="button"
         tabIndex={0}
         onClick={onOpen}
@@ -1542,7 +1714,19 @@ function ActiveInjuryCard({
             onOpen()
           }
         }}
+        onDragOver={reorder.onDragOver}
+        onDrop={reorder.onDrop}
       >
+        <ReorderHandle
+          dragging={reorder.dragging}
+          onDragStart={reorder.onDragStart}
+          onDragEnd={reorder.onDragEnd}
+          onMoveUp={reorder.onMoveUp}
+          onMoveDown={reorder.onMoveDown}
+          disableUp={reorder.isFirst}
+          disableDown={reorder.isLast}
+        />
+
         <InjuryHeader injury={injury} />
 
         <StatRow stats={stats} adherence={adherence} />
@@ -1559,6 +1743,7 @@ function ActiveInjuryCard({
         <ActionRow
           injury={injury}
           todayYMD={todayYMD}
+          log={log}
           flareOpen={flareOpen}
           onToggleFlare={() => setFlareOpen((v) => !v)}
           onOpenPlan={() => setPlanOpen(true)}
@@ -1637,6 +1822,7 @@ function InjuryFullView({
           <ActionRow
             injury={injury}
             todayYMD={todayYMD}
+            log={log}
             flareOpen={flareOpen}
             onToggleFlare={() => setFlareOpen((v) => !v)}
             onOpenPlan={() => setPlanOpen(true)}
@@ -1649,7 +1835,6 @@ function InjuryFullView({
               onCancel={() => setFlareOpen(false)}
             />
           )}
-          <StatusControl injury={injury} />
         </>
       )}
       {readOnly && (
@@ -1657,7 +1842,6 @@ function InjuryFullView({
           <button type="button" className="injury-btn injury-action-btn" onClick={() => setPlanOpen(true)}>
             Recovery plan
           </button>
-          <StatusControl injury={injury} />
         </div>
       )}
 
@@ -1705,7 +1889,8 @@ function InjuryFullView({
 
       {injury.summary && <p className="injury-summary injury-summary--footer">{injury.summary}</p>}
 
-      <div className="injury-delete-footer">
+      <div className="injury-lifecycle-footer">
+        <StatusControl injury={injury} />
         <InjuryDeleteControl injuryId={injury.id} onDeleted={onBack} />
       </div>
 
@@ -1760,6 +1945,17 @@ export function InjuriesView(): ReactElement {
   const active = injuries.filter((i) => i.status === 'active' || i.status === 'recovering')
   const history = injuries.filter((i) => i.status === 'resolved')
 
+  // Card order is frontend-only (no backend write) and scoped to the active
+  // section only — history stays in its natural (resolved-date) order.
+  const activeIds = useMemo(() => active.map((i) => i.id), [active])
+  const cardOrder = useCardOrder('injuries:active:order', activeIds)
+  const activeById = useMemo(() => new Map(active.map((i) => [i.id, i])), [active])
+  const orderedActive = cardOrder.orderedIds
+    .map((id) => activeById.get(id))
+    .filter((i): i is Injury => i != null)
+
+  const [draggedId, setDraggedId] = useState<string | null>(null)
+
   const selected = selectedInjuryId ? injuries.find((i) => i.id === selectedInjuryId) ?? null : null
 
   // Full view replaces the entire list surface.
@@ -1810,12 +2006,35 @@ export function InjuriesView(): ReactElement {
           <EmptyState message="No active injuries. Tell the analysis chat about a flare-up or setback and it will start tracking it here." />
         ) : (
           <div className="injury-list">
-            {active.map((injury) => (
+            {orderedActive.map((injury) => (
               <ActiveInjuryCard
                 key={injury.id}
                 injury={injury}
                 todayYMD={todayYMD}
                 onOpen={() => setSelectedInjuryId(injury.id)}
+                reorder={{
+                  dragging: draggedId === injury.id,
+                  isFirst: cardOrder.isFirst(injury.id),
+                  isLast: cardOrder.isLast(injury.id),
+                  onDragStart: (e) => {
+                    setDraggedId(injury.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                  },
+                  onDragEnd: () => setDraggedId(null),
+                  onDragOver: (e) => {
+                    if (draggedId == null || draggedId === injury.id) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  },
+                  onDrop: (e) => {
+                    e.preventDefault()
+                    if (draggedId == null || draggedId === injury.id) return
+                    cardOrder.moveBefore(draggedId, injury.id)
+                    setDraggedId(null)
+                  },
+                  onMoveUp: () => cardOrder.moveUp(injury.id),
+                  onMoveDown: () => cardOrder.moveDown(injury.id)
+                }}
               />
             ))}
           </div>

@@ -15,6 +15,7 @@ import {
   isoWeekStart,
   maxWeeksAvailable,
   shiftYMD,
+  todayUserEntry,
   weeklyAdherence,
   weeklyMatrix,
   weeklyProgress,
@@ -148,6 +149,42 @@ describe('dailyPainSeries', () => {
       { date: '2026-07-10', pain: 1 },
       { date: '2026-07-12', pain: 3 }
     ])
+  })
+})
+
+// ── todayUserEntry ───────────────────────────────────────────────────────────
+
+describe('todayUserEntry', () => {
+  it('finds a single-day user entry logged today', () => {
+    const entries = [
+      entry({ id: 1, entry_date: '2026-07-09', note: 'Feeling fine' }),
+      entry({ id: 2, entry_date: TODAY, note: 'Feeling fine' })
+    ]
+    expect(todayUserEntry(entries, TODAY)?.id).toBe(2)
+  })
+
+  it('returns null when there is no entry for today', () => {
+    const entries = [entry({ id: 1, entry_date: '2026-07-09', note: 'Feeling fine' })]
+    expect(todayUserEntry(entries, TODAY)).toBeNull()
+  })
+
+  it('ignores chat-authored entries', () => {
+    const entries = [entry({ id: 1, entry_date: TODAY, source: 'chat', note: 'AI note' })]
+    expect(todayUserEntry(entries, TODAY)).toBeNull()
+  })
+
+  it('ignores dated/spanned entries (entry_end_date set)', () => {
+    const entries = [
+      entry({ id: 1, entry_date: TODAY, entry_end_date: '2026-07-12', note: 'Ongoing flare' })
+    ]
+    expect(todayUserEntry(entries, TODAY)).toBeNull()
+  })
+
+  it('finds the flare that overwrote a same-day feeling-fine row', () => {
+    // Server-side same-day merge updates the row in place: only one entry
+    // exists for today by the time the renderer reads it back.
+    const entries = [entry({ id: 5, entry_date: TODAY, note: 'Sharp twinge', pain_level: 4 })]
+    expect(todayUserEntry(entries, TODAY)?.note).toBe('Sharp twinge')
   })
 })
 

@@ -31,6 +31,7 @@
 }
 
 .injury-card {
+  position: relative;
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
@@ -46,15 +47,96 @@
   background: var(--color-surface-hover);
 }
 
+.injury-card--clickable:hover .reorder-handle {
+  opacity: 1;
+}
+
 .injury-card--clickable:focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
+}
+
+/* Dragged card: de-emphasized while it's the drag source, so the drop
+   target under the pointer is what reads as the active surface. */
+.injury-card--dragging {
+  opacity: 0.5;
+}
+
+/* ── reorder handle (drag grip + up/down fallback) ────────────────────────
+   Quiet by default (tertiary, low opacity) and steps up to full visibility
+   on card hover or when any of its own controls has focus — so keyboard
+   users tabbing to the up/down buttons never lose sight of them. */
+.reorder-handle {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.reorder-handle:focus-within {
+  opacity: 1;
+}
+
+.reorder-handle--dragging {
+  opacity: 1;
+}
+
+.reorder-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: grab;
+}
+
+.reorder-grip:active {
+  cursor: grabbing;
+}
+
+.reorder-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.reorder-step:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.reorder-step:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.reorder-step:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
 }
 
 .injury-card-header {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  /* Reserve room so a long injury name wraps clear of the absolutely
+     positioned reorder handle in the card's top-right corner instead of
+     running underneath it. */
+  padding-right: 76px;
 }
 
 .injury-name {
@@ -318,21 +400,13 @@
 }
 
 /* ── status control (Mark as healed · Reopen) ─────────────────────────────── */
+/* Lives in the lifecycle footer alongside Delete — no border/margin of its
+   own; the footer wrapper owns the separation from the rest of the card. */
 .injury-status-control {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
-  margin-top: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--color-divider-soft);
-}
-
-/* Sits inside injury-actions (readOnly branch) — no duplicate top border. */
-.injury-actions .injury-status-control {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
 }
 
 .injury-confirm-label {
@@ -400,8 +474,16 @@
 
 /* A plain hairline-separated footer at the very bottom of the full view —
    deliberately quiet and far from routine actions. No panel, no heading, no
-   accent: the delete affordance stays subtle until the two-step confirm arms. */
-.injury-delete-footer {
+   accent: both affordances stay subtle until their two-step confirm arms.
+   Mark as healed / Reopen and Delete are both lifecycle-ending actions for
+   the injury, so they're grouped together here, away from the day-to-day
+   quick-log actions higher up the card. */
+.injury-lifecycle-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
   border-top: 1px solid var(--color-divider-soft);
