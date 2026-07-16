@@ -81,8 +81,8 @@ const api: HealthApi = {
   // Synchronous local resolution — dropped File objects no longer expose `.path`
   // in Electron, so the renderer asks the preload for it via webUtils.
   getPathForFile: (file) => webUtils.getPathForFile(file),
-  chatSend: (sessionId: string | null, message: string, attachmentPaths: string[] = []) =>
-    ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message, attachmentPaths),
+  chatSend: (sessionId, message, attachmentPaths = [], mode) =>
+    ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message, attachmentPaths, mode),
   chatStop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatStop, sessionId),
   chatRename: (id: string, title: string) => ipcRenderer.invoke(IPC_CHANNELS.chatRename, id, title),
   chatDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatDelete, id),

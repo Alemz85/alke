@@ -407,7 +407,10 @@ export function InsightsView(): ReactElement {
           </div>
           <p className="insights-caption">
             Pearson r, teal positive / violet negative. Cells need ≥20 paired days; single-person
-            data — read as hypotheses, not conclusions.
+            data — read as hypotheses, not conclusions. p is autocorrelation-corrected (these are
+            smoothed daily series — the effective sample is far smaller than the day count); q is
+            the false-discovery rate across the whole grid, the number to trust before believing
+            any single cell.
           </p>
 
           {selected && (
@@ -416,8 +419,11 @@ export function InsightsView(): ReactElement {
               span={12}
               headerRight={
                 <span className="insights-scatter-meta tabular-nums">
-                  r {selected.r.toFixed(2)} · n {selected.n} · p{' '}
+                  r {selected.r.toFixed(2)} · n {selected.n}
+                  {selected.n_eff != null && ` (eff ${Math.round(selected.n_eff)})`} · p{' '}
                   {selected.p_value < 0.001 ? '<0.001' : selected.p_value.toFixed(3)}
+                  {selected.q_value != null &&
+                    ` · q ${selected.q_value < 0.001 ? '<0.001' : selected.q_value.toFixed(3)}`}
                 </span>
               }
             >

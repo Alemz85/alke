@@ -666,7 +666,8 @@ export interface HealthApi {
   chatSend(
     sessionId: string | null,
     message: string,
-    attachmentPaths?: string[]
+    attachmentPaths?: string[],
+    mode?: ChatMode
   ): Promise<{ sessionId: string }>
   chatStop(sessionId: string): Promise<boolean>
   chatRename(id: string, title: string): Promise<void>
@@ -758,7 +759,14 @@ export interface InsightCorrelation {
   lag_days: number
   r: number
   n: number
+  /** Autocorrelation-corrected (effective-sample-size) p — the honest one. */
   p_value: number
+  /** Effective n behind the correction; null on rows from older nightly runs. */
+  n_eff: number | null
+  /** Uncorrected iid p, kept for comparison. */
+  p_value_naive: number | null
+  /** Benjamini-Hochberg q across the whole sweep (~100 tests). */
+  q_value: number | null
 }
 
 export interface InsightModel {
@@ -787,6 +795,15 @@ export interface MetricsJobResult {
   durationMs: number
   error?: string
 }
+
+// Chat sessions are routed to a role via chatctx's `health` skill: the first
+// message of a fresh CLI session opens with `/health <mode>`, which makes the
+// agent read that mode's instruction files (chatctx/modes/). Resumed CLI
+// sessions already carry the mode files in context, so no prefix is re-sent
+// (see chat.ts's sendMessage) — the mode is fixed for a CLI session's lifetime
+// and is never persisted to the DB.
+export const CHAT_MODES = ['analysis', 'injuries', 'goals'] as const
+export type ChatMode = (typeof CHAT_MODES)[number]
 
 export interface ChatMessage {
   role: 'user' | 'assistant'

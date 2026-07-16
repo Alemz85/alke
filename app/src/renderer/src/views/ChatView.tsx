@@ -17,9 +17,11 @@ import {
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  CHAT_MODES,
   MAX_CHAT_ATTACHMENTS,
   type ChatAttachment,
   type ChatMessage,
+  type ChatMode,
   type ChatSessionMeta,
   type ChatStreamEvent
 } from '@shared/types'
@@ -39,6 +41,29 @@ const SUGGESTED_PROMPTS = [
   'Design next week given my current load'
 ]
 
+const DEFAULT_CHAT_MODE: ChatMode = 'analysis'
+
+const CHAT_MODE_LABELS: Record<ChatMode, string> = {
+  analysis: 'Analysis',
+  injuries: 'Injuries',
+  goals: 'Goals'
+}
+
+/**
+ * The mode picker is only meaningful before a CLI session has opened: chat.ts
+ * prefixes `/health <mode>` ONLY on a fresh CLI session (a resumed session's
+ * context already carries its mode's instruction files — see chat.ts's
+ * sendMessage), so mode is fixed for that session's lifetime and switching it
+ * afterward would be a no-op at best, misleading at worst. "Not yet begun"
+ * means no session has been opened for this composition (activeId is null,
+ * the state newAnalysis() resets to) AND no messages have been exchanged yet
+ * (guards the brief window between the optimistic user-message append and the
+ * chatSend response setting activeId, during the very first send).
+ */
+export function isComposingNewChat(activeId: string | null, messages: ChatMessage[]): boolean {
+  return activeId === null && messages.length === 0
+}
+
 export function ChatView(): ReactElement {
   const queryClient = useQueryClient()
   const statusQuery = useQuery({
@@ -52,6 +77,7 @@ export function ChatView(): ReactElement {
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [mode, setMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
   const [stream, setStream] = useState<StreamBlock[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -127,6 +153,7 @@ export function ChatView(): ReactElement {
     const session = await window.api.chatGetSession(id)
     setActiveId(id)
     setMessages(session?.messages ?? [])
+    setMode(DEFAULT_CHAT_MODE) // display-only for a resumed session — mode isn't persisted, and the picker stays hidden here anyway
     setStream([])
     setError(null)
     setBusy(false) // terminal events for a previously-active session are dropped by the stream guard
@@ -135,6 +162,7 @@ export function ChatView(): ReactElement {
   function newAnalysis(): void {
     setActiveId(null)
     setMessages([])
+    setMode(DEFAULT_CHAT_MODE)
     setStream([])
     setError(null)
     setBusy(false)
@@ -152,7 +180,8 @@ export function ChatView(): ReactElement {
       const { sessionId } = await window.api.chatSend(
         activeId,
         message,
-        attachments.map(({ path }) => path)
+        attachments.map(({ path }) => path),
+        mode
       )
       setActiveId(sessionId)
       setAttachments([])
@@ -394,6 +423,24 @@ export function ChatView(): ReactElement {
           </div>
 
           <div className="chat-composer">
+            {isComposingNewChat(activeId, messages) && (
+              <div className="chat-mode-picker" role="tablist" aria-label="Chat mode">
+                {CHAT_MODES.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={option === mode}
+                    className={
+                      option === mode ? 'chat-mode-chip chat-mode-chip--active' : 'chat-mode-chip'
+                    }
+                    onClick={() => setMode(option)}
+                  >
+                    {CHAT_MODE_LABELS[option]}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="chat-input-well">
               {attachments.length > 0 && (
                 <div className="chat-attachments" aria-label="Attached files">

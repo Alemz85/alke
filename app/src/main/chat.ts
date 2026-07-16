@@ -10,6 +10,7 @@ import {
   IPC_CHANNELS,
   MAX_CHAT_ATTACHMENTS,
   type ChatAttachment,
+  type ChatMode,
   type ChatStatus,
   type ChatStreamEvent
 } from '@shared/types'
@@ -31,7 +32,7 @@ const CHATCTX_DIR = app.isPackaged
 // message of a fresh CLI session opens with `/health <mode>`, which makes the
 // agent read that mode's instruction files (chatctx/modes/). Resumed CLI
 // sessions already carry the mode files in context, so no prefix is re-sent.
-export type ChatMode = 'analysis' | 'injuries' | 'goals'
+// (ChatMode itself lives in shared/types.ts — the renderer/preload need it too.)
 const DEFAULT_MODE: ChatMode = 'analysis'
 
 // Standard closing sentence for every headless (non-interactive) spawn, so

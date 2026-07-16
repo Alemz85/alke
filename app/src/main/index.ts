@@ -80,6 +80,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import {
   IPC_CHANNELS,
+  type ChatMode,
   type UserConfigPatch,
   type Flag,
   type GoalPatch,
@@ -344,10 +345,16 @@ function registerIpcHandlers(): void {
   )
   ipcMain.handle(
     IPC_CHANNELS.chatSend,
-    (event, sessionId: string | null, message: string, attachmentPaths: unknown) => {
+    (
+      event,
+      sessionId: string | null,
+      message: string,
+      attachmentPaths: unknown,
+      mode?: ChatMode
+    ) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) throw new Error('no window for chat send')
-      return chat.sendMessage(win, sessionId, message, attachmentPaths)
+      return chat.sendMessage(win, sessionId, message, attachmentPaths, mode)
     }
   )
 }

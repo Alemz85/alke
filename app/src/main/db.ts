@@ -2224,10 +2224,12 @@ export async function getLastIngestAt(): Promise<string | null> {
 export async function getInsightCorrelations(): Promise<InsightCorrelation[]> {
   const { data, error } = await getClient()
     .from('insight_correlations')
-    .select('var_x, var_y, lag_days, r, n, p_value')
+    .select('var_x, var_y, lag_days, r, n, p_value, n_eff, p_value_naive, q_value')
   if (error) throw new Error(error.message)
   const normalized = (data ?? []).map((row) =>
-    normalizeNumeric(row as unknown as InsightCorrelation, ['r', 'n', 'p_value', 'lag_days'])
+    normalizeNumeric(row as unknown as InsightCorrelation, [
+      'r', 'n', 'p_value', 'lag_days', 'n_eff', 'p_value_naive', 'q_value'
+    ])
   )
   // Shield, not a behavior change: insights.py always writes r/n/p_value together,
   // so a null here would mean a partially-written row. InsightCorrelation types

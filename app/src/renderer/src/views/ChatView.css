@@ -491,6 +491,51 @@
   padding: var(--space-md) var(--space-xl) var(--space-lg);
 }
 
+/* Mode picker: visible only while composing a brand-new chat (see
+   isComposingNewChat in ChatView.tsx) — mode is fixed for a CLI session's
+   whole lifetime, so once the first message is sent this row disappears and
+   never reappears for that conversation. Same compact chip/tablist idiom as
+   ChipFilter, reimplemented locally since ChipFilter's options are typed to
+   date ranges. */
+.chat-mode-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  max-width: var(--chat-read-width);
+  margin: 0 auto var(--space-sm);
+}
+
+.chat-mode-chip {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  padding: 5px 12px;
+  height: 28px;
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  line-height: var(--type-button-sm-line-height);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition:
+    background var(--motion-hover),
+    color var(--motion-hover),
+    border-color var(--motion-hover);
+}
+
+.chat-mode-chip:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.chat-mode-chip--active,
+.chat-mode-chip--active:hover {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-text-on-accent);
+}
+
 .chat-input-well {
   display: flex;
   flex-direction: column;
