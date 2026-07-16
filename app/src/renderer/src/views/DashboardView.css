@@ -1,3 +1,18 @@
+/* Top glance row — body-weight + protein pills side by side. Their own grid so
+   the two compact pills share a row and collapse to one column when narrow. */
+.dashboard-glance-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+@media (max-width: 759px) {
+  .dashboard-glance-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -144,91 +159,6 @@
   color: var(--color-text-tertiary);
 }
 
-/* Clickable metric cards (Task 1) — cards/hero-metric wrapped in a <button>
-   for keyboard-accessible, semantic click targets that open MetricDetailModal.
-   Reset native button chrome, keep the card's own visual language, and add a
-   hover/focus treatment consistent with other interactive surfaces. */
-.metric-card-button {
-  display: block;
-  width: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-lg);
-  transition: background var(--motion-hover);
-}
-
-.metric-card-button:hover .metric-card,
-.metric-card-button:focus-visible .metric-card {
-  background: var(--color-surface-hover);
-}
-
-.metric-card--clickable {
-  width: 100%;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  transition: background var(--motion-hover);
-}
-
-.metric-card--clickable:hover {
-  background: var(--color-surface-hover);
-}
-
-.hero-metric-button {
-  display: block;
-  width: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-md);
-}
-
-.hero-metric-button:hover .hero-metric-value,
-.hero-metric-button:focus-visible .hero-metric-value {
-  opacity: 0.85;
-}
-
-/* Two-stat card (ATL & TSB) */
-.dashboard-dual-stat {
-  display: flex;
-  gap: var(--space-lg);
-}
-
-.dashboard-dual-stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  flex: 1;
-}
-
-.dashboard-dual-stat-label {
-  font-family: var(--font-body);
-  font-size: var(--type-label-size);
-  font-weight: var(--type-label-weight);
-  letter-spacing: var(--type-label-letter-spacing);
-  line-height: var(--type-label-line-height);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-
-.dashboard-dual-stat-value {
-  font-family: var(--font-display);
-  font-size: var(--type-heading-lg-size);
-  font-weight: var(--type-heading-lg-weight);
-  line-height: var(--type-heading-lg-line-height);
-  letter-spacing: var(--type-heading-lg-letter-spacing);
-  color: var(--color-load-text);
-}
-
 /* Session adherence card — fills the cell height and centres its rows so the
    activity pills use the space rather than clustering at the top. */
 .dashboard-sessions-card {
@@ -267,153 +197,6 @@
   color: var(--color-text);
   font-weight: 600;
   flex-shrink: 0;
-}
-
-/* Row 2 = body-weight card + CTL/ATL chart. Give the chart card a FIXED height
-   so it bounds the grid row (a height:100% chart + height:100% weight sparkline
-   with an auto row would feed back and grow forever). The plot then flexes to
-   fill the fixed card — no empty space — and the weight card, stretched by the
-   grid to the same row height, matches it exactly. */
-.dashboard-load-chart-button .chart-card-plot {
-  flex: 1;
-  min-height: 0;
-}
-
-.dashboard-load-chart-cell {
-  display: flex;
-  min-height: 0;
-}
-
-.dashboard-load-chart-button {
-  width: 100%;
-  height: 300px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.dashboard-load-chart-button .chart-card {
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  transition: background var(--motion-hover);
-}
-
-.dashboard-load-chart-button:hover .chart-card,
-.dashboard-load-chart-button:focus-visible .chart-card {
-  background: var(--color-surface-hover);
-}
-
-.dashboard-load-chart-button:focus-visible {
-  outline: 2px solid var(--color-load);
-  outline-offset: 2px;
-}
-
-.dashboard-load-chart-key,
-.dashboard-load-chart-key > span {
-  display: flex;
-  align-items: center;
-}
-
-.dashboard-load-chart-key {
-  gap: var(--space-md);
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  color: var(--color-text-secondary);
-}
-
-.dashboard-load-chart-key > span {
-  gap: 5px;
-}
-
-.dashboard-load-chart-swatch {
-  width: 16px;
-  height: 3px;
-  border-radius: var(--radius-full);
-}
-
-.dashboard-load-chart-swatch--ctl {
-  background: var(--color-load);
-}
-
-.dashboard-load-chart-swatch--atl {
-  background: var(--color-sessions);
-}
-
-/* Body weight card (Task 2) — squarer proportions than a plain MetricCard:
-   value + terse delta on one row, date underneath, then a sparkline that
-   gives the card height and previews the popup's full chart. */
-.weight-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  height: 300px;
-  box-sizing: border-box;
-}
-
-.weight-card-value-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-.weight-card-value {
-  font-family: var(--font-display);
-  font-size: var(--type-heading-lg-size);
-  font-weight: var(--type-heading-lg-weight);
-  line-height: var(--type-heading-lg-line-height);
-  letter-spacing: var(--type-heading-lg-letter-spacing);
-  color: var(--color-recovery-text);
-}
-
-.weight-card-delta {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  font-weight: 600;
-  color: var(--color-recovery-text);
-}
-
-.weight-card-date {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-tertiary);
-}
-
-/* Sparkline flexes to fill the shared 300px row. The 90-day range is centered
-   beneath the curve so it reads as a chart caption rather than a stray axis tick. */
-.weight-card-sparkline {
-  position: relative;
-  width: 100%;
-  flex: 1;
-  min-height: 84px;
-  margin-top: var(--space-xs);
-}
-
-.weight-card-range {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: max-content;
-  text-align: center;
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  letter-spacing: var(--type-caption-letter-spacing);
-  color: var(--color-text-secondary);
-  pointer-events: none;
-}
-
-.weight-card-sparkline-empty {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  color: var(--color-text-disabled);
 }
 
 /* Recent sessions — full-width strip below the chart. Each tile opens its

@@ -1,0 +1,62 @@
+/* Compact protein glance — Dashboard top row, beside Body weight. Read-only
+   summary; the full tracker lives in Gym. No outer margins (grid gap owns it). */
+.protein-pill {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  height: 100%;
+  min-height: 108px;
+  box-sizing: border-box;
+  padding: var(--space-lg);
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-lg);
+}
+
+.protein-pill-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.protein-pill-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.protein-pill-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  color: var(--color-text);
+}
+
+.protein-pill-unit {
+  margin-left: 2px;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.protein-pill-avg {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.protein-pill-meta {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}

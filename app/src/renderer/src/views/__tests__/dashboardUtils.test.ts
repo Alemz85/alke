@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { UserConfig, Workout } from '@shared/types'
+import type { DailyMetric, UserConfig, Workout } from '@shared/types'
 import {
+  computeBodyWeightSummary,
   countSessionsForGoal,
   EM_DASH,
   fmtDelta,
   fmtDistance,
   fmtDuration,
   fmtNum,
+  humanizeDaysSince,
   humanizeWorkoutType,
   isoWeekWindowFor,
   parseWeeklyMinSessions
@@ -27,6 +29,24 @@ function makeWorkout(overrides: Partial<Workout> & { type: string }): Workout {
     source: null,
     computed: null
   }
+}
+
+/** A daily_metrics row with only the fields these tests read; rest defaulted null. */
+function makeMetric(date: string, weight_kg: number | null): DailyMetric {
+  return {
+    date,
+    resting_hr: null,
+    hrv_sdnn_ms: null,
+    respiratory_rate: null,
+    sleep_duration_min: null,
+    sleep_start: null,
+    sleep_end: null,
+    sleep_stages: null,
+    steps: null,
+    vo2max: null,
+    wrist_temp_deviation_c: null,
+    weight_kg
+  } as unknown as DailyMetric
 }
 
 describe('countSessionsForGoal', () => {
@@ -205,5 +225,88 @@ describe('fmtDistance', () => {
     expect(fmtDistance(null)).toBeNull()
     expect(fmtDistance(undefined)).toBeNull()
     expect(fmtDistance(NaN)).toBeNull()
+  })
+})
+
+describe('humanizeDaysSince', () => {
+  it('reads 0 as Today and 1 as Yesterday', () => {
+    expect(humanizeDaysSince(0)).toBe('Today')
+    expect(humanizeDaysSince(1)).toBe('Yesterday')
+  })
+
+  it('reads single-digit / <14 as "N days ago"', () => {
+    expect(humanizeDaysSince(3)).toBe('3 days ago')
+    expect(humanizeDaysSince(13)).toBe('13 days ago')
+  })
+
+  it('collapses two weeks or more into "N weeks ago"', () => {
+    expect(humanizeDaysSince(14)).toBe('2 weeks ago')
+    expect(humanizeDaysSince(30)).toBe('4 weeks ago')
+  })
+})
+
+describe('computeBodyWeightSummary', () => {
+  // All assertions pass an explicit user-tz "today" key — no machine-local
+  // Date math — so they hold regardless of the runner's timezone.
+  it('renders a quiet empty shape when there are no weigh-ins', () => {
+    const summary = computeBodyWeightSummary([makeMetric('2026-06-01', null)], '2026-07-16')
+    expect(summary.latestKg).toBeNull()
+    expect(summary.latestDate).toBeNull()
+    expect(summary.latestDateLabel).toBe(EM_DASH)
+    expect(summary.daysSince).toBeNull()
+    expect(summary.stalenessLabel).toBeNull()
+    expect(summary.deltaLabel).toBeNull()
+    expect(summary.isStale).toBe(false)
+  })
+
+  it('reports the latest reading with no delta when only one weigh-in exists', () => {
+    const summary = computeBodyWeightSummary([makeMetric('2026-07-10', 74.2)], '2026-07-16')
+    expect(summary.latestKg).toBe(74.2)
+    expect(summary.latestDate).toBe('2026-07-10')
+    expect(summary.daysSince).toBe(6)
+    expect(summary.stalenessLabel).toBe('6 days ago')
+    expect(summary.isStale).toBe(false) // exactly a week is not yet stale
+    expect(summary.deltaKg).toBeNull()
+    expect(summary.deltaLabel).toBeNull()
+  })
+
+  it('computes a signed delta vs a reading at least ~30 days older', () => {
+    const summary = computeBodyWeightSummary(
+      [makeMetric('2026-06-01', 75.0), makeMetric('2026-07-10', 74.2)],
+      '2026-07-16'
+    )
+    // 74.2 - 75.0 = -0.8 kg, gap ~39d → "1 mo"
+    expect(summary.deltaKg).toBeCloseTo(-0.8, 5)
+    expect(summary.deltaLabel).toBe('−0.8 kg vs 1 mo ago')
+  })
+
+  it('falls back to the oldest reading when nothing is ~1 month old', () => {
+    const summary = computeBodyWeightSummary(
+      [makeMetric('2026-07-01', 73.0), makeMetric('2026-07-10', 74.0)],
+      '2026-07-16'
+    )
+    // Oldest reading 9 days older → gap shows in days, gain is a "+".
+    expect(summary.deltaKg).toBeCloseTo(1.0, 5)
+    expect(summary.deltaLabel).toBe('+1.0 kg vs 9d ago')
+  })
+
+  it('marks a weigh-in older than a week as stale', () => {
+    const summary = computeBodyWeightSummary([makeMetric('2026-06-20', 74.0)], '2026-07-16')
+    expect(summary.daysSince).toBe(26)
+    expect(summary.stalenessLabel).toBe('4 weeks ago')
+    expect(summary.isStale).toBe(true)
+  })
+
+  it('skips null-weight rows interleaved among real weigh-ins', () => {
+    const summary = computeBodyWeightSummary(
+      [
+        makeMetric('2026-06-01', 75.0),
+        makeMetric('2026-06-15', null), // e.g. a day with RHR but no weigh-in
+        makeMetric('2026-07-10', 74.2)
+      ],
+      '2026-07-16'
+    )
+    expect(summary.latestKg).toBe(74.2)
+    expect(summary.deltaLabel).toBe('−0.8 kg vs 1 mo ago')
   })
 })

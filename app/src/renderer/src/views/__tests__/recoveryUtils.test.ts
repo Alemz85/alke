@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { DailyMetric } from '@shared/types'
+import type { ComputedDaily, DailyMetric } from '@shared/types'
 import {
+  buildLoadChartData,
   bucketAggregate,
   chartAxis,
   clockGoalMinutesOnSleepAxis,
   clockMinutesOnSleepAxis,
+  computeTrainingLoadSummary,
   daysAgo,
   EM_DASH,
   fmtBucketLabel,
@@ -406,5 +408,106 @@ describe('fmtBucketLabel', () => {
       `wk ${fmtLocalDate('2026-01-05', 'Europe/Paris')}`
     )
     expect(fmtBucketLabel('2026-01-01', 'monthly', 'Europe/Paris')).toBe('Jan 2026')
+  })
+})
+
+function makeComputed(overrides: Partial<ComputedDaily> & { date: string }): ComputedDaily {
+  return {
+    date: overrides.date,
+    trimp_total: overrides.trimp_total ?? null,
+    ctl: overrides.ctl ?? null,
+    atl: overrides.atl ?? null,
+    tsb: overrides.tsb ?? null,
+    acwr: null,
+    rhr_baseline_60d: null,
+    rhr_dev: null,
+    hrv_baseline_60d: null,
+    hrv_dev: null,
+    flags: null,
+    computed_at: null
+  }
+}
+
+describe('computeTrainingLoadSummary', () => {
+  // All assertions pass an explicit user-tz "today" key so the ISO-week window
+  // is deterministic regardless of the machine's timezone. Mon 2026-07-13 is the
+  // start of the ISO week containing Thu 2026-07-16.
+  const TODAY = '2026-07-16'
+
+  it('is all-null on empty input', () => {
+    const s = computeTrainingLoadSummary([], TODAY)
+    expect(s.latestCtl).toBeNull()
+    expect(s.latestAtl).toBeNull()
+    expect(s.latestTsb).toBeNull()
+    expect(s.ctlDelta7d).toBeNull()
+    expect(s.trimpThisWeek).toBeNull()
+    expect(s.trimp4wAvg).toBeNull()
+  })
+
+  it('takes CTL/ATL/TSB from the last (newest) row', () => {
+    const rows = [
+      makeComputed({ date: '2026-07-14', ctl: 40, atl: 45, tsb: -5 }),
+      makeComputed({ date: '2026-07-16', ctl: 42, atl: 50, tsb: -8 })
+    ]
+    const s = computeTrainingLoadSummary(rows, TODAY)
+    expect(s.latestCtl).toBe(42)
+    expect(s.latestAtl).toBe(50)
+    expect(s.latestTsb).toBe(-8)
+  })
+
+  it('computes the 7-day CTL delta against the exact prior date', () => {
+    const rows = [
+      makeComputed({ date: '2026-07-09', ctl: 38 }),
+      makeComputed({ date: '2026-07-16', ctl: 42 })
+    ]
+    expect(computeTrainingLoadSummary(rows, TODAY).ctlDelta7d).toBe(4)
+  })
+
+  it('sums TRIMP only over the current ISO week (Mon 07-13 .. Sun 07-19)', () => {
+    const rows = [
+      makeComputed({ date: '2026-07-12', trimp_total: 100 }), // prior week — excluded
+      makeComputed({ date: '2026-07-13', trimp_total: 30 }),
+      makeComputed({ date: '2026-07-15', trimp_total: 40 }),
+      makeComputed({ date: '2026-07-20', trimp_total: 999 }) // next week — excluded
+    ]
+    expect(computeTrainingLoadSummary(rows, TODAY).trimpThisWeek).toBe(70)
+  })
+
+  it('returns a null weekly TRIMP when no in-week row has a TRIMP value', () => {
+    const rows = [makeComputed({ date: '2026-07-14', ctl: 40 })]
+    expect(computeTrainingLoadSummary(rows, TODAY).trimpThisWeek).toBeNull()
+  })
+
+  it('averages the trailing 4 weeks of TRIMP by dividing the total by 4', () => {
+    // Four weeks back from Mon 07-13 is Mon 06-15; window is [06-15, 07-20).
+    const rows = [
+      makeComputed({ date: '2026-06-15', trimp_total: 200 }),
+      makeComputed({ date: '2026-07-13', trimp_total: 200 })
+    ]
+    expect(computeTrainingLoadSummary(rows, TODAY).trimp4wAvg).toBe(100) // 400 / 4
+  })
+})
+
+describe('buildLoadChartData', () => {
+  const TODAY = '2026-07-16'
+
+  it('keeps only rows inside the trailing window, ascending, with ctl/atl', () => {
+    const rows = [
+      makeComputed({ date: '2026-01-01', ctl: 10, atl: 12 }), // >90d before — dropped
+      makeComputed({ date: '2026-07-01', ctl: 40, atl: 44 }),
+      makeComputed({ date: '2026-07-16', ctl: 42, atl: 50 })
+    ]
+    const data = buildLoadChartData(rows, TODAY, 90)
+    expect(data.map((d) => d.date)).toEqual(['2026-07-01', '2026-07-16'])
+    expect(data[1]).toEqual({ date: '2026-07-16', ctl: 42, atl: 50 })
+  })
+
+  it('excludes rows dated after today', () => {
+    const rows = [
+      makeComputed({ date: '2026-07-16', ctl: 42, atl: 50 }),
+      makeComputed({ date: '2026-07-20', ctl: 99, atl: 99 }) // future — dropped
+    ]
+    const data = buildLoadChartData(rows, TODAY, 90)
+    expect(data.map((d) => d.date)).toEqual(['2026-07-16'])
   })
 })

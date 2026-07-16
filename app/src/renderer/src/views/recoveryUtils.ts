@@ -3,10 +3,10 @@
 // lib/format.ts (THE formatting module — see its header comment) and are
 // re-exported here so existing call sites (Recovery view + its tests) keep
 // compiling unchanged.
-import type { DailyMetric } from '@shared/types'
+import type { ComputedDaily, DailyMetric } from '@shared/types'
 import { scaleLinear } from 'd3-scale'
 import { EM_DASH, fmtDelta, fmtNum } from '../lib/format'
-import { addDays, todayYMD, ymdKey } from '../hooks/sessionsDate'
+import { addDays, isoWeekStart, todayYMD, ymdKey } from '../hooks/sessionsDate'
 
 export function chartAxis(
   values: number[],
@@ -394,6 +394,101 @@ export function fmtBucketLabel(
   }
   if (granularity === 'weekly') return `wk ${fmtLocalDate(dateStr, timezone)}`
   return fmtLocalDate(dateStr, timezone)
+}
+
+// ---------------------------------------------------------------------------
+// Training-LOAD derivation (moved here from the Dashboard when CTL/ATL/TSB/TRIMP
+// relocated to Recovery › Load). Pure over computed_daily rows + a user-tz
+// "today" key so the ISO-week window matches how the nightly job keys its rows.
+// ---------------------------------------------------------------------------
+
+/** Whole days between two "YYYY-MM-DD" strings (UTC-anchored, b - a). Shared with weight math. */
+function daysBetweenKeys(a: string, b: string): number {
+  const ta = new Date(`${a}T00:00:00Z`).getTime()
+  const tb = new Date(`${b}T00:00:00Z`).getTime()
+  return Math.round((tb - ta) / 86_400_000)
+}
+
+export interface TrainingLoadSummary {
+  latestCtl: number | null
+  latestAtl: number | null
+  latestTsb: number | null
+  /** CTL now minus CTL ~7 days ago (the exact prior date, if present). */
+  ctlDelta7d: number | null
+  /** Sum of TRIMP over the current ISO week, or null when the week has no TRIMP rows. */
+  trimpThisWeek: number | null
+  /** Trailing 4-week TRIMP total ÷ 4 (a weekly average), or null. */
+  trimp4wAvg: number | null
+}
+
+/**
+ * Derives the training-load headline numbers from date-ASCENDING computed_daily
+ * rows. `todayKey` is the user-tz today (`ymdKey(todayYMD(timezone))`) — the
+ * ISO-week window is built from it so it lines up with computed_daily's own
+ * user-tz date keys (mismatching against a machine-local week silently skewed
+ * the TRIMP total near timezone/DST edges).
+ */
+export function computeTrainingLoadSummary(
+  computedAsc: ComputedDaily[],
+  todayKey: string
+): TrainingLoadSummary {
+  const latest = computedAsc.length > 0 ? computedAsc[computedAsc.length - 1] : undefined
+  const latestCtl = latest?.ctl ?? null
+  const latestAtl = latest?.atl ?? null
+  const latestTsb = latest?.tsb ?? null
+
+  let ctlDelta7d: number | null = null
+  if (latest && latestCtl !== null) {
+    const priorKey = shiftKey(latest.date, -7)
+    const prior = computedAsc.find((r) => r.date === priorKey)
+    if (prior && prior.ctl !== null) ctlDelta7d = latestCtl - prior.ctl
+  }
+
+  const [y, m, d] = todayKey.split('-').map(Number)
+  const weekStart = isoWeekStart({ year: y, month: m, day: d })
+  const startKey = ymdKey(weekStart)
+  const endKey = ymdKey(addDays(weekStart, 7)) // exclusive
+  const fourWeeksAgoKey = ymdKey(addDays(weekStart, -28))
+
+  const thisWeekRows = computedAsc.filter((r) => r.date >= startKey && r.date < endKey)
+  const trimpThisWeek = thisWeekRows.some((r) => r.trimp_total !== null)
+    ? thisWeekRows.reduce((sum, r) => sum + (r.trimp_total ?? 0), 0)
+    : null
+
+  const fourWkRows = computedAsc.filter((r) => r.date >= fourWeeksAgoKey && r.date < endKey)
+  const trimp4wAvg = fourWkRows.some((r) => r.trimp_total !== null)
+    ? fourWkRows.reduce((sum, r) => sum + (r.trimp_total ?? 0), 0) / 4
+    : null
+
+  return { latestCtl, latestAtl, latestTsb, ctlDelta7d, trimpThisWeek, trimp4wAvg }
+}
+
+/** Shift a 'YYYY-MM-DD' key by n days (UTC-safe pure string math). */
+function shiftKey(key: string, n: number): string {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
+export interface LoadChartPoint {
+  date: string
+  ctl: number | null
+  atl: number | null
+}
+
+/**
+ * The CTL/ATL trend series over the trailing `days` window (default 90),
+ * date-ascending. `todayKey` anchors the window in user-tz. Only rows within
+ * the window are kept; the caller decides emptiness from `.some(non-null)`.
+ */
+export function buildLoadChartData(
+  computedAsc: ComputedDaily[],
+  todayKey: string,
+  days = 90
+): LoadChartPoint[] {
+  const fromKey = shiftKey(todayKey, -(days - 1))
+  return computedAsc
+    .filter((r) => r.date >= fromKey && daysBetweenKeys(r.date, todayKey) >= 0)
+    .map((r) => ({ date: r.date, ctl: r.ctl, atl: r.atl }))
 }
 
 export { EM_DASH, fmtDelta, fmtNum }

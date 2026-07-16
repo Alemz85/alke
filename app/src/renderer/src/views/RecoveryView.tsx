@@ -1,10 +1,12 @@
 import { useMemo, useState, type ReactElement } from 'react'
+import { scaleLinear } from 'd3-scale'
 import {
   Area,
   Bar,
   CartesianGrid,
   ComposedChart,
   Line,
+  LineChart,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -17,7 +19,17 @@ import {
 } from 'recharts'
 import { quantile } from 'd3-array'
 import { TabHeader } from './TabHeader'
-import { ChartCard, ChipFilter, EmptyState, FlagBanner, MetricCard } from '../components'
+import {
+  ChartCard,
+  ChipFilter,
+  EmptyState,
+  FlagBanner,
+  HeroMetric,
+  MetricCard,
+  MetricDetailModal,
+  type MetricDetailConfig,
+  type MetricDetailPoint
+} from '../components'
 import type { ChipRange } from '../components'
 import { HeroNumber } from '../components/HeroNumber'
 import {
@@ -27,18 +39,23 @@ import {
   useRecoveryTodayFlags,
   useRecoveryUserConfig
 } from '../hooks/useRecoveryData'
+import { todayYMD, ymdKey } from '../hooks/sessionsDate'
 import {
+  buildLoadChartData,
   buildWeightSeries,
   bucketAggregate,
   chartAxis,
   clockGoalMinutesOnSleepAxis,
   clockMinutesOnSleepAxis,
+  computeTrainingLoadSummary,
   daysAgo,
   fmtBucketLabel,
   fmtClockTime,
+  fmtDelta,
   fmtHoursAsHm,
   fmtHoursMinutes,
   fmtLocalDate,
+  fmtNum,
   fmtSleepAxisTime,
   granularityForDays,
   mean,
@@ -51,6 +68,67 @@ import {
   EM_DASH
 } from './recoveryUtils'
 import './RecoveryView.css'
+
+type RecoveryTab = 'load' | 'sleep'
+
+/** Short "Jun 28" label for load-chart axes / detail popups (UTC-anchored date key). */
+function fmtLoadDate(dateStr: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'short'
+  }).format(new Date(`${dateStr}T00:00:00Z`))
+}
+
+/** Builds a MetricDetailPoint[] from a computed_daily series for the load popups. */
+function toLoadDetailSeries(
+  rows: Array<{ date: string; value: number | null }>
+): MetricDetailPoint[] {
+  return rows.map(({ date, value }) => ({ date, label: fmtLoadDate(date), value }))
+}
+
+const LOAD_EXPLANATIONS = {
+  ctl: 'CTL (Chronic Training Load, sometimes called "Fitness") is a rolling ~42-day exponentially-weighted average of your daily training load (TRIMP). It rises slowly as you train consistently and represents your accumulated aerobic fitness — a single hard day barely moves it, but weeks of steady training do.',
+  ctlAtl:
+    'CTL is your slower-moving long-term training load, while ATL reacts quickly to recent work. Reading them together shows whether your short-term fatigue is running above or below the fitness base you have built.',
+  atlTsb:
+    'ATL (Acute Training Load, "Fatigue") is a fast-reacting ~7-day exponentially-weighted average of daily load — it spikes after hard days and fades quickly with rest. TSB (Training Stress Balance, "Form") is CTL minus ATL: positive means you\'re fresh or tapered, negative means you\'re carrying fatigue from recent training.',
+  trimp:
+    'TRIMP (Training Impulse) is a single-number load score for a session or day, derived from heart rate and duration. Higher means more physiological stress from that training — it is the raw input CTL and ATL are both built from.'
+} as const
+
+/** The clickable load stat tiles (ATL, TSB, TRIMP) that open their metric popup. */
+type LoadMetricKey = 'ctlAtl' | 'atlTsb' | 'trimp'
+
+interface LoadStatProps {
+  label: string
+  name: string
+  value: string
+  sub?: string
+  onClick: () => void
+}
+
+/** A small clickable load stat tile mirroring the Dashboard's old StatSquare. */
+function LoadStat({ label, name, value, sub, onClick }: LoadStatProps): ReactElement {
+  return (
+    <button
+      type="button"
+      className="recovery-load-stat"
+      onClick={onClick}
+      aria-haspopup="dialog"
+      aria-label={`${label} (${name}) — open details`}
+    >
+      <span className="recovery-load-stat-head">
+        <span className="recovery-load-stat-label">{label}</span>
+        <span className="recovery-load-stat-name">{name}</span>
+      </span>
+      <span className="recovery-load-stat-figure">
+        <span className="recovery-load-stat-value tabular-nums">{value}</span>
+        {sub && <span className="recovery-load-stat-sub">{sub}</span>}
+      </span>
+    </button>
+  )
+}
 
 const AXIS_TICK = { fontSize: 12, fill: 'var(--color-text-tertiary)' }
 const AXIS_LINE = { stroke: 'var(--color-divider-soft)' }
@@ -122,6 +200,91 @@ export function RecoveryView(): ReactElement {
     () => [...(computedDailyQuery.data ?? [])].sort((a, b) => a.date.localeCompare(b.date)),
     [computedDailyQuery.data]
   )
+
+  // --- Sub-tabs: Load (default) + Sleep. Load carries the training-load metrics
+  //     that used to live on the Dashboard; Sleep keeps everything else. ---
+  const [activeTab, setActiveTab] = useState<RecoveryTab>('load')
+
+  // --- Training LOAD tab data (CTL/ATL/TSB/TRIMP) ---
+  // computed_daily.date is keyed in the user's timezone (the nightly job's
+  // convention), so the ISO-week window this summary uses must be anchored to
+  // the same user-tz "today", not the machine's day.
+  const todayKey = ymdKey(todayYMD(timezone))
+  const loadSummary = useMemo(
+    () => computeTrainingLoadSummary(allComputed, todayKey),
+    [allComputed, todayKey]
+  )
+  const loadChartData = useMemo(
+    () => buildLoadChartData(allComputed, todayKey, 90),
+    [allComputed, todayKey]
+  )
+  const hasLoadChart = loadChartData.some((d) => d.ctl !== null || d.atl !== null)
+  const loadChartVals = loadChartData
+    .flatMap((d) => [d.ctl, d.atl])
+    .filter((v): v is number => v !== null)
+  const loadScale = scaleLinear()
+  if (loadChartVals.length > 0) {
+    const lo = Math.min(...loadChartVals)
+    const hi = Math.max(...loadChartVals)
+    const pad = Math.max(2, (hi - lo) * 0.1)
+    loadScale.domain([Math.max(0, lo - pad), hi + pad]).nice(4)
+  } else {
+    loadScale.domain([0, 1])
+  }
+  const loadAxisDomain = loadScale.domain() as [number, number]
+  const loadAxisTicks = loadScale.ticks(4)
+
+  // Load metric-detail popups (year-wide series feed the expanded charts).
+  const [openLoadMetric, setOpenLoadMetric] = useState<LoadMetricKey | null>(null)
+  const loadMetricConfigs = useMemo<Record<LoadMetricKey, MetricDetailConfig>>(() => {
+    const ctlSeries = toLoadDetailSeries(allComputed.map((r) => ({ date: r.date, value: r.ctl })))
+    const atlSeries = toLoadDetailSeries(allComputed.map((r) => ({ date: r.date, value: r.atl })))
+    const trimpSeries = toLoadDetailSeries(
+      allComputed.map((r) => ({ date: r.date, value: r.trimp_total }))
+    )
+    return {
+      ctlAtl: {
+        title: 'CTL / ATL · Training load',
+        currentValueDisplay: fmtNum(loadSummary.latestCtl, 1),
+        currentValueCaption: `CTL · ATL ${fmtNum(loadSummary.latestAtl, 1)}`,
+        series: ctlSeries,
+        secondarySeries: atlSeries,
+        explanation: LOAD_EXPLANATIONS.ctlAtl,
+        domain: 'load',
+        seriesName: 'CTL',
+        secondarySeriesName: 'ATL',
+        secondarySeriesColor: 'var(--color-sessions)'
+      },
+      atlTsb: {
+        title: 'ATL & TSB · Fatigue & Form',
+        currentValueDisplay: fmtNum(loadSummary.latestAtl, 1),
+        currentValueCaption:
+          loadSummary.latestTsb === null
+            ? undefined
+            : `ATL shown · TSB ${fmtDelta(loadSummary.latestTsb, 1)}`,
+        series: atlSeries,
+        explanation: LOAD_EXPLANATIONS.atlTsb,
+        domain: 'load',
+        seriesName: 'ATL'
+      },
+      trimp: {
+        title: 'TRIMP · Training load score',
+        currentValueDisplay:
+          loadSummary.trimpThisWeek === null
+            ? EM_DASH
+            : Math.round(loadSummary.trimpThisWeek).toString(),
+        currentValueCaption:
+          loadSummary.trimp4wAvg === null
+            ? 'this week'
+            : `this week · 4-wk avg ${Math.round(loadSummary.trimp4wAvg)}`,
+        series: trimpSeries,
+        explanation: LOAD_EXPLANATIONS.trimp,
+        domain: 'load',
+        seriesName: 'TRIMP'
+      }
+    }
+  }, [allComputed, loadSummary])
+  const openLoadConfig = openLoadMetric ? loadMetricConfigs[openLoadMetric] : null
 
   // --- Hero: last night's sleep ---
   const latestSleepRow = [...allMetrics].reverse().find((m) => m.sleep_duration_min !== null)
@@ -331,6 +494,167 @@ export function RecoveryView(): ReactElement {
         </div>
       )}
 
+      {/* Section-tab bar — Load first + default (mirrors Zone2View's idiom). */}
+      <div className="recovery-tabs" role="tablist" aria-label="Recovery section">
+        <button
+          role="tab"
+          aria-selected={activeTab === 'load'}
+          className={activeTab === 'load' ? 'recovery-tab recovery-tab--active' : 'recovery-tab'}
+          onClick={() => setActiveTab('load')}
+        >
+          Load
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === 'sleep'}
+          className={activeTab === 'sleep' ? 'recovery-tab recovery-tab--active' : 'recovery-tab'}
+          onClick={() => setActiveTab('sleep')}
+        >
+          Sleep
+        </button>
+      </div>
+
+      {activeTab === 'load' && (
+        <>
+          <button
+            type="button"
+            className="hero-metric-button"
+            onClick={() => setOpenLoadMetric('ctlAtl')}
+            aria-haspopup="dialog"
+            aria-label="Training load · CTL — open details"
+          >
+            <HeroMetric
+              eyebrow="TRAINING LOAD · CTL"
+              value={fmtNum(loadSummary.latestCtl, 1)}
+              delta={
+                loadSummary.ctlDelta7d === null
+                  ? undefined
+                  : `${fmtDelta(loadSummary.ctlDelta7d, 1)} vs 7 days ago`
+              }
+              deltaPositive={loadSummary.ctlDelta7d !== null && loadSummary.ctlDelta7d > 0}
+              domain="load"
+            />
+          </button>
+
+          <div className="recovery-load-stats">
+            <LoadStat
+              label="ATL"
+              name="Acute load"
+              value={fmtNum(loadSummary.latestAtl, 1)}
+              sub="Fatigue"
+              onClick={() => setOpenLoadMetric('atlTsb')}
+            />
+            <LoadStat
+              label="TSB"
+              name="Stress balance"
+              value={fmtNum(loadSummary.latestTsb, 1)}
+              sub="Form"
+              onClick={() => setOpenLoadMetric('atlTsb')}
+            />
+            <LoadStat
+              label="TRIMP"
+              name="Training impulse"
+              value={
+                loadSummary.trimpThisWeek === null
+                  ? EM_DASH
+                  : Math.round(loadSummary.trimpThisWeek).toString()
+              }
+              sub={
+                loadSummary.trimp4wAvg === null
+                  ? 'this week'
+                  : `4wk avg ${Math.round(loadSummary.trimp4wAvg)}`
+              }
+              onClick={() => setOpenLoadMetric('trimp')}
+            />
+          </div>
+
+          <button
+            type="button"
+            className="recovery-load-chart-button"
+            onClick={() => setOpenLoadMetric('ctlAtl')}
+            aria-haspopup="dialog"
+            aria-label="CTL and ATL training load — open expanded chart"
+          >
+            <ChartCard
+              title="Training load · 90 days"
+              span={12}
+              headerRight={
+                <div className="recovery-load-chart-key" aria-hidden="true">
+                  <span>
+                    <i className="recovery-load-chart-swatch recovery-load-chart-swatch--ctl" />
+                    CTL
+                  </span>
+                  <span>
+                    <i className="recovery-load-chart-swatch recovery-load-chart-swatch--atl" />
+                    ATL
+                  </span>
+                </div>
+              }
+            >
+              {hasLoadChart ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={loadChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid
+                      vertical={false}
+                      stroke="var(--color-divider-soft)"
+                      strokeOpacity={0.55}
+                    />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={fmtLoadDate}
+                      tick={AXIS_TICK}
+                      axisLine={AXIS_LINE}
+                      tickLine={false}
+                      minTickGap={32}
+                    />
+                    <YAxis
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={32}
+                      domain={loadAxisDomain}
+                      ticks={loadAxisTicks}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
+                      labelFormatter={(label) => fmtLoadDate(String(label))}
+                      formatter={(value: number, name: string) => [Number(value).toFixed(1), name]}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="ctl"
+                      name="CTL"
+                      stroke="var(--color-load)"
+                      strokeWidth={2.25}
+                      dot={false}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="atl"
+                      name="ATL"
+                      stroke="var(--color-sessions)"
+                      strokeWidth={1.75}
+                      strokeDasharray="5 4"
+                      dot={false}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="No training-load history yet — CTL and ATL will chart here once the nightly metrics job has run." />
+              )}
+            </ChartCard>
+          </button>
+        </>
+      )}
+
+      {activeTab === 'sleep' && (
+        <>
       <section className="recovery-hero" aria-label="Last night recovery summary">
         <div className="hero-metric">
           <div className="hero-metric-eyebrow hero-metric-eyebrow--recovery">
@@ -997,6 +1321,12 @@ export function RecoveryView(): ReactElement {
           </ChartCard>
         </div>
       </div>
+        </>
+      )}
+
+      {openLoadConfig && (
+        <MetricDetailModal config={openLoadConfig} onClose={() => setOpenLoadMetric(null)} />
+      )}
     </div>
   )
 }
