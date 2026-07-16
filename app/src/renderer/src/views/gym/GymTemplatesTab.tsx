@@ -1,14 +1,9 @@
 import { useMemo, useState, type DragEvent, type ReactElement } from 'react'
-import { CheckCircle2, ChevronDown, ChevronUp, GripVertical, Play, Timer } from 'lucide-react'
+import { ChevronDown, ChevronUp, GripVertical, Timer } from 'lucide-react'
 import type { GymTemplate } from '@shared/types'
 import { ButtonSoft } from '../../components/ButtonSoft'
 import { EmptyState } from '../../components/EmptyState'
-import {
-  useCompleteGymTemplateRun,
-  useDeleteGymTemplate,
-  useStartGymTemplateRun,
-  useUpdateGymTemplate
-} from '../../hooks/useGymData'
+import { useDeleteGymTemplate, useUpdateGymTemplate } from '../../hooks/useGymData'
 import { useCardOrder } from '../../hooks/useCardOrder'
 import { formatRest } from '../../lib/gymLog'
 import { recoveryOverviewPreview, type RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
@@ -173,22 +168,9 @@ function TemplateCard({
 }): ReactElement {
   const items = [...template.items].sort((a, b) => a.position - b.position)
   const preview = items.slice(0, PREVIEW_LIMIT)
-  const startRunMutation = useStartGymTemplateRun()
-  const completeRunMutation = useCompleteGymTemplateRun()
-  const archiveMutation = useUpdateGymTemplate()
 
   const latestRun = template.runs[0]
   const isActive = latestRun != null && latestRun.ended_at === null
-  const lifecyclePending =
-    startRunMutation.isPending || completeRunMutation.isPending || archiveMutation.isPending
-
-  // Marking complete both closes the run and archives the template — it
-  // moves out of this grid into the Archive section below Recovery plans.
-  const handleMarkComplete = (): void => {
-    completeRunMutation.mutate(template.id, {
-      onSuccess: () => archiveMutation.mutate({ id: template.id, patch: { archived: true } })
-    })
-  }
 
   return (
     <div
@@ -255,38 +237,6 @@ function TemplateCard({
             {formatRest(template.default_rest_s)}
           </span>
         )}
-        <span className="gym-tpl-card-actions">
-          {isActive ? (
-            <button
-              type="button"
-              className="gym-btn gym-tpl-card-lifecycle-btn"
-              disabled={lifecyclePending}
-              onClick={(event) => {
-                event.stopPropagation()
-                handleMarkComplete()
-              }}
-            >
-              <CheckCircle2 size={13} strokeWidth={2} />
-              {completeRunMutation.isPending || archiveMutation.isPending
-                ? 'Completing…'
-                : 'Mark complete'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="gym-btn gym-tpl-card-lifecycle-btn"
-              disabled={lifecyclePending}
-              onClick={(event) => {
-                event.stopPropagation()
-                startRunMutation.mutate(template.id)
-              }}
-            >
-              <Play size={13} strokeWidth={2} />
-              {startRunMutation.isPending ? 'Starting…' : latestRun ? 'Resurrect' : 'Start'}
-            </button>
-          )}
-          <DeleteAction templateId={template.id} />
-        </span>
       </div>
     </div>
   )

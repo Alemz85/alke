@@ -1854,24 +1854,15 @@ select.gym-input {
   font-size: var(--type-caption-size);
 }
 
+/* Used by ArchivedTemplateCard's foot only — the active TemplateCard is
+   glance-only (no actions row; the whole card opens the view modal, which
+   owns lifecycle/delete). */
 .gym-tpl-card-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-sm);
-}
-
-/* Compact real-button treatment for the card footer's lifecycle action
-   (Mark complete / Start / Resurrect) — same gym-btn chrome as the modal's
-   Edit button, just sized to fit the tight card footer alongside Delete. */
-.gym-tpl-card-lifecycle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  height: 26px;
-  padding: 0 10px;
-  font-size: var(--type-caption-size);
 }
 
 .gym-quiet-action--danger {
@@ -1934,6 +1925,21 @@ select.gym-input {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* A plain hairline-separated footer at the bottom of the modal, outside the
+   scrolling body — deliberately quiet and away from Edit/lifecycle in the
+   head, per DESIGN.md's rule that destructive actions never sit next to
+   primary ones. Reuses .gym-delete-zone/.gym-btn--danger (SessionEditorModal's
+   log-delete idiom) rather than a bespoke treatment. */
+.gym-tv-footer {
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space-lg) var(--space-lg);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.gym-tv-footer .gym-delete-zone {
+  margin-left: 0;
 }
 
 .gym-tv-chip {

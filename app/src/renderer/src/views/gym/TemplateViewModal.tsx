@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { CheckCircle2, Pencil, Play, Timer } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { CheckCircle2, Pencil, Play, Timer, Trash2 } from 'lucide-react'
 import type { GymTemplate } from '@shared/types'
 import { Dropdown } from '../../components/Dropdown'
 import {
   useCompleteGymTemplateRun,
+  useDeleteGymTemplate,
   useExercises,
   useGymTemplateVersions,
   useStartGymTemplateRun,
@@ -37,6 +38,77 @@ function targetLine(item: Item): string {
 /** Effective rest for a template item: its own override, else the template default. */
 function effectiveRest(item: Item, template: GymTemplate): number | null {
   return item.rest_after_s ?? template.default_rest_s ?? null
+}
+
+/**
+ * Permanently deletes a template. Two-step inline confirm (never browser
+ * confirm()) — mirrors SessionEditorModal's log-delete zone: first click
+ * arms, auto-disarms after 4s, second click commits. Lives in a
+ * hairline-separated modal footer, away from Edit/lifecycle so it never sits
+ * next to routine actions. Closes the modal on success since the template it
+ * was viewing is gone.
+ */
+function TemplateDeleteControl({
+  templateId,
+  onDeleted
+}: {
+  templateId: string
+  onDeleted: () => void
+}): ReactElement {
+  const [confirming, setConfirming] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const deleteMutation = useDeleteGymTemplate()
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    }
+  }, [])
+
+  const handleClick = (): void => {
+    if (!confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 4000)
+      return
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    deleteMutation.mutate(templateId, { onSuccess: onDeleted })
+  }
+
+  return (
+    <div className="gym-delete-zone">
+      {confirming ? (
+        <>
+          <span className="gym-delete-confirm-label">Delete this template?</span>
+          <button
+            type="button"
+            className="gym-btn gym-btn--danger"
+            disabled={deleteMutation.isPending}
+            onClick={handleClick}
+          >
+            {deleteMutation.isPending ? 'Deleting…' : 'Confirm delete'}
+          </button>
+          <button
+            type="button"
+            className="gym-btn"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (confirmTimer.current) clearTimeout(confirmTimer.current)
+              setConfirming(false)
+            }}
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button type="button" className="gym-btn gym-btn--danger" onClick={handleClick}>
+          <Trash2 size={14} strokeWidth={1.6} aria-hidden="true" />
+          Delete template
+        </button>
+      )}
+      {deleteMutation.isError && <span className="gym-delete-confirm-label">Could not delete</span>}
+    </div>
+  )
 }
 
 /**
@@ -244,6 +316,10 @@ export function TemplateViewModal({
               ))}
             </ul>
           )}
+        </div>
+
+        <div className="gym-tv-footer">
+          <TemplateDeleteControl templateId={shown.id} onDeleted={onClose} />
         </div>
       </div>
     </div>

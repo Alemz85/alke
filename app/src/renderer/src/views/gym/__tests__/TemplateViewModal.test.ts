@@ -137,4 +137,47 @@ describe('TemplateViewModal', () => {
     expect(headActions).not.toContain('gym-quiet-action')
     expect(markup).not.toContain('gym-tv-lifecycle"')
   })
+
+  it('places Delete in a footer zone, away from Edit/lifecycle in the head', () => {
+    const template: GymTemplate = {
+      id: 'template-d',
+      name: 'Deletable Template',
+      notes: null,
+      archived: false,
+      default_rest_s: null,
+      family_id: 'template-d-family',
+      version: 1,
+      is_current: true,
+      runs: [],
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: null,
+      items: []
+    }
+
+    const queryClient = new QueryClient()
+    const markup = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(TemplateViewModal, {
+          template,
+          usageCount: 0,
+          onEdit: () => undefined,
+          onClose: () => undefined
+        })
+      )
+    )
+
+    // Delete lives in its own hairline-separated footer, not in the head
+    // actions row next to Edit/Mark complete/Start.
+    const footerMatch = markup.match(/<div class="gym-tv-footer">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/)
+    expect(footerMatch).not.toBeNull()
+    const footer = footerMatch![1]
+    expect(footer).toContain('Delete template')
+    expect(footer).toContain('gym-btn--danger')
+
+    const headActionsMatch = markup.match(/<div class="gym-tv-head-actions">([\s\S]*?)<\/div>\s*<\/div>/)
+    expect(headActionsMatch).not.toBeNull()
+    expect(headActionsMatch![1]).not.toContain('Delete')
+  })
 })
