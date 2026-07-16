@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProteinDay } from '@shared/types'
-import { deriveProteinGlance, deriveProteinTargetFraction } from '../ProteinPill'
+import { deriveProteinGlance, deriveProteinTargetFraction, parseGramsInput } from '../ProteinPill'
 import { isoWeekStart } from '../../hooks/sessionsDate'
 
 // Mon 2026-07-13 anchors the ISO week containing Thu 2026-07-16.
@@ -66,5 +66,34 @@ describe('deriveProteinTargetFraction', () => {
     const result = deriveProteinTargetFraction(0, 120)
     expect(result?.fraction).toBe(0)
     expect(result?.remainingG).toBe(120)
+  })
+})
+
+// Dashboard inline add — mirrors ProteinCard's Gym-tab add flow, scoped to
+// today. parseGramsInput backs the pill's own guard against empty/invalid input.
+describe('parseGramsInput', () => {
+  it('parses a valid positive integer string', () => {
+    expect(parseGramsInput('35')).toBe(35)
+  })
+
+  it('parses a valid positive decimal string', () => {
+    expect(parseGramsInput('27.5')).toBeCloseTo(27.5, 5)
+  })
+
+  it('rejects empty input', () => {
+    expect(parseGramsInput('')).toBeNull()
+  })
+
+  it('rejects non-numeric input', () => {
+    expect(parseGramsInput('abc')).toBeNull()
+  })
+
+  it('rejects zero and negative input', () => {
+    expect(parseGramsInput('0')).toBeNull()
+    expect(parseGramsInput('-10')).toBeNull()
+  })
+
+  it('rejects non-finite input', () => {
+    expect(parseGramsInput('Infinity')).toBeNull()
   })
 })

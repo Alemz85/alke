@@ -1,12 +1,14 @@
 /* Compact body-weight pill — Dashboard top row. Recovery-domain accent on the
    value; a stale weigh-in (>1 week) dims the whole pill so an old reading never
-   masquerades as fresh. No outer margins — the .view / grid gap owns spacing. */
+   masquerades as fresh. No outer margins — the .view / grid gap owns spacing.
+   min-height matches .stat-square (the RHR tile one row below) so both rows of
+   compact dashboard tiles read as one consistent tile family. */
 .bodyweight-pill {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
   height: 100%;
-  min-height: 108px;
+  min-height: 132px;
   box-sizing: border-box;
   padding: var(--space-lg);
   background: var(--color-surface-elevated);

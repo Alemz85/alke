@@ -1,0 +1,160 @@
+/* Dashboard Goals strip — same neutral-chrome / color-on-data-only law as
+   ProfileView.css: only the progress fill and delta direction carry color.
+   No outer margins (the .view flex gap handles the 32px seam above it). */
+
+.goal-strip-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.goal-strip-section-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
+  letter-spacing: var(--type-heading-md-letter-spacing);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.goal-strip-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+}
+
+@media (max-width: 1099px) {
+  .goal-strip-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .goal-strip-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.goal-strip-card {
+  background: var(--color-surface-elevated);
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background var(--motion-hover);
+}
+
+.goal-strip-card:hover {
+  background: var(--color-surface-hover);
+}
+
+.goal-strip-card:focus-visible {
+  outline: 2px solid var(--color-load);
+  outline-offset: 2px;
+}
+
+.goal-strip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.goal-strip-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  line-height: var(--type-heading-sm-line-height);
+  color: var(--color-text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-strip-day {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.goal-strip-metric-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.goal-strip-metric-name {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-strip-metric-value {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+.goal-strip-metric-range {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-secondary);
+}
+
+.goal-strip-delta--neutral {
+  color: var(--color-text-tertiary);
+}
+
+.goal-strip-delta--improving {
+  color: var(--color-aerobic-text);
+}
+
+.goal-strip-delta--regressing {
+  color: var(--color-flag-text);
+}
+
+.goal-strip-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-divider-soft);
+  overflow: hidden;
+}
+
+.goal-strip-bar-fill {
+  height: 100%;
+  background: var(--color-load);
+  border-radius: var(--radius-full);
+  transition: width var(--motion-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-strip-bar-fill {
+    transition: none;
+  }
+}
+
+.goal-strip-empty {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+}

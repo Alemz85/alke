@@ -12,17 +12,23 @@
 //     (no --color-flag), so the bar never reads as alarming.
 //   * When unset, it keeps the original today-vs-week-average framing exactly
 //     — that comparison is still the more honest one when there's no target.
-//   * A one-tap add is deliberately NOT reused here. The full ProteinCard is a
-//     day-navigator + weekly table; a bare "+g" on the dashboard would fork that
-//     flow and confuse which day gets the grams. The pill instead points the eye
-//     to the Gym tab (plain copy, since wiring a live tab-jump would need a new
-//     Dashboard prop and a change to App.tsx — outside this view's surface).
-import { useMemo, type ReactElement } from 'react'
+//
+// Design note — inline add:
+//   * A compact grams input + Add button writes straight to TODAY, reusing
+//     useAddProtein(todayKey) — the exact same mutation/optimistic pattern
+//     ProteinCard uses (hooks/useProteinData.ts), just scoped to today instead
+//     of a navigable day. This keeps both views consistent: an add here and an
+//     add in the Gym tab both flow through the same per-date-scoped mutation,
+//     optimistic cache patch, and error rollback.
+//   * The full day-navigator + weekly table stay Gym-only — the pill only
+//     ever targets today, so there's no ambiguity about which day the grams
+//     land on. The meta line still points to the Gym tab for backfills/corrections.
+import { useMemo, useState, type ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ProteinDay, UserConfig } from '@shared/types'
 import { fmtNum } from '../lib/format'
 import { proteinWeekTable } from '../lib/proteinWeek'
-import { useProteinLog } from '../hooks/useProteinData'
+import { useAddProtein, useProteinLog } from '../hooks/useProteinData'
 import { isoWeekStart, todayYMD, ymdKey } from '../hooks/sessionsDate'
 import './ProteinPill.css'
 
@@ -64,15 +70,32 @@ export function deriveProteinTargetFraction(
   }
 }
 
+/**
+ * Pure: parses the compact add-grams input, mirroring ProteinCard's inline
+ * `Number(input) > 0` guard. Returns null for empty/non-numeric/non-positive
+ * input so callers can no-op instead of firing a zero/NaN mutation.
+ */
+export function parseGramsInput(raw: string): number | null {
+  const grams = Number(raw)
+  if (!Number.isFinite(grams) || grams <= 0) return null
+  return grams
+}
+
 export function ProteinPill({ timezone }: ProteinPillProps): ReactElement {
   const today = useMemo(() => todayYMD(timezone), [timezone])
   const weekStart = useMemo(() => isoWeekStart(today), [today])
   const fromKey = ymdKey(weekStart)
   const todayKey = ymdKey(today)
 
+  const [input, setInput] = useState('')
+
   // Fetch the ISO week so far (Monday → today). proteinWeekTable fills the rest
   // of the Mon–Sun week with 0g, so the average keeps its full 7-day denominator.
   const proteinLogQuery = useProteinLog(fromKey, todayKey)
+
+  // Scoped to today, same as ProteinCard scopes to its selected day — see the
+  // per-date scope rationale in useProteinData.ts.
+  const addProtein = useAddProtein(todayKey)
 
   // Same query key/shape as ProfileView's IdentityCard — cheap, cached, and
   // picks up a Settings save via that view's broad invalidateQueries().
@@ -95,9 +118,41 @@ export function ProteinPill({ timezone }: ProteinPillProps): ReactElement {
     [todayGrams, target]
   )
 
+  function handleAdd(): void {
+    const grams = parseGramsInput(input)
+    if (grams === null) return
+    addProtein.mutate({ date: todayKey, grams })
+    setInput('')
+  }
+
   return (
     <div className="protein-pill">
-      <span className="protein-pill-eyebrow">Protein · today</span>
+      <div className="protein-pill-head">
+        <span className="protein-pill-eyebrow">Protein · today</span>
+        <div className="protein-pill-add">
+          <input
+            type="text"
+            inputMode="decimal"
+            className="protein-pill-input"
+            placeholder="g"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAdd()
+            }}
+            aria-label="Grams of protein to add to today"
+          />
+          <button
+            type="button"
+            className="protein-pill-add-btn"
+            onClick={handleAdd}
+            disabled={addProtein.isPending}
+            aria-label="Add protein to today"
+          >
+            Add
+          </button>
+        </div>
+      </div>
       <div className="protein-pill-figure">
         <span className="protein-pill-value tabular-nums">
           {fmtNum(todayGrams, 0)}
@@ -135,13 +190,14 @@ export function ProteinPill({ timezone }: ProteinPillProps): ReactElement {
       <span className="protein-pill-meta">
         {targetGlance != null
           ? hasToday
-            ? `${targetGlance.remainingG}g to go · log in Gym`
-            : 'Nothing logged today — track it in the Gym tab'
+            ? `${targetGlance.remainingG}g to go`
+            : 'Nothing logged today'
           : hasToday
             ? deltaVsAvg !== null
-              ? `${deltaVsAvg >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaVsAvg))}g vs week avg · log in Gym`
-              : 'Log protein in the Gym tab'
-            : 'Nothing logged today — track it in the Gym tab'}
+              ? `${deltaVsAvg >= 0 ? '+' : '−'}${Math.abs(Math.round(deltaVsAvg))}g vs week avg`
+              : 'Logged today'
+            : 'Nothing logged today'}
+        {' · full log in Gym'}
       </span>
     </div>
   )

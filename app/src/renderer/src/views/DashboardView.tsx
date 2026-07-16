@@ -13,6 +13,7 @@ import { ProteinPill } from '../components/ProteinPill'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { SummaryCard } from '../components/SummaryCard'
+import { GoalStrip } from '../components/GoalStrip'
 import { ModalityIcon } from '../components/ModalityIcon'
 import { ActivityBadge } from '../components/ActivityBadge'
 import { activityEnvironmentAccent, modalityLabel } from '../components/modalityAccent'
@@ -46,6 +47,8 @@ const EM_DASH = '—'
 export interface DashboardViewProps {
   /** Navigate to the full Sessions view (calendar box header + recent-sessions box). */
   onOpenSessions: () => void
+  /** Navigate to the Profile tab (Goals strip card click-through). */
+  onOpenProfile: () => void
 }
 
 /** The remaining clickable dashboard metric (RHR) — load metrics moved to Recovery › Load. */
@@ -98,7 +101,7 @@ function StatSquare({ label, name, value, sub, domain, onClick }: StatSquareProp
   )
 }
 
-export function DashboardView({ onOpenSessions }: DashboardViewProps): ReactElement {
+export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewProps): ReactElement {
   const userConfigQuery = useUserConfig()
   // A year of daily metrics feeds the RHR detail popup and the body-weight
   // pill's ~30-day-ago comparison; the pill/RHR calcs filter by date so the
@@ -345,6 +348,8 @@ export function DashboardView({ onOpenSessions }: DashboardViewProps): ReactElem
           <SummaryCard title={`${viewYear} · monthly average`} rows={yearStatRows} />
         </div>
       </div>
+
+      <GoalStrip onOpenProfile={onOpenProfile} />
 
       {selectedDayKey && selectedBucket && (
         <DayDetailDrawer
