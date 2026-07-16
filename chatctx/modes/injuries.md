@@ -49,6 +49,18 @@ When the user narrates a history, DECOMPOSE it into the log rather than dumping 
 
 Worked example — a wrist-pain entry whose summary had swallowed a year of history decomposes to a timeless summary (where it is, what reproduces/relieves it, what it excludes, "working hypothesis, not clinically confirmed") plus four log rows: a `2024 → early 2025` entry at `--precision year` for the recurring pattern, a `2025-03-10` flare entry, a `2025-03-14` "≈50% better, no longer tender" entry, and a `2025-03-14 → today` span at `--pain 0` for "no recurrence since". `started_at` = 2024.
 
+### `note` is append-journal, not the app's same-day merge — there is no edit/delete verb
+
+`injuries.py note` always **appends** a new `injury_notes` row (a plain `POST`); it is intentionally NOT the app's quick-log behavior, which merges same-day entries. Multiple dated (or spanned) entries on the same day are normal and expected here — that is how a history decomposes into the log (see above), not a bug to avoid.
+
+This means `injuries.py` has **no verb that edits or removes an existing note** — `note`/`notes` are the only note-facing subcommands (append, list). There is no `note-update` or `note-remove`, unlike the plan-item side (`plan-update`, `plan-remove`). Do not invent one or call a nonexistent flag.
+
+Consequences for CORRECTING (not adding to) a same-day entry:
+
+- If you logged something wrong moments ago in the same session (typo, wrong pain level, wrong context) and no other note has been added since, the practical fix is to re-run `injuries.py list`/`show`/`notes` to confirm exactly what's there, then tell the user directly that `injury_notes` has no row-level edit/delete path from this CLI — a correction requires a manual DB statement (out of this tool's scope; flag it rather than silently working around it).
+- Do NOT paper over a wrong entry by logging a second, near-duplicate note for the same day that merely restates the corrected value — that leaves both the wrong and the right entry sitting side by side, indistinguishable from a real two-events-same-day case, and defeats the append-log's whole premise (most-recent-entry-is-the-current-picture) for that day.
+- A genuinely NEW fact for the same day (a second event, a follow-up observation) is not a correction and should be logged as its own note — that's the append-journal working as intended, not a near-duplicate.
+
 Maintaining the recovery plan — it now lives in **two parts**, kept separate:
 
 ### Canonical plan workflow

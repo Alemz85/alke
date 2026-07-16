@@ -383,6 +383,12 @@ def validate_plan_document(plan: object) -> list[dict]:
             value = item[field]
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum):
                 sys.exit(f"invalid plan: items[{i}].{field} must be null or 1-{maximum}")
+        for field in ("note", "exercise"):
+            value = item[field]
+            if value is not None and not isinstance(value, str):
+                sys.exit(f"invalid plan: items[{i}].{field} must be a string or null")
+        if item["exercise"] is not None and not item["exercise"].strip():
+            sys.exit(f"invalid plan: items[{i}].exercise must not be blank")
         steps = item["steps"]
         if steps is not None and not isinstance(steps, list):
             sys.exit(f"invalid plan: items[{i}].steps must be an array or null")
@@ -395,7 +401,9 @@ def validate_plan_document(plan: object) -> list[dict]:
                 value = normalized_step[field]
                 if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0 or value > maximum):
                     sys.exit(f"invalid plan: items[{i}].steps[{j}].{field} is out of range")
-            if normalized_step["per_side"] not in (True, False, None):
+            # `1 in (True, False, None)` is True under Python's bool/int
+            # aliasing — an isinstance check is the only honest boolean gate.
+            if normalized_step["per_side"] is not None and not isinstance(normalized_step["per_side"], bool):
                 sys.exit(f"invalid plan: items[{i}].steps[{j}].per_side must be boolean or null")
             if sum(normalized_step[field] is not None for field in ("reps", "duration_seconds", "distance_m")) != 1:
                 sys.exit(f"invalid plan: items[{i}].steps[{j}] requires exactly one dose measure")

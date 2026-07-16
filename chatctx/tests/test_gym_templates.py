@@ -4,12 +4,16 @@ import pytest
 
 import chatctx.gym as gym
 from chatctx.gym import (
+    active_plan_items_for_exercises,
     apply_template_document,
     archive_template_version,
+    cmd_delete,
     complete_template_run,
     create_template_version,
     delete_template_version,
+    remove_gym_plan_checks_for_session,
     start_template_run,
+    sync_plan_checks,
     validate_template_document,
 )
 
@@ -413,3 +417,288 @@ def test_delete_template_version_deletes_exercises_then_template_when_unreferenc
     template_delete = next(kwargs for method, path, kwargs in calls
                            if method == "DELETE" and path == "gym_templates")
     assert template_delete["params"]["id"] == "eq.template-1"
+
+
+# ---- active_plan_items_for_exercises: the shared name-fallback matcher ----
+# (ported from db.ts activePlanItemsForExercises; used by both sync_plan_checks
+# on save and remove_gym_plan_checks_for_session on delete)
+
+
+def test_active_plan_items_matches_directly_by_exercise_id(monkeypatch):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id"):
+                return [{"id": "item-1", "exercise_id": "ex-1"}]
+            return []  # the unlinked (exercise_id is.null) query
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    items = active_plan_items_for_exercises(["ex-1"])
+
+    assert items == [{"id": "item-1", "matched_exercise_id": "ex-1"}]
+
+
+def test_active_plan_items_falls_back_to_exact_case_insensitive_name_match(monkeypatch):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id") == "in.(ex-1)":
+                return []  # nothing linked directly
+            return [{"id": "item-unlinked", "exercise_id": None, "name": "back squat"}]
+        if method == "GET" and path == "exercises":
+            return [{"id": "ex-1", "name": "Back Squat"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    items = active_plan_items_for_exercises(["ex-1"])
+
+    assert items == [{"id": "item-unlinked", "matched_exercise_id": "ex-1"}]
+
+
+def test_active_plan_items_name_fallback_is_exact_not_fuzzy(monkeypatch):
+    """Regression for the documented "Heel walks" vs "Heel Walk" near-miss:
+    the fallback must NOT bridge plural/singular or other fuzzy variants."""
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id") == "in.(ex-1)":
+                return []
+            return [{"id": "item-unlinked", "exercise_id": None, "name": "Heel walks"}]
+        if method == "GET" and path == "exercises":
+            return [{"id": "ex-1", "name": "Heel Walk"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    assert active_plan_items_for_exercises(["ex-1"]) == []
+
+
+def test_active_plan_items_skips_resolved_injuries_and_inactive_items(monkeypatch):
+    """The `injuries.status neq.resolved` and `active is.true` filters are
+    server-side (PostgREST params) — this asserts the request shape carries
+    them, since the mock can't itself enforce a WHERE clause."""
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    active_plan_items_for_exercises(["ex-1"])
+
+    by_id_call = next(kwargs for method, path, kwargs in calls
+                       if path == "recovery_plan_items" and kwargs["params"].get("exercise_id"))
+    assert by_id_call["params"]["active"] == "is.true"
+    assert by_id_call["params"]["injuries.status"] == "neq.resolved"
+    unlinked_call = next(kwargs for method, path, kwargs in calls
+                         if path == "recovery_plan_items" and kwargs["params"].get("exercise_id") == "is.null")
+    assert unlinked_call["params"]["active"] == "is.true"
+    assert unlinked_call["params"]["kind"] == "eq.exercise"
+    assert unlinked_call["params"]["injuries.status"] == "neq.resolved"
+
+
+def test_sync_plan_checks_upserts_for_matched_items_and_reports_exercise_names(monkeypatch):
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id"):
+                return [{"id": "item-1", "exercise_id": "ex-1"}]
+            return []
+        if method == "GET" and path == "exercises":
+            return [{"id": "ex-1", "name": "Back Squat"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    checked = sync_plan_checks(["ex-1"], "2026-07-15")
+
+    assert checked == ["Back Squat"]
+    upsert = next(kwargs for method, path, kwargs in calls
+                  if method == "POST" and path == "plan_item_checks")
+    assert upsert["body"] == [{"item_id": "item-1", "done_date": "2026-07-15", "source": "gym"}]
+    assert upsert["on_conflict"] == "item_id,done_date"
+
+
+def test_sync_plan_checks_no_op_when_no_exercises_logged():
+    assert sync_plan_checks([], "2026-07-15") == []
+
+
+# ---- remove_gym_plan_checks_for_session: retraction on delete ----
+
+
+def test_remove_gym_plan_checks_returns_empty_when_session_already_gone(monkeypatch):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "gym_sessions":
+            return []
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    assert remove_gym_plan_checks_for_session("missing-session") == []
+
+
+def test_remove_gym_plan_checks_deletes_source_gym_check_for_the_local_date(monkeypatch):
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "GET" and path == "gym_sessions":
+            params = kwargs.get("params") or {}
+            if params.get("id") == "eq.session-1":
+                return [{"id": "session-1", "performed_at": "2026-07-15T18:00:00+00:00"}]
+            return []  # no nearby sessions
+        if method == "GET" and path == "gym_sets":
+            return [{"exercise_id": "ex-1"}]
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id"):
+                return [{"id": "item-1", "exercise_id": "ex-1"}]
+            return []
+        if method == "GET" and path == "user_config":
+            return [{"timezone": "UTC"}]
+        if method == "GET" and path == "exercises":
+            return [{"id": "ex-1", "name": "Back Squat"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    retracted = remove_gym_plan_checks_for_session("session-1")
+
+    assert retracted == ["Back Squat"]
+    delete_call = next(kwargs for method, path, kwargs in calls
+                        if method == "DELETE" and path == "plan_item_checks")
+    assert delete_call["params"]["source"] == "eq.gym"
+    assert delete_call["params"]["done_date"] == "eq.2026-07-15"
+    assert delete_call["params"]["item_id"] == "in.(item-1)"
+
+
+def test_remove_gym_plan_checks_spares_item_when_a_sibling_same_day_session_still_logs_it(monkeypatch):
+    """A second same-local-day session (e.g. AM/PM) logging the same exercise
+    must keep the plan check standing even though THIS session is deleted."""
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "GET" and path == "gym_sessions":
+            params = kwargs.get("params") or {}
+            if params.get("id") == "eq.session-1":
+                return [{"id": "session-1", "performed_at": "2026-07-15T08:00:00+00:00"}]
+            # nearby-sessions lookup (neq filter)
+            return [{"id": "session-2", "performed_at": "2026-07-15T18:00:00+00:00"}]
+        if method == "GET" and path == "gym_sets":
+            params = kwargs.get("params") or {}
+            if params.get("session_id") == "eq.session-1":
+                return [{"exercise_id": "ex-1"}]
+            return [{"exercise_id": "ex-1"}]  # session-2's surviving sets
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id"):
+                return [{"id": "item-1", "exercise_id": "ex-1"}]
+            return []
+        if method == "GET" and path == "user_config":
+            return [{"timezone": "UTC"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    retracted = remove_gym_plan_checks_for_session("session-1")
+
+    assert retracted == []
+    assert all(not (method == "DELETE" and path == "plan_item_checks") for method, path, _ in calls)
+
+
+def test_remove_gym_plan_checks_no_op_when_session_logged_no_exercises(monkeypatch):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "gym_sessions":
+            return [{"id": "session-1", "performed_at": "2026-07-15T08:00:00+00:00"}]
+        if method == "GET" and path == "gym_sets":
+            return []
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    assert remove_gym_plan_checks_for_session("session-1") == []
+
+
+# ---- cmd_delete: existence guard + retraction-before-delete ----
+
+
+class _Args:
+    def __init__(self, session_id):
+        self.session_id = session_id
+
+
+def test_cmd_delete_exits_when_session_does_not_exist(monkeypatch):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "gym_sessions":
+            return []
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    with pytest.raises(SystemExit, match="not found"):
+        cmd_delete(_Args("missing-session"))
+
+
+def test_cmd_delete_retracts_before_deleting_and_reports_it(monkeypatch, capsys):
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if method == "GET" and path == "gym_sessions":
+            params = kwargs.get("params") or {}
+            if params.get("id") == "eq.session-1":
+                return [{"id": "session-1", "performed_at": "2026-07-15T18:00:00+00:00"}]
+            return []
+        if method == "GET" and path == "gym_sets":
+            return [{"exercise_id": "ex-1"}]
+        if method == "GET" and path == "recovery_plan_items":
+            params = kwargs.get("params") or {}
+            if params.get("exercise_id"):
+                return [{"id": "item-1", "exercise_id": "ex-1"}]
+            return []
+        if method == "GET" and path == "user_config":
+            return [{"timezone": "UTC"}]
+        if method == "GET" and path == "exercises":
+            return [{"id": "ex-1", "name": "Back Squat"}]
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    cmd_delete(_Args("session-1"))
+
+    # Retraction (its GET/DELETE calls) happened before the session DELETE.
+    order = [(method, path) for method, path, _ in calls]
+    retraction_delete_index = order.index(("DELETE", "plan_item_checks"))
+    session_delete_index = order.index(("DELETE", "gym_sessions"))
+    assert retraction_delete_index < session_delete_index
+
+    out = capsys.readouterr().out
+    assert "deleted session session-1" in out
+    assert "retracted rehab checks: Back Squat" in out
+
+
+def test_cmd_delete_omits_retraction_summary_when_nothing_was_checked(monkeypatch, capsys):
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "gym_sessions":
+            params = kwargs.get("params") or {}
+            if params.get("id") == "eq.session-1":
+                return [{"id": "session-1", "performed_at": "2026-07-15T18:00:00+00:00"}]
+            return []
+        if method == "GET" and path == "gym_sets":
+            return []  # session logged nothing plan-linked
+        return []
+
+    monkeypatch.setattr(gym, "_request", request)
+
+    cmd_delete(_Args("session-1"))
+
+    out = capsys.readouterr().out
+    assert out.strip() == "deleted session session-1"

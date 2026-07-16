@@ -27,3 +27,35 @@ test('rejects duplicate template names', () => {
   const plan = { templates: [template('Day A'), template('day a')] }
   assert.ok(validateWorkoutTemplates(plan).some((error) => error.includes('duplicates')))
 })
+
+test('rejects an out-of-range template default_rest_s', () => {
+  const plan = { templates: [template()] }
+  plan.templates[0].default_rest_s = 99999
+  assert.ok(validateWorkoutTemplates(plan).some((error) => error.includes('default_rest_s')))
+})
+
+test('rejects a negative default_rest_s', () => {
+  const plan = { templates: [template()] }
+  plan.templates[0].default_rest_s = -5
+  assert.ok(validateWorkoutTemplates(plan).some((error) => error.includes('default_rest_s')))
+})
+
+test('accepts boundary default_rest_s values (0 and 3600)', () => {
+  const plan = { templates: [template()] }
+  plan.templates[0].default_rest_s = 0
+  assert.deepEqual(validateWorkoutTemplates(plan), [])
+  plan.templates[0].default_rest_s = 3600
+  assert.deepEqual(validateWorkoutTemplates(plan), [])
+})
+
+test('rejects an out-of-range exercise rest_after_s', () => {
+  const plan = { templates: [template()] }
+  plan.templates[0].exercises[0].rest_after_s = 99999
+  assert.ok(validateWorkoutTemplates(plan).some((error) => error.includes('rest_after_s')))
+})
+
+test('rejects a negative rest_after_s', () => {
+  const plan = { templates: [template()] }
+  plan.templates[0].exercises[0].rest_after_s = -5
+  assert.ok(validateWorkoutTemplates(plan).some((error) => error.includes('rest_after_s')))
+})

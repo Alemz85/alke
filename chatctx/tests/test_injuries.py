@@ -76,6 +76,26 @@ def test_validation_accepts_more_than_eight_items():
     assert len(validate_plan_document({"approach": "Comprehensive.", "items": items})) == 10
 
 
+def test_validation_rejects_integer_per_side():
+    # 1 slipped through the old `in (True, False, None)` check because
+    # Python's bool/int aliasing makes `1 in (True, ...)` true.
+    step = dict(exercise()["steps"][0], per_side=1)
+    with pytest.raises(SystemExit, match="per_side"):
+        validate_plan_document({"approach": "Stack phases.", "items": [exercise(steps=[step])]})
+
+
+def test_validation_rejects_non_string_note_and_exercise():
+    with pytest.raises(SystemExit, match=r"note must be a string"):
+        validate_plan_document({"approach": "Stack phases.", "items": [exercise(note=123)]})
+    with pytest.raises(SystemExit, match=r"exercise must be a string"):
+        validate_plan_document({"approach": "Stack phases.", "items": [exercise(exercise=123)]})
+
+
+def test_validation_rejects_blank_exercise_link():
+    with pytest.raises(SystemExit, match="must not be blank"):
+        validate_plan_document({"approach": "Stack phases.", "items": [exercise(exercise="  ")]})
+
+
 def test_format_period_renders_only_known_precision():
     assert format_period("2025-03-10", None, "day") == "2025-03-10"
     assert format_period("2025-03-10", None, "month") == "2025-03"

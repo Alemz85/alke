@@ -9,7 +9,9 @@ present, else the process environment (same resolution as db.py / injuries.py).
 Subcommands:
   list           [--days 30]              recent gym sessions with set summaries
   log            --json '<payload>'       create a session (sets expand from schemes), prints its id
-  delete         <session_id>             remove a mis-logged session (cascades its sets)
+  delete         <session_id>             remove a mis-logged session (cascades its sets; retracts
+                                           any source='gym' plan_item_checks it produced — see
+                                           remove_gym_plan_checks_for_session)
   template-list                           list reusable Gym templates
   template-apply --file <plan.json>       validate + idempotently apply named templates
   template-archive <template_id>          archive a single template version (runs/other versions untouched)
@@ -17,6 +19,32 @@ Subcommands:
   run-start      <template_id>            start/resurrect a run on that template version
   run-complete   <template_id>            close the family's open run
   create-version <base_template_id> --file <plan.json>  save a new version of a template family
+
+Non-atomicity caveat: this hits PostgREST directly, one HTTP request per
+statement, with no cross-request transactions. Two multi-step sequences can
+leave the DB mid-way through a logical operation if a later step fails:
+  - apply_template_document's UPDATE branch (existing template by name):
+    PATCH gym_templates, then DELETE gym_template_exercises, then POST the
+    new exercise rows. gym_template_exercises has no unique constraint on
+    (template_id, position) — nothing stops inserting the new rows before
+    deleting the old ones — but doing so would transiently double-count the
+    template's exercises for any concurrent read (template-list, the app's
+    Gym tab), which is worse than the current window. Kept delete-then-insert
+    deliberately; the tradeoff is that a failure after the DELETE and before
+    the POST leaves that template with ZERO exercises until re-applied. If a
+    template shows an empty exercise list right after a template-apply, that
+    failed mid-sequence — re-run template-apply with the same document to
+    repair it (the whole document is idempotent).
+  - create_template_version's 4-step sequence (POST new gym_templates row,
+    POST its gym_template_exercises, PATCH siblings' is_current=false, PATCH
+    any open gym_template_runs onto the new template_id): a failure partway
+    can leave two is_current=true rows in a family, or an open run still
+    pointing at the OLD template_id while a newer version exists. Symptoms:
+    template-list showing more than one non-archived current-looking version
+    in a family, or run-complete/run-start behaving as if the version bump
+    didn't happen. Re-running create-version does not repair this (each run
+    mints a new version); a manual PATCH to gym_templates.is_current and/or
+    gym_template_runs.template_id is needed to reconcile.
 
 `log` payload (JSON object):
   {
@@ -33,8 +61,12 @@ Subcommands:
   }
 Exercise names resolve case-insensitively against the catalog (aliases work).
 An unknown name aborts with near-matches unless that entry says "create": true.
-Sets of an exercise linked to an active recovery-plan item auto-check the item
-for that day (source='gym') — same behavior as the app's Gym tab.
+Sets of an exercise linked to an active recovery-plan item (of a non-resolved
+injury) auto-check the item for that day (source='gym') — mirrors the app's
+Gym tab exactly, including the name-fallback match for plan items missing an
+exercise_id link (see active_plan_items_for_exercises). Deleting a session
+retracts the checks it produced unless another same-local-day session still
+logs the same exercise (see remove_gym_plan_checks_for_session).
 
 `template-apply` document (JSON, --file):
   {
@@ -219,6 +251,81 @@ def _request(method: str, path: str, *, params: dict | None = None, body=None,
 def user_timezone() -> str | None:
     rows = _request("GET", "user_config", params={"id": "eq.1", "select": "timezone"})
     return rows[0].get("timezone") if rows else None
+
+
+def local_date_in_tz(iso: str, timezone_name: str | None) -> str:
+    """"2026-07-12" for an ISO instant in the user's timezone (falls back to
+    the instant's UTC date). Mirrors the app's localDateInTz (db.ts)."""
+    try:
+        dt = datetime.datetime.fromisoformat(iso)
+        tz = zoneinfo.ZoneInfo(timezone_name) if timezone_name else None
+        return (dt.astimezone(tz) if tz else dt).date().isoformat()
+    except (ValueError, zoneinfo.ZoneInfoNotFoundError):
+        return iso[:10]
+
+
+def exercise_names_by_id(exercise_ids: list[str]) -> dict:
+    ids = list(dict.fromkeys(exercise_ids))
+    if not ids:
+        return {}
+    rows = _request("GET", "exercises", params={
+        "id": f"in.({','.join(ids)})", "select": "id,name",
+    })
+    return {row["id"]: row["name"] for row in rows}
+
+
+def active_plan_items_for_exercises(exercise_ids: list[str]) -> list[dict]:
+    """Active plan items (of a non-resolved injury) linked to any of the given
+    exercises — the shared match used both to auto-check on save
+    (sync_plan_checks) and to know what to un-check on delete
+    (remove_gym_plan_checks_for_session). Each result carries
+    `matched_exercise_id`: the input exercise that caused the match (for use
+    as the "is this exercise still logged elsewhere" key on delete), which is
+    the plan item's own exercise_id for a direct match, or the logged
+    exercise whose name matched for a fallback match. Mirrors the app's
+    activePlanItemsForExercises (db.ts) exactly.
+
+    Primary match is exercise_id. Fallback: a plan item with NO exercise_id
+    (the chat agent's injuries.py linking step was skipped or missed) still
+    matches when its name is a case-insensitive exact match to one of the
+    logged exercises' catalog names — this is a data-linkage gap the fallback
+    papers over defensively, not a substitute for fixing the link. It's exact
+    (not fuzzy/plural-insensitive): e.g. plan item "Heel walks" vs catalog
+    exercise "Heel Walk" is a real near-miss found live in this DB that this
+    fallback deliberately does NOT bridge — singular/plural and other fuzzy
+    variants risk false-positive matches on a health-tracking check, so that
+    case needs the plan item's exercise_id linked (injuries.py) or its name
+    corrected to match, not silent fuzzy code matching.
+    """
+    if not exercise_ids:
+        return []
+    ids = ",".join(exercise_ids)
+    by_id = _request("GET", "recovery_plan_items", params={
+        "select": "id,exercise_id,injuries!inner(status)",
+        "active": "is.true",
+        "exercise_id": f"in.({ids})",
+        "injuries.status": "neq.resolved",
+    })
+    unlinked = _request("GET", "recovery_plan_items", params={
+        "select": "id,exercise_id,name,injuries!inner(status)",
+        "active": "is.true",
+        "kind": "eq.exercise",
+        "exercise_id": "is.null",
+        "injuries.status": "neq.resolved",
+    })
+
+    items = [{"id": item["id"], "matched_exercise_id": item["exercise_id"]} for item in by_id]
+    if unlinked:
+        names = exercise_names_by_id(exercise_ids)
+        lower_to_id = {name.lower(): eid for eid, name in names.items()}
+        for item in unlinked:
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            matched_id = lower_to_id.get(name.lower())
+            if matched_id:
+                items.append({"id": item["id"], "matched_exercise_id": matched_id})
+    return items
 
 
 def resolve_exercise(name: str, *, create: bool, body_part: str | None) -> dict:
@@ -542,26 +649,22 @@ def cmd_template_apply(args) -> None:
 
 
 def sync_plan_checks(exercise_ids: list[str], done_date: str) -> list[str]:
-    """The app's gym→rehab bridge, mirrored: active plan items (of non-resolved
-    injuries) linked to a logged exercise get their day's check upserted with
-    source='gym'. Additive only; an existing manual check wins. Returns the
-    names of items checked."""
-    if not exercise_ids:
-        return []
-    ids = ",".join(exercise_ids)
-    items = _request("GET", "recovery_plan_items", params={
-        "select": "id,name,injuries!inner(status)",
-        "active": "is.true",
-        "exercise_id": f"in.({ids})",
-        "injuries.status": "neq.resolved",
-    })
+    """The app's gym→rehab bridge, mirrored exactly (db.ts
+    syncPlanChecksFromGymSets): any active plan item (of a non-resolved
+    injury) linked — directly or via the name-fallback in
+    active_plan_items_for_exercises — to an exercise this session just logged
+    gets its day's check upserted, source='gym'. Additive only; an existing
+    manual check wins (ignore-duplicates). Returns the display names of the
+    matched exercises (for the CLI's summary line, not the item names)."""
+    items = active_plan_items_for_exercises(exercise_ids)
     if not items:
         return []
     _request("POST", "plan_item_checks",
              body=[{"item_id": i["id"], "done_date": done_date, "source": "gym"} for i in items],
              prefer="return=minimal,resolution=ignore-duplicates",
              on_conflict="item_id,done_date")
-    return [i["name"] for i in items]
+    names = exercise_names_by_id([i["matched_exercise_id"] for i in items])
+    return [names[eid] for eid in dict.fromkeys(i["matched_exercise_id"] for i in items) if eid in names]
 
 
 def cmd_list(args) -> None:
@@ -700,10 +803,119 @@ def cmd_log(args) -> None:
     print(summary)
 
 
+def remove_gym_plan_checks_for_session(session_id: str) -> list[str]:
+    """Retracts the plan_item_checks a session produced, mirroring db.ts'
+    removeGymPlanChecksForSession exactly: for each active plan item linked
+    (directly or via the name-fallback in active_plan_items_for_exercises) to
+    an exercise the session logged, on the session's local done_date, delete
+    the source='gym' check for that (item, date) — but ONLY if no OTHER
+    still-existing session logs that same exercise on the same local date (a
+    second same-day session, e.g. AM/PM, still justifies the check). Manual
+    (source='user') checks are never touched.
+
+    Unlike db.ts (which retracts best-effort AFTER a successful app-side
+    delete and only logs on failure), the CLI calls this BEFORE deleting the
+    session and lets a failure here raise/exit loudly — see cmd_delete for
+    the fail-before-delete framing that suits an interactive CLI.
+
+    Returns the display names of the exercises whose checks were retracted
+    (for the CLI's summary line). Raises RuntimeError (via _request's
+    sys.exit path, or directly) if a lookup/delete step fails; the caller
+    decides how to react.
+
+    No session_id on plan_item_checks, so this is derived from the session's
+    own exercises + date rather than a direct join — same schema-level
+    tradeoff as the app.
+    """
+    session_rows = _request("GET", "gym_sessions", params={
+        "id": f"eq.{session_id}", "select": "id,performed_at", "limit": "1",
+    })
+    if not session_rows:
+        return []  # already gone
+    performed_at = session_rows[0]["performed_at"]
+
+    sets = _request("GET", "gym_sets", params={
+        "session_id": f"eq.{session_id}", "select": "exercise_id",
+    })
+    exercise_ids = list(dict.fromkeys(s["exercise_id"] for s in sets))
+    if not exercise_ids:
+        return []
+
+    items = active_plan_items_for_exercises(exercise_ids)
+    if not items:
+        return []
+
+    timezone_name = user_timezone()
+    done_date = local_date_in_tz(performed_at, timezone_name)
+
+    # Other sessions whose LOCAL date could match: a generous +/-1 UTC-day
+    # window around performed_at, precisely filtered below via
+    # local_date_in_tz — mirrors the same day-boundary handling used to
+    # compute done_date itself (and db.ts' identical window).
+    performed_dt = datetime.datetime.fromisoformat(performed_at)
+    range_start = (performed_dt - datetime.timedelta(days=1)).isoformat()
+    range_end = (performed_dt + datetime.timedelta(days=1)).isoformat()
+    nearby_sessions = _request("GET", "gym_sessions", params={
+        "id": f"neq.{session_id}",
+        "and": f"(performed_at.gte.{range_start},performed_at.lte.{range_end})",
+        "select": "id,performed_at",
+    })
+    same_day_session_ids = [
+        s["id"] for s in nearby_sessions
+        if local_date_in_tz(s["performed_at"], timezone_name) == done_date
+    ]
+
+    exercises_still_logged: set = set()
+    if same_day_session_ids:
+        surviving_sets = _request("GET", "gym_sets", params={
+            "session_id": f"in.({','.join(same_day_session_ids)})", "select": "exercise_id",
+        })
+        exercises_still_logged = {s["exercise_id"] for s in surviving_sets}
+
+    item_ids_to_unmark = [
+        item["id"] for item in items if item["matched_exercise_id"] not in exercises_still_logged
+    ]
+    if not item_ids_to_unmark:
+        return []
+
+    _request("DELETE", "plan_item_checks", params={
+        "source": "eq.gym",
+        "done_date": f"eq.{done_date}",
+        "item_id": f"in.({','.join(item_ids_to_unmark)})",
+    }, prefer="return=minimal")
+
+    spared_exercise_ids = {
+        item["matched_exercise_id"] for item in items if item["id"] not in item_ids_to_unmark
+    }
+    retracted_exercise_ids = [
+        eid for eid in dict.fromkeys(item["matched_exercise_id"] for item in items)
+        if eid not in spared_exercise_ids
+    ]
+    names = exercise_names_by_id(retracted_exercise_ids)
+    return [names[eid] for eid in retracted_exercise_ids if eid in names]
+
+
 def cmd_delete(args) -> None:
+    existing = _request("GET", "gym_sessions", params={
+        "id": f"eq.{args.session_id}", "select": "id", "limit": "1",
+    })
+    if not existing:
+        sys.exit(f"session {args.session_id} not found")
+
+    # Retract plan checks BEFORE deleting: gym_sets cascades away with the
+    # session, so the (exercise, date) match this depends on must be read
+    # first. Unlike the app's best-effort/log-only posture, the CLI fails
+    # loudly here — sys.exit, before the session is touched — because an
+    # interactive delete has a human to report to and no UI state depending
+    # on the delete having happened regardless.
+    retracted = remove_gym_plan_checks_for_session(args.session_id)
+
     _request("DELETE", "gym_sessions", params={"id": f"eq.{args.session_id}"},
              prefer="return=minimal")
-    print(f"deleted session {args.session_id}")
+    summary = f"deleted session {args.session_id}"
+    if retracted:
+        summary += " — retracted rehab checks: " + ", ".join(retracted)
+    print(summary)
 
 
 def main() -> None:
