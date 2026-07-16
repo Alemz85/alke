@@ -39,6 +39,13 @@ REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 VALID_CONTEXTS = ("during_workout", "post_workout", "at_rest", "on_waking")
 VALID_PLAN_KINDS = ("exercise", "activity", "habit", "constraint")
 VALID_PRECISIONS = ("day", "month", "year")
+# Keep in sync with gym.py's BODY_PARTS — both must match the
+# exercises.body_part check constraint (see
+# supabase/migrations/20260713010000_gym_exercise_catalog.sql). Duplicated
+# rather than imported: injuries.py and gym.py are independent CLI entry
+# points with their own argparse/main, and importing one write-helper module
+# from the other for a single tuple isn't worth the coupling.
+BODY_PARTS = ("chest", "back", "shoulders", "arms", "legs", "core", "full body")
 
 
 def parse_ymd(value: str, label: str) -> str:
@@ -303,10 +310,15 @@ def cmd_show(args) -> None:
               f"{phase} | {target} | {yellow}-{green} | {dose} | {note} | {row.get('active')} |")
 
 
-def resolve_exercise(name: str) -> str:
+def resolve_exercise(name: str, *, create: bool = False, body_part: str | None = None) -> dict:
     """Resolve an exercise name (case-insensitive, matches aliases too) to its
-    exercises.id. Exits with candidates on no/ambiguous match — linking must be
-    exact, a wrong link would auto-check the wrong rehab item."""
+    catalog row. Exits with candidates on no/ambiguous match unless
+    create=True, in which case an unknown name becomes a new source='user'
+    catalog row instead of aborting — mirrors gym.py's resolve_exercise
+    exactly, so a recovery-plan item's exercise link behaves identically to a
+    Gym-logged one. create defaults False: a typo must not silently spawn a
+    catalog row, so callers that accept a plan document's opt-in "create"
+    field are the only ones that should pass create=True."""
     key = name.strip().lower()
     rows = _request("GET", "exercises", params={
         "name_key": f"eq.{key}", "select": "id,name", "limit": "1",
@@ -316,14 +328,22 @@ def resolve_exercise(name: str) -> str:
             "aliases": f"cs.{{{key}}}", "select": "id,name", "limit": "2",
         })
     if len(rows) == 1:
-        return rows[0]["id"]
+        return rows[0]
+    if create:
+        if body_part is not None and body_part not in BODY_PARTS:
+            sys.exit(f"invalid body_part {body_part!r} — valid: {', '.join(BODY_PARTS)}")
+        created = _request("POST", "exercises",
+                           body={"name": name.strip(), "body_part": body_part, "source": "user"},
+                           prefer="return=representation")
+        return created[0]
     near = _request("GET", "exercises", params={
         "name": f"ilike.*{name.strip()}*", "select": "name", "limit": "6",
     })
     hint = ", ".join(r["name"] for r in near) if near else "none"
     sys.exit(
         f"no exact exercise match for {name!r} (near matches: {hint}) — "
-        "use the exact catalog name, or have the user create it in the Gym tab first"
+        'use the exact catalog name, or add "create": true (with an optional body_part) '
+        "to make a new custom exercise"
     )
 
 
@@ -368,7 +388,7 @@ def validate_plan_document(plan: object) -> list[dict]:
             sys.exit(f"invalid plan: items[{i}] must be an object")
         item = {key: raw.get(key) for key in (
             "name", "kind", "weekly_target", "green_min", "yellow_min", "note",
-            "start_week", "exercise", "target_sets", "target_reps", "steps")}
+            "start_week", "exercise", "create", "body_part", "target_sets", "target_reps", "steps")}
         name = item["name"].strip() if isinstance(item["name"], str) else ""
         if not name or name.lower() in names:
             sys.exit(f"invalid plan: items[{i}] name is empty or duplicated")
@@ -383,12 +403,20 @@ def validate_plan_document(plan: object) -> list[dict]:
             value = item[field]
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum):
                 sys.exit(f"invalid plan: items[{i}].{field} must be null or 1-{maximum}")
-        for field in ("note", "exercise"):
+        for field in ("note", "exercise", "body_part"):
             value = item[field]
             if value is not None and not isinstance(value, str):
                 sys.exit(f"invalid plan: items[{i}].{field} must be a string or null")
         if item["exercise"] is not None and not item["exercise"].strip():
             sys.exit(f"invalid plan: items[{i}].exercise must not be blank")
+        if item["body_part"] is not None and item["body_part"] not in BODY_PARTS:
+            sys.exit(f"invalid plan: items[{i}].body_part must be null or one of: {', '.join(BODY_PARTS)}")
+        # `1 in (True, False, None)` is True under Python's bool/int aliasing —
+        # an isinstance check is the only honest boolean gate (see the
+        # per_side check below for the same trap).
+        if item["create"] is not None and not isinstance(item["create"], bool):
+            sys.exit(f"invalid plan: items[{i}].create must be true, false, or null")
+        item["create"] = bool(item["create"])
         steps = item["steps"]
         if steps is not None and not isinstance(steps, list):
             sys.exit(f"invalid plan: items[{i}].steps must be an array or null")
@@ -401,8 +429,6 @@ def validate_plan_document(plan: object) -> list[dict]:
                 value = normalized_step[field]
                 if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0 or value > maximum):
                     sys.exit(f"invalid plan: items[{i}].steps[{j}].{field} is out of range")
-            # `1 in (True, False, None)` is True under Python's bool/int
-            # aliasing — an isinstance check is the only honest boolean gate.
             if normalized_step["per_side"] is not None and not isinstance(normalized_step["per_side"], bool):
                 sys.exit(f"invalid plan: items[{i}].steps[{j}].per_side must be boolean or null")
             if sum(normalized_step[field] is not None for field in ("reps", "duration_seconds", "distance_m")) != 1:
@@ -412,22 +438,27 @@ def validate_plan_document(plan: object) -> list[dict]:
             normalized_step["name"] = normalized_step["name"].strip()
             steps[j] = normalized_step
         if item["kind"] == "constraint":
-            if any(item[field] is not None for field in ("weekly_target", "green_min", "yellow_min", "exercise", "target_sets", "target_reps", "steps")):
+            if any(item[field] is not None for field in ("weekly_target", "green_min", "yellow_min", "exercise", "body_part", "target_sets", "target_reps", "steps")) or item["create"]:
                 sys.exit(f"invalid plan: items[{i}] constraint carries targets or Gym fields")
         elif item["kind"] == "exercise":
             if any(item[field] is None for field in ("weekly_target", "green_min", "yellow_min")):
                 sys.exit(f"invalid plan: items[{i}] exercise lacks weekly efficacy thresholds")
             if not item["yellow_min"] <= item["green_min"] <= item["weekly_target"]:
                 sys.exit(f"invalid plan: items[{i}] requires yellow_min <= green_min <= weekly_target")
-            if item["exercise"] is not None and (item["target_sets"] is None or item["target_reps"] is None):
+            # Every exercise-kind item is catalog-backed now: it either links
+            # to an existing exercises row or (with the explicit opt-in
+            # "create": true) mints one — there is no more off-catalog,
+            # steps-only exercise item. A typo must not silently spawn a
+            # catalog row, so "create" is a deliberate per-item flag, not a
+            # default.
+            if not item["exercise"]:
+                sys.exit(f"invalid plan: items[{i}] exercise items require a catalog exercise link "
+                          '(set "exercise" to an existing name, or "exercise" + "create": true to make one)')
+            if item["target_sets"] is None or item["target_reps"] is None:
                 sys.exit(f"invalid plan: items[{i}] linked exercise lacks target_sets/target_reps")
-            if item["exercise"] is None and (item["target_sets"] is not None or item["target_reps"] is not None):
-                sys.exit(f"invalid plan: items[{i}] Gym dose lacks exercise link")
-            if item["exercise"] is None and not item["steps"]:
-                sys.exit(f"invalid plan: items[{i}] off-catalog exercise requires structured steps")
-            if item["exercise"] is not None and item["steps"] is not None:
-                sys.exit(f"invalid plan: items[{i}] linked exercise cannot also carry steps")
-        elif any(item[field] is not None for field in ("exercise", "target_sets", "target_reps", "steps")):
+            if item["body_part"] is not None and not item["create"]:
+                sys.exit(f"invalid plan: items[{i}].body_part only applies when \"create\": true")
+        elif any(item[field] is not None for field in ("exercise", "body_part", "target_sets", "target_reps", "steps")) or item["create"]:
             sys.exit(f"invalid plan: items[{i}] only exercises may carry Gym fields")
         normalized.append(item)
     return normalized
@@ -439,11 +470,19 @@ def cmd_plan_apply(args) -> None:
     except (OSError, json.JSONDecodeError) as exc:
         sys.exit(f"cannot read plan JSON: {exc}")
     items = validate_plan_document(plan)
-    # Resolve every catalog reference before the first write: application is all-or-nothing
-    # with respect to validation and ambiguous exercise names.
+    # Resolve-or-create every catalog reference before the first write:
+    # application is all-or-nothing with respect to validation and ambiguous
+    # exercise names. create/body_part are consumed here, not stored — they
+    # only steer this one resolution step.
     for item in items:
         exercise_name = item.pop("exercise")
-        item["exercise_id"] = resolve_exercise(exercise_name) if exercise_name else None
+        create = item.pop("create")
+        body_part = item.pop("body_part")
+        if exercise_name:
+            exercise = resolve_exercise(exercise_name, create=create, body_part=body_part)
+            item["exercise_id"] = exercise["id"]
+        else:
+            item["exercise_id"] = None
     injury_rows = _request("GET", "injuries", params={
         "id": f"eq.{args.injury_id}", "select": "id,plan_started_at", "limit": "1"
     })
@@ -511,8 +550,13 @@ def cmd_plan_add(args) -> None:
     for field, value in (("kind", args.kind), ("weekly_target", args.target), ("note", args.note)):
         if value is not None:
             body[field] = value
+    if args.body_part is not None and not args.create:
+        sys.exit("--body-part only applies together with --create")
     if args.exercise is not None:
-        body["exercise_id"] = resolve_exercise(args.exercise)
+        exercise = resolve_exercise(args.exercise, create=args.create, body_part=args.body_part)
+        body["exercise_id"] = exercise["id"]
+    elif args.create:
+        sys.exit("--create requires --exercise")
     if args.green_min is not None:
         body["green_min"] = parse_threshold(args.green_min, "green-min")
     if args.yellow_min is not None:
@@ -532,8 +576,16 @@ def cmd_plan_update(args) -> None:
             body[field] = value
     if args.start_week is not None:
         body["start_week"] = args.start_week
+    if args.body_part is not None and not args.create:
+        sys.exit("--body-part only applies together with --create")
     if args.exercise is not None:
-        body["exercise_id"] = None if args.exercise == "none" else resolve_exercise(args.exercise)
+        if args.exercise == "none":
+            body["exercise_id"] = None
+        else:
+            exercise = resolve_exercise(args.exercise, create=args.create, body_part=args.body_part)
+            body["exercise_id"] = exercise["id"]
+    elif args.create:
+        sys.exit("--create requires --exercise")
     if args.green_min is not None:
         body["green_min"] = parse_threshold(args.green_min, "green-min")
     if args.yellow_min is not None:
@@ -661,6 +713,11 @@ def main() -> None:
     p_plan_add.add_argument("--note")
     p_plan_add.add_argument("--exercise",
                             help="gym exercises-catalog name to link (gym logs then auto-check this item)")
+    p_plan_add.add_argument("--create", action="store_true",
+                            help='with --exercise: create it (source=user) if no exact catalog match exists, '
+                                 "instead of aborting with near-matches")
+    p_plan_add.add_argument("--body-part", dest="body_part", choices=list(BODY_PARTS),
+                            help="only with --create: the new catalog row's body_part")
     p_plan_add.add_argument("--green-min", dest="green_min",
                             help="weekly count that is an acceptable therapeutic dose (1-14)")
     p_plan_add.add_argument("--yellow-min", dest="yellow_min",
@@ -679,6 +736,11 @@ def main() -> None:
     p_plan_upd.add_argument("--active", choices=["true", "false"])
     p_plan_upd.add_argument("--exercise",
                             help="gym exercises-catalog name to link, or 'none' to unlink")
+    p_plan_upd.add_argument("--create", action="store_true",
+                            help='with --exercise: create it (source=user) if no exact catalog match exists, '
+                                 "instead of aborting with near-matches")
+    p_plan_upd.add_argument("--body-part", dest="body_part", choices=list(BODY_PARTS),
+                            help="only with --create: the new catalog row's body_part")
     p_plan_upd.add_argument("--green-min", dest="green_min",
                             help="acceptable therapeutic dose per week (1-14), or 'none' to clear")
     p_plan_upd.add_argument("--yellow-min", dest="yellow_min",
