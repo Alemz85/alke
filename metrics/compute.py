@@ -596,9 +596,11 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     # Bike and RUN EF as two SEPARATE aerobic-specific signals (each its own
     # baseline/top/variance — running and cycling EF are incomparable units). Swim
-    # EF stays WITHHELD (technique confound, docs §6). Run EF is the signal that
-    # actually fires: runs carry distance + HR, bike sessions are indoor/no-distance
-    # so bike EF is structurally unobtainable (v5). Both remain wired.
+    # EF stays WITHHELD (technique confound, docs §6). Both remain fully wired
+    # whatever today's data holds — signals are built for data the user may
+    # START producing, never trimmed to what currently exists: bike EF lights up
+    # with the first outdoor GPS ride, run EF with the first ≥20-min HR-bearing
+    # Z1–Z2 run (v5: rides so far are indoor/no-distance, runs are the nearer signal).
     bike_ef_obs: list[tuple[date, float]] = []
     run_ef_obs: list[tuple[date, float]] = []
     for wk in all_workouts:

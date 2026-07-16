@@ -64,11 +64,13 @@ def ef(distance_m: float | None, duration_s: float | None, avg_hr: float | None)
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
     """EF/decoupling eligibility: swim, bike AND run, each gated ≥20 min and ≥70%
     of classified time in Z1–Z2 (the same aerobic-specific gate for all three).
-    Running EF is the aerobic-specific calibration LEAD the model actually runs on
-    (v5): runs carry distance + HR, whereas every bike session is indoor with
-    distance_m NULL so bike EF is structurally unobtainable. Indoor rides (and any
-    HR-only run without distance) still yield ef=None downstream — ef() requires
-    distance — which is fine."""
+    All three stay wired regardless of which currently produce observations —
+    the model is built for the data the user MAY produce, never trimmed to what
+    exists today (a dormant signal costs nothing; it simply starts contributing
+    the day its data appears, e.g. outdoor rides with GPS distance). Right now
+    runs carry distance + HR while every bike session to date is indoor with
+    distance_m NULL. Indoor rides (and any HR-only run without distance) yield
+    ef=None downstream — ef() requires distance — which is fine."""
     if not workout_type:
         return False
     t = workout_type.lower()
@@ -268,11 +270,12 @@ Z2_SIGNAL_STALENESS_TAU_DAYS = 45.0
 # [LITERATURE PRIOR] bike EF: day-to-day submaximal EF CV ≈ 4%; the elevation map
 #   spans baseline→1.6×baseline (a 0.6·baseline span) onto C_D = 70 pts, so
 #   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22.
-#   NOTE (v5): bike EF is structurally UNOBTAINABLE for this user — every cycling
-#   session is indoor with distance_m NULL, so ef() returns None and 0 bike-EF
-#   observations have ever existed. It stays wired as the trusted aerobic LEAD IF
-#   distance ever appears (outdoor GPS ride), but running EF (below) is the actual
-#   aerobic-specific calibration signal the model runs on.
+#   NOTE (v5): bike EF has zero observations SO FAR — every cycling session to
+#   date is indoor with distance_m NULL, so ef() returns None. It stays fully
+#   wired (collection, baseline, fusion) and becomes a trusted aerobic lead the
+#   day outdoor rides with GPS distance appear; running EF (below) is the
+#   aerobic-specific signal that fires on current data. Model contract: signals
+#   are built for data the user may produce, never trimmed to today's data.
 Z2_BIKE_EF_VARIANCE = 22.0
 # [LITERATURE PRIOR] running EF: the aerobic-specific calibration signal that
 #   actually fires (108 runs carry distance + HR, vs 0 usable bike EF). Same
