@@ -1705,12 +1705,11 @@ function ActiveInjuryCard({
     onMoveDown: () => void
   }
 }): ReactElement {
-  const { log, plan, checks, loading } = useInjuryData(injury.id, true, todayYMD)
+  const { log, plan, checks } = useInjuryData(injury.id, true, todayYMD)
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
 
   const stats = useMemo(() => flareStats(log, now), [log, now])
   const adherence = adherencePct(plan, checks, todayYMD, 7, injury.plan_started_at)
-  const series = usePainSeries(log, plan, checks, todayYMD, injury.plan_started_at)
 
   const [flareOpen, setFlareOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
@@ -1750,13 +1749,6 @@ function ActiveInjuryCard({
 
         <StatRow stats={stats} adherence={adherence} />
 
-        {series.length > 0 ? (
-          <div className="injury-sparkline">
-            <PainChart data={series} tall={false} />
-          </div>
-        ) : (
-          !loading && <p className="injury-log-empty injury-sparkline-empty">No pain data yet.</p>
-        )}
         <p className="injury-flare-caption">{flareCaption}</p>
 
         <ActionRow

@@ -24,17 +24,29 @@
 }
 
 /* ── card list ───────────────────────────────────────────────────────────── */
+/* Compact grid, same family as .gym-tpl-grid: cards size to content in a
+   responsive grid instead of stacking as full-width slabs. Injury cards run
+   a bit wider than template cards (260 vs 220) because they carry more —
+   stat row, flare caption, three quick actions. */
 .injury-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--space-md);
 }
 
 .injury-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  /* min-height (not fixed): uniform-looking cards without clipping the
+     action row when name/badges/stats run taller than the nominal card —
+     see .gym-tpl-card, whose min-height (224px) this deliberately exceeds
+     since a preview card here carries a stat row + actions on top of the
+     header. */
+  min-height: 264px;
   background: var(--color-surface-elevated);
   border-radius: var(--radius-lg);
-  padding: var(--space-lg);
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
 }
 
 /* Whole card is clickable → full view. Hover lifts the surface per tokens. */
@@ -139,6 +151,12 @@
   padding-right: 76px;
 }
 
+/* Preview card only: tighter header gap than the full view's, which needs
+   more air above the stat row/chart below it. */
+.injury-card .injury-card-header {
+  gap: var(--space-xxs);
+}
+
 .injury-name {
   font-family: var(--font-display);
   font-size: var(--type-heading-md-size);
@@ -147,6 +165,15 @@
   letter-spacing: var(--type-heading-md-letter-spacing);
   color: var(--color-text);
   margin: 0;
+}
+
+/* Preview card only: same InjuryHeader component as the full view, but the
+   grid card is compact — the full view keeps the larger heading-md title. */
+.injury-card .injury-name {
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  line-height: var(--type-heading-sm-line-height);
+  letter-spacing: var(--type-heading-sm-letter-spacing);
 }
 
 .injury-badges {
@@ -259,6 +286,16 @@
   }
 }
 
+/* Preview card only: the grid cell (~260px) is narrower than the viewport
+   breakpoint above can see, so this collapses on the card's own width, not
+   the window's — always 2-up rather than cramming 4 display-weight numbers
+   into a ~260px card regardless of how wide the window is. */
+.injury-card .injury-stat-row {
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-md);
+}
+
 .injury-stat {
   display: flex;
   flex-direction: column;
@@ -279,6 +316,17 @@
   font-size: var(--type-heading-sm-size);
   font-weight: var(--type-heading-sm-weight);
   color: var(--color-text);
+}
+
+/* Preview card only: same StatCell component as the full view's larger
+   stat row, sized down so four stats fit a compact 2x2 without dominating
+   the card. */
+.injury-card .injury-stat-value {
+  font-size: var(--type-body-md-size);
+}
+
+.injury-card .injury-trend {
+  font-size: var(--type-body-sm-size);
 }
 
 /* Pain-number tint (stat row, log feed, adherence table): 0–3 stays plain
@@ -320,6 +368,10 @@
 }
 
 /* ── sparkline ───────────────────────────────────────────────────────────── */
+/* Full view only — the preview card drops the sparkline (see ActiveInjuryCard):
+   at card width it had no axis/tooltip and mostly repeated what the Trend
+   stat and flare caption already say in text; the same chart, fully legible
+   with axes and tooltip, is one click away in the full view. */
 .injury-sparkline {
   margin-top: var(--space-md);
 }
@@ -379,6 +431,20 @@
   margin-top: var(--space-md);
   padding-top: var(--space-md);
   border-top: 1px solid var(--color-divider-soft);
+}
+
+/* Preview card only: same ActionRow as the full view, but pinned to the
+   bottom of the card (mirrors .gym-tpl-card-foot's margin-top: auto) so the
+   footer lines up across cards whose header/stats run to different
+   heights, and its buttons run a touch more compact. */
+.injury-card .injury-actions {
+  margin-top: auto;
+}
+
+.injury-card .injury-action-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--type-caption-size);
 }
 
 /* Distinct from a plain button: outlined, so the row reads as "do something". */
