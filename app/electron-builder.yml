@@ -23,6 +23,24 @@ files:
 # bundled into a distributable; the packaged CLI instead relies on
 # SUPABASE_URL / SUPABASE_SERVICE_KEY already present in the main process's
 # env (see chatctx/db.py's os.environ fallback).
+#
+# The two .mjs contract files (recovery_plan_contract.mjs,
+# workout_template_contract.mjs) are invoked by the agent as `node
+# <file>.mjs` with CHATCTX_DIR as cwd — they only need to exist alongside the
+# other chatctx files above, no special path handling.
+#
+# knowledge/ is a separate PRIVATE repo (github.com/Alemz85/health-knowledge)
+# cloned at the repo root, gitignored here, sibling to chatctx/. The chat
+# instructions (chatctx/modes/analysis.md) describe it as "cloned beside"
+# chatctx and degrade gracefully if absent — so it's bundled to `knowledge`
+# (sibling of `chatctx` under resourcesPath, matching chat.ts's
+# process.resourcesPath/chatctx and the dev-mode ../knowledge relative path)
+# straight from this machine's checkout at build time, filtered to drop its
+# own nested .git/.DS_Store. This assumes `npm run dist:mac` is run from a
+# checkout that has knowledge/ cloned (true for the owner's dev machine,
+# which is the only place this app is ever packaged) — if a checkout lacks
+# it, electron-builder fails the build rather than silently shipping without
+# it; clone the private repo to ../knowledge (repo root) before packaging.
 asar: true
 extraResources:
   - from: ../chatctx/CLAUDE.md
@@ -37,10 +55,20 @@ extraResources:
     to: chatctx/agent_log.py
   - from: ../chatctx/gym.py
     to: chatctx/gym.py
+  - from: ../chatctx/recovery_plan_contract.mjs
+    to: chatctx/recovery_plan_contract.mjs
+  - from: ../chatctx/workout_template_contract.mjs
+    to: chatctx/workout_template_contract.mjs
   - from: ../chatctx/modes
     to: chatctx/modes
   - from: ../chatctx/.claude
     to: chatctx/.claude
+  - from: ../knowledge
+    to: knowledge
+    filter:
+      - '**/*'
+      - '!.git{,/**/*}'
+      - '!.DS_Store'
 mac:
   icon: build/icon.icns
   identity: null

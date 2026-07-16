@@ -630,9 +630,16 @@ export async function addInjuryLog(
   if (priorError) throw new Error(`addInjuryLog (idempotency): ${priorError.message}`)
   if (prior) return normalizeNumeric(prior as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
 
-  // One log per day, highest pain wins: a same-day entry only supersedes the
-  // existing one when its pain is >= the day's current pain. Corrections that
-  // lower the reading are made by deleting the log, not by re-logging.
+  // One log per day: a same-day quick log either replaces the existing one
+  // (if it's DIFFERENT — any of note/pain_level/context/workout_id changed)
+  // or is a no-op (if it's IDENTICAL — e.g. "Feeling fine" clicked again with
+  // nothing new to say). An identical resend returns the existing row
+  // untouched (same id, same client_mutation_id, same noted_at) rather than
+  // bumping it, so repeat clicks of the same quick-log button never appear as
+  // a second entry. This replaced an earlier "highest pain wins" rule, which
+  // wrongly treated a same-or-lower-pain different note as a no-op and
+  // discarded it — that lost real information (new context/note at equal or
+  // lower pain must still replace).
   //
   // The merge is scoped to this app's own single-day quick logs (source 'user',
   // no span). Chat-authored notes and period spans are exempt — they can share a
@@ -641,7 +648,7 @@ export async function addInjuryLog(
   const entryDate = entry.entry_date ?? new Date().toISOString().slice(0, 10)
   const { data: dayRow, error: dayError } = await supabase
     .from('injury_notes')
-    .select('id, pain_level')
+    .select(INJURY_LOG_COLUMNS)
     .eq('injury_id', entry.injury_id)
     .eq('entry_date', entryDate)
     .eq('source', 'user')
@@ -662,23 +669,24 @@ export async function addInjuryLog(
   }
 
   if (dayRow) {
-    // null pain sorts below any real 0–10 reading, so a genuine reading always
-    // supersedes a note that carried no pain level.
-    const existingPain = dayRow.pain_level ?? -1
-    const incomingPain = entry.pain_level ?? -1
-    if (incomingPain < existingPain) {
-      const { data: kept, error: keptError } = await supabase
-        .from('injury_notes')
-        .select(INJURY_LOG_COLUMNS)
-        .eq('id', dayRow.id)
-        .single()
-      if (keptError) throw new Error(`addInjuryLog (keep existing): ${keptError.message}`)
-      return normalizeNumeric(kept as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
+    const existing = normalizeNumeric(dayRow as unknown as InjuryLogEntry, INJURY_LOG_NUMERIC_KEYS)
+    const entryContext: string[] = entry.context
+    const sameContext =
+      Array.isArray(existing.context) &&
+      existing.context.length === entryContext.length &&
+      existing.context.every((c) => entryContext.includes(c))
+    const isIdentical =
+      existing.note === entry.note &&
+      (existing.pain_level ?? null) === (entry.pain_level ?? null) &&
+      sameContext &&
+      (existing.workout_id ?? null) === (entry.workout_id ?? null)
+    if (isIdentical) {
+      return existing
     }
     const { data: updated, error: updateError } = await supabase
       .from('injury_notes')
       .update(fields)
-      .eq('id', dayRow.id)
+      .eq('id', existing.id)
       .select(INJURY_LOG_COLUMNS)
       .single()
     if (updateError) throw new Error(`addInjuryLog (overwrite): ${updateError.message}`)
@@ -1535,13 +1543,77 @@ function localDateInTz(iso: string, timezone: string | null): string {
 }
 
 /**
+ * Active plan items (of a non-resolved injury) linked to any of the given
+ * exercises — the shared match used both to auto-check on save
+ * (syncPlanChecksFromGymSets) and to know what to un-check on delete
+ * (removeGymPlanChecksForSession). Each result carries `matchedExerciseId`:
+ * the input exercise that caused the match (for use as the "is this exercise
+ * still logged elsewhere" key on delete — see removeGymPlanChecksForSession),
+ * which is the plan item's own exercise_id for a direct match, or the
+ * logged exercise whose name matched for a fallback match.
+ *
+ * Primary match is exercise_id. Fallback: a plan item with NO exercise_id
+ * (the chat agent's injuries.py linking step was skipped or missed) still
+ * matches when its name is a case-insensitive exact match to one of the
+ * logged exercises' catalog names — this is a data-linkage gap the fallback
+ * papers over defensively, not a substitute for fixing the link. It's exact
+ * (not fuzzy/plural-insensitive): e.g. plan item "Heel walks" vs catalog
+ * exercise "Heel Walk" is the kind of near-miss that this
+ * fallback deliberately does NOT bridge — singular/plural and other fuzzy
+ * variants risk false-positive matches on a health-tracking check, so that
+ * case needs the plan item's exercise_id linked (injuries.py) or its name
+ * corrected to match, not silent fuzzy code matching.
+ */
+async function activePlanItemsForExercises(
+  exerciseIds: string[]
+): Promise<{ id: string; matchedExerciseId: string }[]> {
+  if (exerciseIds.length === 0) return []
+  const supabase = getClient()
+
+  const [{ data: byId, error: byIdError }, { data: unlinked, error: unlinkedError }] =
+    await Promise.all([
+      supabase
+        .from('recovery_plan_items')
+        .select('id, exercise_id, injuries!inner(status)')
+        .eq('active', true)
+        .neq('injuries.status', 'resolved')
+        .in('exercise_id', exerciseIds),
+      supabase
+        .from('recovery_plan_items')
+        .select('id, exercise_id, name, injuries!inner(status)')
+        .eq('active', true)
+        .eq('kind', 'exercise')
+        .is('exercise_id', null)
+        .neq('injuries.status', 'resolved')
+    ])
+  if (byIdError) throw new Error(byIdError.message)
+  if (unlinkedError) throw new Error(unlinkedError.message)
+
+  const items: { id: string; matchedExerciseId: string }[] = (byId ?? []).map((item) => ({
+    id: item.id as string,
+    matchedExerciseId: item.exercise_id as string
+  }))
+  if (unlinked && unlinked.length > 0) {
+    const names = await exerciseNamesById(exerciseIds)
+    const lowerToId = new Map([...names.entries()].map(([id, name]) => [name.toLowerCase(), id]))
+    for (const item of unlinked) {
+      if (typeof item.name !== 'string') continue
+      const matchedId = lowerToId.get(item.name.toLowerCase())
+      if (matchedId) items.push({ id: item.id as string, matchedExerciseId: matchedId })
+    }
+  }
+  return items
+}
+
+/**
  * Recovery-plan compliance from gym logs: any active plan item (of a
  * non-resolved injury) linked to an exercise this session just logged gets its
  * plan_item_check upserted for the session's local date, source='gym'. An
- * existing manual check for the day wins (ignoreDuplicates). Additive only —
- * editing sets away or deleting the session leaves past checks standing; the
- * user can untick in the Injuries tab. Never fails the session save: the log
- * is the primary artifact, the check is derived convenience.
+ * existing manual check for the day wins (ignoreDuplicates). Additive only on
+ * save — editing sets away leaves past checks standing; the user can untick
+ * in the Injuries tab. Deleting the session, however, retracts the checks it
+ * produced (see removeGymPlanChecksForSession). Never fails the session save:
+ * the log is the primary artifact, the check is derived convenience.
  */
 async function syncPlanChecksFromGymSets(
   sets: NewGymSet[],
@@ -1550,20 +1622,12 @@ async function syncPlanChecksFromGymSets(
   try {
     const exerciseIds = [...new Set(sets.map((s) => s.exercise_id))]
     if (exerciseIds.length === 0) return
-    const supabase = getClient()
-
-    const { data: items, error } = await supabase
-      .from('recovery_plan_items')
-      .select('id, exercise_id, injuries!inner(status)')
-      .eq('active', true)
-      .neq('injuries.status', 'resolved')
-      .in('exercise_id', exerciseIds)
-    if (error) throw new Error(error.message)
-    if (!items || items.length === 0) return
+    const items = await activePlanItemsForExercises(exerciseIds)
+    if (items.length === 0) return
 
     const timezone = (await getUserConfig()).timezone
     const doneDate = localDateInTz(performedAtIso, timezone)
-    const { error: upsertError } = await supabase.from('plan_item_checks').upsert(
+    const { error: upsertError } = await getClient().from('plan_item_checks').upsert(
       items.map((item) => ({ item_id: item.id, done_date: doneDate, source: 'gym' })),
       { onConflict: 'item_id,done_date', ignoreDuplicates: true }
     )
@@ -1571,6 +1635,95 @@ async function syncPlanChecksFromGymSets(
   } catch (err) {
     console.error(
       '[gym] plan-check sync failed (session saved fine):',
+      err instanceof Error ? err.message : err
+    )
+  }
+}
+
+/**
+ * Retracts the plan_item_checks a deleted session produced: for each active
+ * plan item linked to an exercise the session logged, on the session's local
+ * done_date, delete the source='gym' check for that (item, date) — but ONLY
+ * if no OTHER still-existing session logs that same exercise on the same
+ * local date (a second same-day session, e.g. AM/PM, still justifies the
+ * check). Manual (source='user') checks are never touched — the delete
+ * filters on source='gym' explicitly. Best-effort: a failure here logs and
+ * does not block the session delete, matching syncPlanChecksFromGymSets'
+ * never-fail posture (the delete is the primary action).
+ *
+ * No session_id on plan_item_checks, so this is derived from the deleted
+ * session's own exercises + date rather than a direct join — see the
+ * schema-level note where this is called.
+ */
+async function removeGymPlanChecksForSession(sessionId: string): Promise<void> {
+  try {
+    const supabase = getClient()
+    const { data: session, error: sessionError } = await supabase
+      .from('gym_sessions')
+      .select('id, performed_at')
+      .eq('id', sessionId)
+      .maybeSingle()
+    if (sessionError) throw new Error(sessionError.message)
+    if (!session) return // already gone
+
+    const { data: sets, error: setsError } = await supabase
+      .from('gym_sets')
+      .select('exercise_id')
+      .eq('session_id', sessionId)
+    if (setsError) throw new Error(setsError.message)
+    const exerciseIds = [...new Set((sets ?? []).map((s) => s.exercise_id))]
+    if (exerciseIds.length === 0) return
+
+    const items = await activePlanItemsForExercises(exerciseIds)
+    if (items.length === 0) return
+
+    const timezone = (await getUserConfig()).timezone
+    const doneDate = localDateInTz(session.performed_at, timezone)
+
+    // Other sessions whose LOCAL date could match: a generous ±1 UTC-day
+    // window around performed_at, precisely filtered below via
+    // localDateInTz — mirrors the same day-boundary handling used to
+    // compute doneDate itself.
+    const performedAt = new Date(session.performed_at)
+    const rangeStart = new Date(performedAt.getTime() - 24 * 60 * 60 * 1000).toISOString()
+    const rangeEnd = new Date(performedAt.getTime() + 24 * 60 * 60 * 1000).toISOString()
+    const { data: nearbySessions, error: nearbyError } = await supabase
+      .from('gym_sessions')
+      .select('id, performed_at')
+      .neq('id', sessionId)
+      .gte('performed_at', rangeStart)
+      .lte('performed_at', rangeEnd)
+    if (nearbyError) throw new Error(nearbyError.message)
+
+    const sameDaySessionIds = (nearbySessions ?? [])
+      .filter((s) => localDateInTz(s.performed_at, timezone) === doneDate)
+      .map((s) => s.id)
+
+    let exercisesStillLogged = new Set<string>()
+    if (sameDaySessionIds.length > 0) {
+      const { data: survivingSets, error: survivingError } = await supabase
+        .from('gym_sets')
+        .select('exercise_id')
+        .in('session_id', sameDaySessionIds)
+      if (survivingError) throw new Error(survivingError.message)
+      exercisesStillLogged = new Set((survivingSets ?? []).map((s) => s.exercise_id))
+    }
+
+    const itemIdsToUnmark = items
+      .filter((item) => !exercisesStillLogged.has(item.matchedExerciseId))
+      .map((item) => item.id)
+    if (itemIdsToUnmark.length === 0) return
+
+    const { error: deleteError } = await supabase
+      .from('plan_item_checks')
+      .delete()
+      .eq('source', 'gym')
+      .eq('done_date', doneDate)
+      .in('item_id', itemIdsToUnmark)
+    if (deleteError) throw new Error(deleteError.message)
+  } catch (err) {
+    console.error(
+      '[gym] plan-check retraction failed (session delete proceeds anyway):',
       err instanceof Error ? err.message : err
     )
   }
@@ -1726,6 +1879,13 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
 
 export async function deleteGymSession(id: string): Promise<void> {
   assertUuid(id, 'session_id')
+  // Gather what this session logged BEFORE deleting (gym_sets cascades away
+  // with the session), so the gym-sourced plan checks it produced can be
+  // retracted. plan_item_checks has no session_id to join on directly (a
+  // session_id column there would be the more direct fix — flagged, not
+  // migrated here); this derives the same (exercise, date) match the sync
+  // used to create the check in the first place.
+  await removeGymPlanChecksForSession(id)
   const { error } = await getClient().from('gym_sessions').delete().eq('id', id)
   if (error) throw new Error(`deleteGymSession: ${error.message}`)
 }
