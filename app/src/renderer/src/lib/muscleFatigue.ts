@@ -210,7 +210,112 @@ export const MUSCLE_FATIGUE_PARAMS = {
   refWindowDays: 30, // trailing window for ref30
   // A muscle counts as having real history (clears the low-data flag) once its
   // total deposited stimulus over the window exceeds this floor.
-  lowDataStimulusFloor: 1e-6
+  lowDataStimulusFloor: 1e-6,
+
+  // --- exercise load coefficient (§ new: intrinsic systemic cost per set) ---
+  // Two sets are not created equal: an all-out barbell squat taxes the whole
+  // body far harder than a resisted-band dorsiflexion of the same set-count.
+  // The coefficient scales each set's deposited stimulus by the exercise's
+  // INTRINSIC systemic cost, read from catalog metadata the exercises table
+  // already carries (equipment + mechanics + movement_pattern) — NOT hand-tagged
+  // per exercise. It is a heuristic; every tier's rationale is stated below.
+  //
+  // Design: coeff = clamp(equipmentTier × mechanicsMult × patternMult, floor, 1.0),
+  // then an optional per-name_key override wins outright. The three axes multiply
+  // because they capture independent things: equipment ≈ how much external load /
+  // stabilization the tool allows, mechanics ≈ how many joints/muscles share the
+  // work, pattern ≈ whether it is a big structural lift or an accessory.
+  loadCoeff: {
+    // Neutral default when metadata is missing entirely (custom exercises with no
+    // equipment/mechanics/pattern — e.g. a custom band exercise whose rows
+    // carry blank metadata). A middle-of-the-road accessory coefficient: we refuse
+    // to guess it is either a max-effort compound or a trivial rehab drill.
+    defaultCoeff: 0.55,
+    floor: 0.25, // a set never contributes less than a quarter of a reference set
+    ceil: 1.0, // reference = a heavy barbell/loaded compound (squat/deadlift class)
+
+    // Equipment tier — the primary axis. Ordered by how much systemic load the
+    // tool lets you move and how much stabilization it demands.
+    //   barbell/trap bar : full external load, free stabilization      → 1.0 (reference)
+    //   smith machine    : barbell load but guided bar, less stabilizer → 0.9
+    //   ez bar           : loaded but curl/extension accessory class    → 0.75
+    //   dumbbell/kettlebell: real load, per-limb, usually accessory     → 0.7
+    //   machine          : loaded but seated/supported, isolating       → 0.6
+    //   cable            : constant-tension isolation, light systemic   → 0.5
+    //   bodyweight       : bounded by own mass, no external load        → 0.5
+    //   band             : lightest resistance, rehab/activation class  → 0.3
+    //   other/blank      : unknown → treated as the accessory default   → 0.55
+    equipmentTier: {
+      barbell: 1.0,
+      'trap bar': 1.0,
+      'smith machine': 0.9,
+      'ez bar': 0.75,
+      dumbbell: 0.7,
+      kettlebell: 0.7,
+      machine: 0.6,
+      cable: 0.5,
+      bodyweight: 0.5,
+      band: 0.3,
+      other: 0.55
+    } as Record<string, number>,
+
+    // Mechanics multiplier — compound movements recruit more muscle and cost more
+    // systemically than isolation at the same equipment. A light nudge, not a
+    // second full axis, so it does not swamp the equipment tier.
+    mechanicsMult: {
+      compound: 1.0,
+      isolation: 0.85
+    } as Record<string, number>,
+
+    // Movement-pattern multiplier — the biggest structural lifts (squat/hinge)
+    // carry a small premium; dedicated isolation/accessory patterns a small
+    // discount. Neutral (1.0) for everything not listed so the axis only speaks
+    // where it clearly should.
+    patternMult: {
+      squat: 1.1,
+      hinge: 1.1,
+      lunge: 1.0,
+      'horizontal push': 1.0,
+      'vertical push': 1.0,
+      'horizontal pull': 1.0,
+      'vertical pull': 1.0,
+      carry: 1.0,
+      rotation: 0.95,
+      core: 0.9,
+      isolation: 0.85
+    } as Record<string, number>,
+
+    // Per-exercise overrides by name_key (lowercased exercise name — the DB's
+    // name_key convention). Escape hatch for exceptions the metadata mapping gets
+    // wrong; empty by default so the principled mapping governs unless a real
+    // outlier is found. Example (commented, not active): a trap-bar deadlift that
+    // should read as a pure max-effort compound regardless of tier quirks.
+    //   'trap bar deadlift': 1.0,
+    coeffOverride: {} as Record<string, number>
+  },
+
+  // --- relative-intensity factor (§ new: this set vs the user's own recent norm)
+  // Distinct from loadCoeff: the coefficient is the exercise's fixed intrinsic
+  // cost; the intensity factor is how HARD this particular set was relative to
+  // what the user usually lifts for THAT exercise. Lifting above your recent
+  // working norm fatigues more; well below it (deload / recovery day) less.
+  //
+  // factor = clamp(load / recentMedian, min, max). This is deliberately a
+  // DIFFERENT reference than ref30/hardness above: ref30 uses a 90th-percentile
+  // over 30d to detect a genuinely heavy TOP set (hardness term); this uses the
+  // trailing-28d MEDIAN working weight to detect whether the whole set sits above
+  // or below the user's typical working load. They measure different things (peak
+  // vs central tendency) and both feed the same sigma multiplicatively — the
+  // hardness term rewards a heavy outlier set, the intensity factor scales the
+  // ordinary set by where it sits in the user's normal range.
+  relIntensity: {
+    windowDays: 28, // trailing window for the personal working-weight median
+    min: 0.6, // a set well below the norm still costs at least 60% (bounded)
+    max: 1.4, // a set well above the norm costs at most 140% (bounded)
+    // Need at least this many prior non-warmup sets of the exercise in-window to
+    // trust the median. Below it → neutral 1.0 (first exposures don't get skewed).
+    minHistorySets: 4
+  }
 } as const
 
 // ---------------------------------------------------------------------------
@@ -257,6 +362,72 @@ function percentile(values: number[], p: number): number | null {
 /** Effective load of a set: weight_kg, or BW_PROXY for a bodyweight (null-weight) set. */
 function setLoad(s: GymSet): number {
   return s.weight_kg == null ? MUSCLE_FATIGUE_PARAMS.bwProxy : s.weight_kg
+}
+
+/** Median of a numeric array, or null when empty. */
+function median(values: number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
+/**
+ * Exercise load coefficient in [floor, ceil]: the exercise's INTRINSIC systemic
+ * cost per set, derived from catalog metadata (equipment × mechanics × pattern),
+ * not hand-tagged. Degrades to a neutral middle default when metadata is missing.
+ * A per-name_key override (keyed on lowercased name, the DB name_key convention)
+ * wins outright when present. See MUSCLE_FATIGUE_PARAMS.loadCoeff for the tiers
+ * and the rationale behind every value.
+ */
+export function exerciseLoadCoefficient(ex: Exercise): number {
+  const L = MUSCLE_FATIGUE_PARAMS.loadCoeff
+
+  // Override hook: name_key = lowercased exercise name (matches the DB's name_key).
+  const key = ex.name.trim().toLowerCase()
+  const override = L.coeffOverride[key]
+  if (override != null && Number.isFinite(override)) return override
+
+  const equip = ex.equipment?.trim().toLowerCase() || null
+  const mech = ex.mechanics?.trim().toLowerCase() || null
+  const pattern = ex.movement_pattern?.trim().toLowerCase() || null
+
+  // No usable metadata at all → honest neutral default (don't guess heavy or light).
+  if (!equip && !mech && !pattern) return L.defaultCoeff
+
+  // Equipment is the primary axis; unknown/blank equipment falls to the default
+  // tier rather than a compound reference.
+  const equipTier: number = (equip ? L.equipmentTier[equip] : undefined) ?? L.defaultCoeff
+  const mechMult: number = (mech ? L.mechanicsMult[mech] : undefined) ?? 1
+  const patternMult: number = (pattern ? L.patternMult[pattern] : undefined) ?? 1
+
+  const raw = equipTier * mechMult * patternMult
+  return Math.min(L.ceil, Math.max(L.floor, raw))
+}
+
+/**
+ * Relative-intensity factor in [min, max]: this set's load versus the user's own
+ * trailing-window MEDIAN working weight for the SAME exercise (excluding the
+ * current session). Above the personal norm → >1 (fatigues more); below → <1.
+ * Neutral 1.0 when: the set carries no logged weight (bodyweight/band), there is
+ * no in-window history, or the history is thinner than minHistorySets. Distinct
+ * from the hardness term (see loadCoeff/relIntensity comments) — this scales the
+ * ordinary set by where its weight sits in the user's normal range, so it must
+ * not double-count the exercise's intrinsic cost (that is loadCoeff's job).
+ */
+export function relIntensityFactor(
+  set: GymSet,
+  priorLoads: number[] // in-window non-warmup loads for this exercise, current session excluded
+): number {
+  const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+  // No actual weight on the set → the ratio is meaningless; stay neutral. (A
+  // bodyweight/band set's cost is already handled by loadCoeff + hard-set volume.)
+  if (set.weight_kg == null) return 1
+  if (priorLoads.length < R.minHistorySets) return 1
+  const norm = median(priorLoads)
+  if (norm == null || norm <= 0) return 1
+  const ratio = set.weight_kg / norm
+  return Math.min(R.max, Math.max(R.min, ratio))
 }
 
 // ---------------------------------------------------------------------------
@@ -312,8 +483,12 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
   }
 
   // --- lifting stimulus ---
-  // First, collect per-exercise working-set loads keyed by day, to compute ref30.
+  // First, collect per-exercise working-set loads keyed by day, to compute ref30
+  // (hardness) and the relative-intensity median. `load` uses BW_PROXY for
+  // weightless sets (needed by ref30); `weightKg` keeps the raw logged weight so
+  // the intensity median only reflects genuinely-loaded sets.
   const exerciseLoads = new Map<string, { dayKey: string; load: number }[]>()
+  const exerciseWeights = new Map<string, { dayKey: string; weightKg: number }[]>()
   for (const sess of sessions) {
     const dayKey = localDateKey(sess.performed_at, timezone)
     for (const set of sess.sets) {
@@ -321,6 +496,11 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       const arr = exerciseLoads.get(set.exercise_id) ?? []
       arr.push({ dayKey, load: setLoad(set) })
       exerciseLoads.set(set.exercise_id, arr)
+      if (set.weight_kg != null) {
+        const warr = exerciseWeights.get(set.exercise_id) ?? []
+        warr.push({ dayKey, weightKg: set.weight_kg })
+        exerciseWeights.set(set.exercise_id, warr)
+      }
     }
   }
 
@@ -343,7 +523,21 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       // working load. This preserves extra fatigue from unusually heavy sets,
       // while avoiding raw kilogram volume as the recovery unit.
       const hardSetEquivalent = (reps * load) / (P.referenceSetReps * referenceLoad)
-      const sigma = hardSetEquivalent * hardness
+
+      // Exercise load coefficient: the exercise's intrinsic systemic cost per set
+      // (barbell compound ≈ 1.0, band rehab ≈ 0.3), from catalog metadata.
+      const loadCoeff = exerciseLoadCoefficient(ex)
+
+      // Relative-intensity factor: this set's weight vs the user's own trailing-
+      // 28d median working weight for the SAME exercise (current session excluded).
+      // Distinct from `hardness` (peak-based) — this centers on the personal norm.
+      const cutoff = ymdKey(addDays(keyToYMD(dayKey), -P.relIntensity.windowDays))
+      const priorLoads = (exerciseWeights.get(set.exercise_id) ?? [])
+        .filter((w) => w.dayKey < dayKey && w.dayKey > cutoff)
+        .map((w) => w.weightKg)
+      const intensityFactor = relIntensityFactor(set, priorLoads)
+
+      const sigma = hardSetEquivalent * hardness * loadCoeff * intensityFactor
 
       for (const m of ex.primary_muscles) {
         if ((MUSCLES as readonly string[]).includes(m)) deposit(dayKey, m as Muscle, sigma * P.primaryShare)

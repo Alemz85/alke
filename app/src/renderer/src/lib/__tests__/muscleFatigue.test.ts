@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import type { Exercise, GymSession, GymSet, Workout } from '@shared/types'
 import {
   computeMuscleFatigue,
+  exerciseLoadCoefficient,
+  relIntensityFactor,
   fatigueStatus,
   MUSCLE_FATIGUE_PARAMS,
   type MuscleFatigueInput,
@@ -318,9 +320,14 @@ describe('leaky integrator acute recurrence', () => {
     })
     // Two sessions: day A (07-10) and day C (07-12), rest day B (07-11) between.
     // Each is one standard set: 10 reps at the reference working load, so each
-    // deposits exactly 1 hard-set equivalent.
-    const s1 = 1 // stimulus on 07-10
-    const s2 = 1 // stimulus on 07-12
+    // deposits exactly 1 hard-set equivalent BEFORE the load coefficient. CURL_PURE
+    // carries no catalog metadata (equipment/mechanics/pattern all null), so its
+    // exercise load coefficient degrades to the neutral default (0.55) and the
+    // intensity factor is neutral 1.0 (fewer than minHistorySets prior sets). Each
+    // session therefore deposits 1 * loadCoeff.
+    const loadCoeff = MUSCLE_FATIGUE_PARAMS.loadCoeff.defaultCoeff
+    const s1 = loadCoeff // stimulus on 07-10
+    const s2 = loadCoeff // stimulus on 07-12
 
     const res = computeMuscleFatigue(
       baseInput({
@@ -469,6 +476,252 @@ describe('relIntensity / hardness', () => {
       muscleDetail(groupBy(b, 'shoulders'), 'front delts').fatigue,
       10
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Exercise load coefficient — intrinsic systemic cost from catalog metadata
+// ---------------------------------------------------------------------------
+
+describe('exercise load coefficient', () => {
+  // Real catalog metadata (values match the exercises table's vocabularies).
+  const BARBELL_SQUAT = exercise({
+    id: 'bsquat',
+    name: 'Back Squat',
+    body_part: 'legs',
+    primary_muscles: ['quadriceps'],
+    secondary_muscles: [],
+    equipment: 'barbell',
+    mechanics: 'compound',
+    movement_pattern: 'squat'
+  })
+  const BAND_DORSI = exercise({
+    id: 'dorsi',
+    name: 'Resisted Band Dorsiflexion',
+    body_part: 'legs',
+    primary_muscles: ['calves'],
+    secondary_muscles: [],
+    equipment: 'band',
+    mechanics: 'isolation',
+    movement_pattern: 'isolation'
+  })
+
+  it('ranks a barbell compound at the reference ceiling and a band rehab drill lowest', () => {
+    // barbell(1.0) × compound(1.0) × squat(1.1) → clamped to ceil 1.0.
+    expect(exerciseLoadCoefficient(BARBELL_SQUAT)).toBeCloseTo(1.0, 10)
+    // band(0.3) × isolation(0.85) × isolation(0.85) = 0.21675 → clamped to floor 0.25.
+    const band = exerciseLoadCoefficient(BAND_DORSI)
+    expect(band).toBeCloseTo(MUSCLE_FATIGUE_PARAMS.loadCoeff.floor, 10)
+    expect(band).toBeLessThan(exerciseLoadCoefficient(BARBELL_SQUAT))
+  })
+
+  it('orders equipment tiers: barbell > dumbbell > cable/bodyweight > band', () => {
+    const mk = (equipment: string): number =>
+      exerciseLoadCoefficient(
+        exercise({ id: `x-${equipment}`, name: `X ${equipment}`, equipment, mechanics: 'isolation', movement_pattern: 'isolation' })
+      )
+    expect(mk('barbell')).toBeGreaterThan(mk('dumbbell'))
+    expect(mk('dumbbell')).toBeGreaterThan(mk('cable'))
+    expect(mk('cable')).toBeGreaterThanOrEqual(mk('band'))
+    expect(mk('band')).toBe(MUSCLE_FATIGUE_PARAMS.loadCoeff.floor)
+  })
+
+  it('metadata-less custom exercise degrades to the neutral middle default', () => {
+    // A custom exercise that carries blank equipment/mechanics/
+    // pattern — must NOT be guessed as heavy or trivial.
+    const CUSTOM = exercise({ id: 'custom', name: 'Custom Band Drill' })
+    expect(exerciseLoadCoefficient(CUSTOM)).toBe(MUSCLE_FATIGUE_PARAMS.loadCoeff.defaultCoeff)
+  })
+
+  it('a name_key override wins outright over the metadata mapping', () => {
+    const P = MUSCLE_FATIGUE_PARAMS
+    const original = { ...P.loadCoeff.coeffOverride }
+    try {
+      // name_key = lowercased name.
+      ;(P.loadCoeff.coeffOverride as Record<string, number>)['back squat'] = 0.42
+      expect(exerciseLoadCoefficient(BARBELL_SQUAT)).toBe(0.42)
+    } finally {
+      ;(P.loadCoeff as { coeffOverride: Record<string, number> }).coeffOverride = original
+    }
+  })
+
+  it('a band-rehab session contributes a small fraction of an equal-set-count barbell session', () => {
+    // Same set count, same reps, both pure-primary into calves, no history so both
+    // sit in the cold-start linear band and intensity is neutral. The band drill's
+    // deposited stimulus (hence fatigue) must be a small fraction of the barbell's.
+    const sets = (exId: string): GymSet[] =>
+      Array.from({ length: 3 }, () => set({ exercise_id: exId, reps: 10, weight_kg: 40 }))
+
+    const BARBELL_CALF = exercise({
+      id: 'bcalf',
+      name: 'Barbell Calf Raise',
+      primary_muscles: ['calves'],
+      secondary_muscles: [],
+      equipment: 'barbell',
+      mechanics: 'compound',
+      movement_pattern: 'squat'
+    })
+    const heavy = computeMuscleFatigue(
+      baseInput({
+        sessions: [session('2026-07-12T09:00:00.000Z', sets('bcalf'))],
+        exercisesById: mapOf(BARBELL_CALF),
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    const band = computeMuscleFatigue(
+      baseInput({
+        sessions: [session('2026-07-12T09:00:00.000Z', sets('dorsi'))],
+        exercisesById: mapOf(BAND_DORSI),
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    const heavyCalf = muscleDetail(groupBy(heavy, 'legs'), 'calves').fatigue
+    const bandCalf = muscleDetail(groupBy(band, 'legs'), 'calves').fatigue
+    expect(bandCalf).toBeGreaterThan(0) // still registers, does not vanish
+    // band coeff (0.25) vs barbell coeff (1.0): the band deposit is ~1/4 → fatigue
+    // clearly a small fraction. Assert well under half as a robust bound.
+    expect(bandCalf).toBeLessThan(heavyCalf * 0.5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Relative-intensity factor — this set vs the user's own recent working median
+// ---------------------------------------------------------------------------
+
+describe('relative-intensity factor', () => {
+  const PRESS = exercise({
+    id: 'ripress',
+    name: 'Overhead Press',
+    body_part: 'shoulders',
+    primary_muscles: ['front delts'],
+    secondary_muscles: [],
+    equipment: 'barbell',
+    mechanics: 'compound',
+    movement_pattern: 'vertical push'
+  })
+
+  // A 28-day history of steady 60kg working sets (>= minHistorySets, spread on
+  // distinct days) so the trailing median is a firm 60kg on the asOf day.
+  const steadyHistory = (): GymSession[] => [
+    session('2026-06-20T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: 60 })]),
+    session('2026-06-25T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: 60 })]),
+    session('2026-07-01T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: 60 })]),
+    session('2026-07-06T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: 60 })]),
+    session('2026-07-09T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: 60 })])
+  ]
+
+  const finalSetFatigue = (finalWeight: number): number => {
+    const res = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          ...steadyHistory(),
+          session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: finalWeight })])
+        ],
+        exercisesById: mapOf(PRESS),
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    return muscleDetail(groupBy(res, 'shoulders'), 'front delts').fatigue
+  }
+
+  it('above-norm weight raises the contribution; below-norm lowers it', () => {
+    const atNorm = finalSetFatigue(60)
+    const above = finalSetFatigue(80) // ratio 1.33 → factor > 1
+    const below = finalSetFatigue(40) // ratio 0.67 → factor < 1
+    expect(above).toBeGreaterThan(atNorm)
+    expect(below).toBeLessThan(atNorm)
+  })
+
+  it('respects the parameterized bounds (extreme ratios saturate at min/max)', () => {
+    // Tested directly on the factor helper so the clamp is isolated from the
+    // hard-set-equivalent term (which independently scales with weight via ref30).
+    const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+    // >= minHistorySets prior loads with median 60.
+    const priors = [60, 60, 60, 60, 60]
+    // Far above norm → clamped to max, and going even higher does not exceed it.
+    expect(relIntensityFactor(set({ weight_kg: 300 }), priors)).toBe(R.max)
+    expect(relIntensityFactor(set({ weight_kg: 6000 }), priors)).toBe(R.max)
+    // Far below norm → clamped to min, and going even lower does not drop under it.
+    expect(relIntensityFactor(set({ weight_kg: 6 }), priors)).toBe(R.min)
+    expect(relIntensityFactor(set({ weight_kg: 0.5 }), priors)).toBe(R.min)
+    // Exactly on the norm → neutral.
+    expect(relIntensityFactor(set({ weight_kg: 60 }), priors)).toBeCloseTo(1.0, 10)
+  })
+
+  it('the factor helper degrades to neutral 1.0 on thin history and weightless sets', () => {
+    const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+    // Fewer than minHistorySets prior loads → neutral even if far from them.
+    const thin = Array.from({ length: R.minHistorySets - 1 }, () => 60)
+    expect(relIntensityFactor(set({ weight_kg: 300 }), thin)).toBe(1)
+    // Weightless (null) set → neutral regardless of history depth.
+    expect(relIntensityFactor(set({ weight_kg: null }), [60, 60, 60, 60, 60])).toBe(1)
+    // No history at all → neutral.
+    expect(relIntensityFactor(set({ weight_kg: 100 }), [])).toBe(1)
+  })
+
+  it('exposes bounds and window as tunable params', () => {
+    const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+    expect(R.min).toBeGreaterThan(0)
+    expect(R.min).toBeLessThan(1)
+    expect(R.max).toBeGreaterThan(1)
+    expect(R.windowDays).toBeGreaterThan(0)
+    expect(R.minHistorySets).toBeGreaterThan(0)
+  })
+
+  it('stays neutral (1.0) with no history — first exposures are not skewed', () => {
+    // A single set, no prior history: intensity factor must be neutral, so the
+    // result equals what the model gives with the factor logically at 1.0. We
+    // assert two very different weights on a FIRST-ever exposure only differ via
+    // the hardness/ref30 term, not the intensity factor (which is neutral for
+    // both because priorLoads is empty).
+    const first = (w: number): number => {
+      const res = computeMuscleFatigue(
+        baseInput({
+          sessions: [session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'ripress', reps: 8, weight_kg: w })])],
+          exercisesById: mapOf(PRESS),
+          asOf: new Date('2026-07-12T20:00:00.000Z')
+        })
+      )
+      return muscleDetail(groupBy(res, 'shoulders'), 'front delts').fatigue
+    }
+    // With only the current session, ref30 falls back to the set's own load AND
+    // priorLoads is empty → intensity neutral. Two first-exposure weights then
+    // produce IDENTICAL hard-set-equivalent fatigue (10-rep-equivalent cancels the
+    // weight, hardness == 1 at relIntensity 1). So they must be equal.
+    expect(first(50)).toBeCloseTo(first(120), 10)
+  })
+
+  it('stays neutral for a bodyweight (weightless) set even with weighted history', () => {
+    // A weightless set has no meaningful ratio → factor 1.0, regardless of any
+    // prior weighted median for the exercise.
+    const DIP = exercise({
+      id: 'dip',
+      name: 'Chest Dip',
+      primary_muscles: ['chest'],
+      secondary_muscles: [],
+      equipment: 'bodyweight',
+      mechanics: 'compound',
+      movement_pattern: 'horizontal push'
+    })
+    // Give it weighted history then a bodyweight (null) final set — must not crash
+    // and must produce a finite, in-range fatigue.
+    const res = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          session('2026-06-25T09:00:00.000Z', [set({ exercise_id: 'dip', reps: 8, weight_kg: 20 })]),
+          session('2026-07-01T09:00:00.000Z', [set({ exercise_id: 'dip', reps: 8, weight_kg: 20 })]),
+          session('2026-07-06T09:00:00.000Z', [set({ exercise_id: 'dip', reps: 8, weight_kg: 20 })]),
+          session('2026-07-09T09:00:00.000Z', [set({ exercise_id: 'dip', reps: 8, weight_kg: 20 })]),
+          session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'dip', reps: 8, weight_kg: null })])
+        ],
+        exercisesById: mapOf(DIP),
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    const chest = muscleDetail(groupBy(res, 'chest'), 'chest').fatigue
+    expect(Number.isFinite(chest)).toBe(true)
+    expect(chest).toBeGreaterThanOrEqual(0)
+    expect(chest).toBeLessThanOrEqual(1)
   })
 })
 

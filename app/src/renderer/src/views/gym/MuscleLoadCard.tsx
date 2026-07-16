@@ -143,8 +143,9 @@ export function MuscleLoadCard({ result }: { result: MuscleFatigueResult }): Rea
           <p className="gym-muscle-footnote">
             Bar length and color: current fatigue estimate. Sets: working sets{' '}
             {period === 'week' ? 'this ISO week' : 'this month'} — 1 per primary muscle, ½ per
-            secondary. Fatigue reflects lifting + cardio spillover, decaying over days; literature-based,
-            personalizes with your data.
+            secondary. Fatigue reflects lifting + cardio spillover, weighted by each exercise&apos;s
+            load (a barbell compound taxes more than a band drill) and by how the weight compares to
+            your recent norm; decays over days; literature-based, personalizes with your data.
           </p>
         </>
       )}
