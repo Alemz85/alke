@@ -4,13 +4,20 @@ import {
   averageDailySteps,
   dailyStepsSeries,
   explicitWalkStats,
+  flightsThisWeek,
+  periodDistanceTotals,
   periodStepsTotals,
   recentWalkDates,
   todayVsAvgSteps,
   weeklyStepsTotals
 } from '../walkingStats'
 
-function metric(date: string, steps: number | null): DailyMetric {
+function metric(
+  date: string,
+  steps: number | null,
+  distanceM: number | null = null,
+  flightsClimbed: number | null = null
+): DailyMetric {
   return {
     date,
     resting_hr: null,
@@ -25,8 +32,8 @@ function metric(date: string, steps: number | null): DailyMetric {
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
     weight_kg: null,
-    walking_running_distance_m: null,
-    flights_climbed: null,
+    walking_running_distance_m: distanceM,
+    flights_climbed: flightsClimbed,
   }
 }
 
@@ -62,9 +69,9 @@ describe('dailyStepsSeries', () => {
       const metrics = [metric('2026-07-14', 5000), metric('2026-07-16', 8000)]
       const series = dailyStepsSeries(metrics, 'UTC', 3)
       expect(series).toEqual([
-        { date: '2026-07-14', steps: 5000 },
-        { date: '2026-07-15', steps: 0 },
-        { date: '2026-07-16', steps: 8000 }
+        { date: '2026-07-14', steps: 5000, distanceKm: null },
+        { date: '2026-07-15', steps: 0, distanceKm: null },
+        { date: '2026-07-16', steps: 8000, distanceKm: null }
       ])
     } finally {
       restoreNow()
@@ -76,7 +83,7 @@ describe('dailyStepsSeries', () => {
     try {
       const metrics = [metric('2026-07-16', 3000), metric('2026-07-16', 500)]
       const series = dailyStepsSeries(metrics, 'UTC', 1)
-      expect(series).toEqual([{ date: '2026-07-16', steps: 3500 }])
+      expect(series).toEqual([{ date: '2026-07-16', steps: 3500, distanceKm: null }])
     } finally {
       restoreNow()
     }
@@ -87,7 +94,48 @@ describe('dailyStepsSeries', () => {
     mockToday('2026-07-16T12:00:00Z')
     try {
       const series = dailyStepsSeries(metrics, 'UTC', 1)
-      expect(series).toEqual([{ date: '2026-07-16', steps: 0 }])
+      expect(series).toEqual([{ date: '2026-07-16', steps: 0, distanceKm: null }])
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('converts walking_running_distance_m to km, zero-filling gaps as null (not 0)', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [
+        metric('2026-07-14', 5000, 4200), // 4.2km
+        metric('2026-07-16', 8000, 6800) // 6.8km
+        // 2026-07-15 has no row at all — should stay null, not 0
+      ]
+      const series = dailyStepsSeries(metrics, 'UTC', 3)
+      expect(series).toEqual([
+        { date: '2026-07-14', steps: 5000, distanceKm: 4.2 },
+        { date: '2026-07-15', steps: 0, distanceKm: null },
+        { date: '2026-07-16', steps: 8000, distanceKm: 6.8 }
+      ])
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('sums distance across multiple rows on the same date key', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [metric('2026-07-16', 3000, 2000), metric('2026-07-16', 500, 500)]
+      const series = dailyStepsSeries(metrics, 'UTC', 1)
+      expect(series).toEqual([{ date: '2026-07-16', steps: 3500, distanceKm: 2.5 }])
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('treats a present row with null distance as no-data for that day', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [metric('2026-07-16', 8000, null)]
+      const series = dailyStepsSeries(metrics, 'UTC', 1)
+      expect(series).toEqual([{ date: '2026-07-16', steps: 8000, distanceKm: null }])
     } finally {
       restoreNow()
     }
@@ -124,6 +172,102 @@ describe('periodStepsTotals', () => {
       const totals = periodStepsTotals(metrics, 'UTC')
       expect(totals.thisWeek).toBe(8000)
       expect(totals.thisMonth).toBe(9000)
+    } finally {
+      restoreNow()
+    }
+  })
+})
+
+describe('periodDistanceTotals', () => {
+  it('sums today/this-week/this-month distance (in km) up to today', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [
+        metric('2026-07-01', 1000, 800), // this month, before this week — 0.8km
+        metric('2026-07-13', 3000, 2500), // this week (Monday) — 2.5km
+        metric('2026-07-16', 5000, 4000), // today — 4km
+        metric('2026-06-30', 9999, 9999) // last month — excluded
+      ]
+      const totals = periodDistanceTotals(metrics, 'UTC')
+      expect(totals.todayKm).toBeCloseTo(4)
+      expect(totals.thisWeekKm).toBeCloseTo(6.5)
+      expect(totals.thisMonthKm).toBeCloseTo(7.3)
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('returns null (not 0) for a window with zero distance rows at all', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      // Steps present, but no distance metric ever recorded — pre-backfill history.
+      const metrics = [metric('2026-07-16', 5000), metric('2026-07-13', 3000)]
+      const totals = periodDistanceTotals(metrics, 'UTC')
+      expect(totals.todayKm).toBeNull()
+      expect(totals.thisWeekKm).toBeNull()
+      expect(totals.thisMonthKm).toBeNull()
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('distinguishes a real 0km day from no data by only counting rows with a non-null distance', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [metric('2026-07-16', 0, 0)] // present row, genuinely 0 steps/distance
+      const totals = periodDistanceTotals(metrics, 'UTC')
+      expect(totals.todayKm).toBe(0)
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('handles a partial window where only some days carry distance', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [
+        metric('2026-07-13', 3000, 1000), // this week, has distance — 1km
+        metric('2026-07-14', 4000, null), // this week, present row but no distance value
+        metric('2026-07-16', 5000, 3000) // today — 3km
+      ]
+      const totals = periodDistanceTotals(metrics, 'UTC')
+      expect(totals.thisWeekKm).toBeCloseTo(4) // 1km + 3km, the null-distance day contributes 0
+    } finally {
+      restoreNow()
+    }
+  })
+})
+
+describe('flightsThisWeek', () => {
+  it('sums flights_climbed for the current Monday-anchored week up to today', () => {
+    mockToday('2026-07-16T12:00:00Z') // Thursday of 2026-W29
+    try {
+      const metrics = [
+        metric('2026-07-13', 3000, null, 5), // Monday of this week
+        metric('2026-07-16', 5000, null, 7), // today
+        metric('2026-07-06', 2000, null, 99) // last week — excluded
+      ]
+      expect(flightsThisWeek(metrics, 'UTC')).toBe(12)
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('returns null when no row this week carries a flights value', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [metric('2026-07-16', 5000, null, null)]
+      expect(flightsThisWeek(metrics, 'UTC')).toBeNull()
+    } finally {
+      restoreNow()
+    }
+  })
+
+  it('returns 0 (not null) when a row this week explicitly recorded 0 flights', () => {
+    mockToday('2026-07-16T12:00:00Z')
+    try {
+      const metrics = [metric('2026-07-16', 5000, null, 0)]
+      expect(flightsThisWeek(metrics, 'UTC')).toBe(0)
     } finally {
       restoreNow()
     }

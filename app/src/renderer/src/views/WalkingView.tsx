@@ -18,9 +18,12 @@ import {
   averageDailySteps,
   dailyStepsSeries,
   explicitWalkStats,
+  flightsThisWeek,
+  periodDistanceTotals,
   periodStepsTotals,
   todayVsAvgSteps,
-  weeklyStepsTotals
+  weeklyStepsTotals,
+  type DailyStepsPoint
 } from '../lib/walkingStats'
 import { hasZones, tizRows, weeklyZ2, TimeInZonesStacks, WeeklyZ2Bars } from './Zone2View'
 import './WalkingView.css'
@@ -39,6 +42,11 @@ function formatSteps(n: number): string {
 
 function formatWalkDistance(km: number): string {
   return km >= 100 ? `${Math.round(km).toLocaleString('en-US')} km` : `${km.toFixed(1)} km`
+}
+
+/** "4.2 km" at one decimal, em dash when there's no distance data for the window at all. */
+function formatDailyDistance(km: number | null): string {
+  return km == null ? EM_DASH : `${km.toFixed(1)} km`
 }
 
 export function WalkingView({
@@ -69,6 +77,11 @@ export function WalkingView({
     () => periodStepsTotals(dailyMetrics, timezone),
     [dailyMetrics, timezone]
   )
+  const distanceTotals = useMemo(
+    () => periodDistanceTotals(dailyMetrics, timezone),
+    [dailyMetrics, timezone]
+  )
+  const flightsWeek = useMemo(() => flightsThisWeek(dailyMetrics, timezone), [dailyMetrics, timezone])
 
   const lifetimeWalks = useMemo(() => explicitWalkStats(workouts, timezone, 'lifetime'), [workouts, timezone])
   const monthWalks = useMemo(() => explicitWalkStats(workouts, timezone, 'month'), [workouts, timezone])
@@ -124,6 +137,15 @@ export function WalkingView({
             />
           </div>
         </div>
+        <div className="walking-stat-facts walking-stat-facts--distance">
+          <MetricCard eyebrow="Distance today" value={formatDailyDistance(distanceTotals.todayKm)} />
+          <MetricCard
+            eyebrow="Distance this week"
+            value={formatDailyDistance(distanceTotals.thisWeekKm)}
+            caption={flightsWeek != null ? `${flightsWeek} floors this week` : undefined}
+          />
+          <MetricCard eyebrow="Distance this month" value={formatDailyDistance(distanceTotals.thisMonthKm)} />
+        </div>
       </section>
 
       <div className="zone2-grid walking-grid">
@@ -156,7 +178,11 @@ export function WalkingView({
               <Tooltip
                 contentStyle={chartTooltipStyle}
                 cursor={{ fill: CHART.cursor }}
-                formatter={(v) => (typeof v === 'number' ? [formatSteps(v), 'steps'] : v)}
+                formatter={(v, _name, item) =>
+                  typeof v === 'number'
+                    ? [`${formatSteps(v)} steps · ${formatDailyDistance((item?.payload as DailyStepsPoint)?.distanceKm ?? null)}`, '']
+                    : v
+                }
               />
               <Bar dataKey="steps" fill={CHART.aerobic} radius={[3, 3, 0, 0]} maxBarSize={10} isAnimationActive={false} />
             </BarChart>

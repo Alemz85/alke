@@ -8,6 +8,8 @@ export interface DailyStepsPoint {
   /** "YYYY-MM-DD" local date key. */
   date: string
   steps: number
+  /** Zero-filled walking+running distance in km — null when no metric row exists for the date at all (pre-backfill history), distinct from a real 0. */
+  distanceKm: number | null
 }
 
 export interface WeeklyStepsTotal {
@@ -30,6 +32,13 @@ export interface TodayVsAvgSteps {
   deltaPct: number | null
 }
 
+export interface PeriodDistanceTotals {
+  /** Distance in km, or null when the period has zero rows with any distance recorded (pre-backfill history) — distinct from a real 0km. */
+  todayKm: number | null
+  thisWeekKm: number | null
+  thisMonthKm: number | null
+}
+
 /**
  * Zero-filled daily steps for the continuous last `days` days ending today
  * (in `timezone`) — a missing day is 0, not absent, so trend charts don't
@@ -40,16 +49,26 @@ export function dailyStepsSeries(
   timezone: string | null | undefined,
   days: number
 ): DailyStepsPoint[] {
-  const byDate = new Map<string, number>()
+  const stepsByDate = new Map<string, number>()
+  const distanceByDate = new Map<string, number>()
   for (const m of metrics) {
-    if (m.steps != null) byDate.set(m.date.slice(0, 10), (byDate.get(m.date.slice(0, 10)) ?? 0) + m.steps)
+    const key = m.date.slice(0, 10)
+    if (m.steps != null) stepsByDate.set(key, (stepsByDate.get(key) ?? 0) + m.steps)
+    if (m.walking_running_distance_m != null) {
+      distanceByDate.set(key, (distanceByDate.get(key) ?? 0) + m.walking_running_distance_m)
+    }
   }
   const today = toZonedYMD(new Date().toISOString(), timezone)
   const points: DailyStepsPoint[] = []
   for (let i = days - 1; i >= 0; i--) {
     const ymd = addDays(today, -i)
     const key = ymdToKey(ymd)
-    points.push({ date: key, steps: byDate.get(key) ?? 0 })
+    const distanceM = distanceByDate.get(key)
+    points.push({
+      date: key,
+      steps: stepsByDate.get(key) ?? 0,
+      distanceKm: distanceM != null ? distanceM / 1000 : null
+    })
   }
   return points
 }
@@ -111,6 +130,84 @@ export function periodStepsTotals(
     thisWeek: stepsInRange(metrics, ymdToKey(monday), todayKey),
     thisMonth: stepsInRange(metrics, monthStart, todayKey)
   }
+}
+
+/**
+ * Sum of `walking_running_distance_m` (in meters) for calendar days within
+ * [fromKey, toKey] inclusive. Returns `{ total: 0, hasData: false }` when no
+ * row in the range carries a distance value at all — e.g. dates before the
+ * backfill started — so callers can em-dash instead of showing a false "0".
+ */
+function distanceMInRange(
+  metrics: DailyMetric[],
+  fromKey: string,
+  toKey: string
+): { total: number; hasData: boolean } {
+  let total = 0
+  let hasData = false
+  for (const m of metrics) {
+    const key = m.date.slice(0, 10)
+    if (key < fromKey || key > toKey) continue
+    if (m.walking_running_distance_m != null) {
+      total += m.walking_running_distance_m
+      hasData = true
+    }
+  }
+  return { total, hasData }
+}
+
+/**
+ * Walking/running distance (km) for today / this calendar week / this
+ * calendar month (in `timezone`), Monday-anchored week — mirrors
+ * `periodStepsTotals`'s ranges. Each field is null when the corresponding
+ * window has no distance rows at all (as opposed to rows summing to 0km),
+ * so the view can em-dash rather than print "0.0 km" for pre-backfill dates.
+ */
+export function periodDistanceTotals(
+  metrics: DailyMetric[],
+  timezone: string | null | undefined
+): PeriodDistanceTotals {
+  const today = toZonedYMD(new Date().toISOString(), timezone)
+  const todayKey = ymdToKey(today)
+  const monday = isoWeekStart(today)
+  const monthStart = ymdToKey({ year: today.year, month: today.month, day: 1 })
+
+  const day = distanceMInRange(metrics, todayKey, todayKey)
+  const week = distanceMInRange(metrics, ymdToKey(monday), todayKey)
+  const month = distanceMInRange(metrics, monthStart, todayKey)
+
+  return {
+    todayKm: day.hasData ? day.total / 1000 : null,
+    thisWeekKm: week.hasData ? week.total / 1000 : null,
+    thisMonthKm: month.hasData ? month.total / 1000 : null
+  }
+}
+
+/**
+ * Flights climbed so far this calendar week (Monday-anchored, in
+ * `timezone`). Null when no row in the week carries a flights value at all,
+ * distinct from a real 0.
+ */
+export function flightsThisWeek(
+  metrics: DailyMetric[],
+  timezone: string | null | undefined
+): number | null {
+  const today = toZonedYMD(new Date().toISOString(), timezone)
+  const todayKey = ymdToKey(today)
+  const monday = isoWeekStart(today)
+  const mondayKey = ymdToKey(monday)
+
+  let total = 0
+  let hasData = false
+  for (const m of metrics) {
+    const key = m.date.slice(0, 10)
+    if (key < mondayKey || key > todayKey) continue
+    if (m.flights_climbed != null) {
+      total += m.flights_climbed
+      hasData = true
+    }
+  }
+  return hasData ? total : null
 }
 
 /**
