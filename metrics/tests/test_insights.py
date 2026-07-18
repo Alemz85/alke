@@ -7,8 +7,11 @@ import pytest
 
 from metrics.insights import (
     _bh_qvalues,
+    _block_bootstrap_stability,
     _effective_n,
     _lag1_autocorr,
+    _nw_maxlags,
+    apply_persistence,
     compute_correlations,
     discover_adjusted_insights,
     ef_dlm,
@@ -62,10 +65,11 @@ def test_correlations_skip_small_n():
     assert rows == []
 
 
-def test_adjusted_finder_recovers_stable_signal_and_drops_collinear_control():
-    n = 240
+def _planted_frame_and_specs(n=240, seed=85):
+    """A frame with a real driver→outcome effect, a confound, and a near-copy
+    of the confound (collinear-control fodder), plus its single-candidate spec."""
     dates = pd.date_range("2025-01-01", periods=n, freq="D")
-    rng = np.random.default_rng(85)
+    rng = np.random.default_rng(seed)
     driver = rng.normal(size=n)
     confound = rng.normal(size=n)
     outcome = 0.55 * driver + 0.8 * confound + rng.normal(0, 0.65, n)
@@ -86,14 +90,31 @@ def test_adjusted_finder_recovers_stable_signal_and_drops_collinear_control():
         "controls": ["confound", "confound_copy"],
         "direction": "lagged",
     }]
+    return frame, specs
 
-    model = discover_adjusted_insights(frame, specs=specs, min_n=60)
+
+def test_adjusted_finder_recovers_stable_signal_and_drops_collinear_control():
+    frame, specs = _planted_frame_and_specs()
+
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=60)
     candidate = model["diagnostics"]["candidates"][0]
-    assert candidate["status"] == "signal"
+    # tonight's statistical verdict clears every gate...
+    assert candidate["raw_status"] == "signal"
     assert candidate["partial_r"] > 0.4
     assert candidate["q_value"] < 0.1
     assert candidate["stable"] is True
+    assert candidate["boot_sign_agree"] >= 0.9
+    assert candidate["n_eff"] >= 30
     assert "confound_copy" in candidate["dropped_controls"]
+    # ...but the surfaced status waits for multi-night persistence
+    assert candidate["status"] == "watch"
+    assert candidate["persistence"] == {"streak": 1, "miss_streak": 0}
+
+    # with persistence dialed to a single night it promotes immediately
+    fast = discover_adjusted_insights(
+        frame, specs=specs, min_n=60, boot_reps=60, promote_after=1, run_placebos=False
+    )
+    assert fast["diagnostics"]["candidates"][0]["status"] == "signal"
 
 
 def test_adjusted_finder_does_not_promote_random_noise():
@@ -109,8 +130,126 @@ def test_adjusted_finder_does_not_promote_random_noise():
         "controls": [],
         "direction": "co-measured",
     }]
-    model = discover_adjusted_insights(frame, specs=specs, min_n=60)
-    assert model["diagnostics"]["candidates"][0]["status"] == "no_clear_signal"
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
+    candidate = model["diagnostics"]["candidates"][0]
+    assert candidate["raw_status"] == "no_clear_signal"
+    assert candidate["status"] == "no_clear_signal"
+
+
+def test_finder_persistence_promotes_signal_after_seven_nights():
+    frame, specs = _planted_frame_and_specs()
+    state = None
+    statuses = []
+    for _ in range(7):
+        model = discover_adjusted_insights(
+            frame, specs=specs, min_n=60, prior_state=state, boot_reps=25, run_placebos=False
+        )
+        candidate = model["diagnostics"]["candidates"][0]
+        statuses.append(candidate["status"])
+        state = model["diagnostics"]["persistence"]["state"]
+    assert statuses[:6] == ["watch"] * 6
+    assert statuses[6] == "signal"
+    assert candidate["persistence"]["streak"] == 7
+
+
+def _cand(name, raw):
+    return {"name": name, "raw_status": raw}
+
+
+def test_apply_persistence_promotes_after_streak_and_demotes_after_misses():
+    # night 1: a raw signal surfaces as watch (persistence pending)
+    cand = _cand("a", "signal")
+    state = apply_persistence([cand], None, promote_after=3, demote_after=2)
+    assert cand["status"] == "watch"
+    assert state["a"] == {"streak": 1, "miss_streak": 0, "surfaced": "watch"}
+    # nights 2-3: streak reaches promote_after → surfaced signal
+    cand = _cand("a", "signal")
+    state = apply_persistence([cand], state, promote_after=3, demote_after=2)
+    assert cand["status"] == "watch"
+    cand = _cand("a", "signal")
+    state = apply_persistence([cand], state, promote_after=3, demote_after=2)
+    assert cand["status"] == "signal"
+    # a raw watch night is NOT a miss — surfaced signal sticks
+    cand = _cand("a", "watch")
+    state = apply_persistence([cand], state, promote_after=3, demote_after=2)
+    assert cand["status"] == "signal"
+    # first raw miss: still surfaced (1 < demote_after)
+    cand = _cand("a", "no_clear_signal")
+    state = apply_persistence([cand], state, promote_after=3, demote_after=2)
+    assert cand["status"] == "signal"
+    # second consecutive miss hits demote_after → falls back to the raw status
+    cand = _cand("a", "no_clear_signal")
+    state = apply_persistence([cand], state, promote_after=3, demote_after=2)
+    assert cand["status"] == "no_clear_signal"
+
+
+def test_apply_persistence_carries_absent_candidates_unchanged():
+    prior = {"ghost": {"streak": 2, "miss_streak": 0, "surfaced": "watch"}}
+    new_state = apply_persistence([_cand("a", "no_clear_signal")], prior)
+    assert new_state["ghost"] == {"streak": 2, "miss_streak": 0, "surfaced": "watch"}
+    assert new_state["a"]["surfaced"] == "no_clear_signal"
+
+
+def test_placebo_suite_runs_identical_gates_and_stays_quiet():
+    frame, specs = _planted_frame_and_specs()
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40)
+    placebo = model["diagnostics"]["placebo"]
+    # one spec × three circular shifts, all long enough for a 240-day frame
+    assert placebo["shifts"] == [61, 91, 122]
+    assert placebo["tested"] == 3
+    # shifted null drivers must not clear the gates the real driver clears
+    assert placebo["signal_count"] == 0
+    assert all("raw_status" in row for row in placebo["candidates"])
+    assert all(row["name"].startswith("driver_to_outcome__placebo") for row in placebo["candidates"])
+
+
+def test_effective_n_gate_blocks_smooth_null_pair():
+    # Two independent near-random-walk series: without a lagged-outcome control
+    # only a small fraction of rows carry independent information, so the finder
+    # must refuse to test rather than hand HAC an impossible inference job.
+    rng = np.random.default_rng(11)
+    n = 220
+    frame = pd.DataFrame(
+        {"x": _ar1(n, 0.95, 1.0, rng), "y": _ar1(n, 0.95, 1.0, rng)},
+        index=pd.date_range("2025-01-01", periods=n, freq="D"),
+    )
+    specs = [{
+        "name": "smooth_null",
+        "label": "Smooth null",
+        "driver": "x",
+        "outcome": "y",
+        "controls": [],
+        "direction": "co-measured",
+    }]
+    model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=20, run_placebos=False)
+    candidate = model["diagnostics"]["candidates"][0]
+    assert candidate["raw_status"] == "insufficient"
+    assert candidate["reason"] == "effective_n"
+    assert candidate["status"] == "insufficient"
+    assert candidate["n_eff"] < 30
+
+
+def test_nw_maxlags_rule_of_thumb():
+    assert _nw_maxlags(100) == 4
+    assert _nw_maxlags(400) == 5
+    assert _nw_maxlags(10) == 2
+    assert _nw_maxlags(1) >= 1
+
+
+def test_block_bootstrap_stability_strong_vs_noise_and_deterministic():
+    rng = np.random.default_rng(5)
+    n = 200
+    x = rng.normal(size=n)
+    strong = pd.DataFrame({"x": x, "y": 0.8 * x + rng.normal(0, 0.5, n)})
+    noise = pd.DataFrame({"x": rng.normal(size=n), "y": rng.normal(size=n)})
+
+    s = _block_bootstrap_stability(strong, [], 0.8, "strong", reps=100)
+    assert s["stable"] is True
+    assert s["agree"] >= 0.99
+    w = _block_bootstrap_stability(noise, [], 0.02, "noise", reps=100)
+    assert w["stable"] is False
+    # crc32(name)-seeded rng: same data + name → identical verdict every run
+    assert _block_bootstrap_stability(strong, [], 0.8, "strong", reps=100) == s
 
 
 def test_ef_dlm_recovers_coefficient_and_requires_40_obs():
@@ -283,6 +422,79 @@ def test_perfs_constant_includes_weight_slope():
     from metrics.insights import PERFS
 
     assert "weight_7d_slope" in PERFS
+
+
+def test_default_specs_include_steps_candidates():
+    # NEAT hypothesis gets a controlled test, not just the raw sweep: steps
+    # candidates must control for training load so big-step days don't proxy
+    # long workouts.
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS
+
+    steps_specs = {s["name"]: s for s in DEFAULT_ADJUSTED_SPECS if s["driver"] == "steps_prior"}
+    assert {"steps_to_rhr", "steps_to_hrv", "steps_to_sleep"} <= set(steps_specs)
+    assert all("trimp_prior" in s["controls"] for s in steps_specs.values())
+
+
+def test_correlations_spearman_flags_outlier_driven_pair():
+    n = 60
+    rng = np.random.default_rng(42)
+    x = rng.normal(0, 1, n)
+    y = rng.normal(0, 1, n)
+    x[0] = 40.0
+    y[0] = 40.0  # one shared extreme day fabricates a Pearson relationship
+    frame = pd.DataFrame(
+        {"drv": x, "prf": y}, index=pd.date_range("2026-01-01", periods=n, freq="D")
+    )
+    rows = compute_correlations(frame, drivers=["drv"], perfs=["prf"], max_lag=0)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["r"] > 0.8  # Pearson is fooled by the outlier
+    assert abs(row["spearman_r"]) < 0.4  # ranks are not
+    assert row["rank_disagree"] is True
+
+
+def test_correlations_agreeing_pair_not_flagged():
+    frame = make_frame(200)
+    frame["ef"] = frame["sleep_duration"] * 0.001 + RNG.normal(0, 0.001, 200)
+    rows = compute_correlations(frame, drivers=["sleep_duration"], perfs=["ef"], max_lag=0)
+    row = rows[0]
+    assert "spearman_r" in row
+    assert row["rank_disagree"] is False
+
+
+def test_correlations_skip_trivial_shifted_pair():
+    # trimp_prior IS trimp_total shifted a day — correlating them only measures
+    # training-schedule autocorrelation, so the sweep must skip the pair.
+    frame = make_frame(120)
+    frame["trimp_prior"] = frame["trimp_total"].shift(1)
+    rows = compute_correlations(frame, drivers=["trimp_prior"], perfs=["trimp_total"], max_lag=2)
+    assert rows == []
+
+
+def test_ef_dlm_drops_collinear_regressor():
+    n = 120
+    rng = np.random.default_rng(9)
+    dates = pd.date_range("2026-01-01", periods=n, freq="D")
+    sleep = rng.normal(450, 40, n)
+    ctl = rng.normal(20, 5, n)
+    frame = pd.DataFrame(
+        {
+            "sleep_duration": sleep,
+            "rhr_dev": rng.normal(0, 2, n),
+            "ctl": ctl,
+            "atl": ctl * 1.2 + rng.normal(0, 0.1, n),  # near-copy of ctl
+        },
+        index=dates,
+    )
+    sleep_prev = np.roll(sleep, 1)
+    frame["ef"] = 0.1 + 0.0005 * sleep_prev + rng.normal(0, 0.001, n)
+    frame.iloc[0, frame.columns.get_loc("ef")] = np.nan
+
+    model = ef_dlm(frame)
+    assert "atl" in model["diagnostics"]["dropped_regressors"]
+    assert "atl" not in model["coefficients"]
+    # the model still recovers the planted sleep coefficient without atl
+    assert model["coefficients"]["sleep_prev"]["coef"] == pytest.approx(0.0005, rel=0.15)
 
 
 def test_perf_series_by_date_ef_is_swim_only():

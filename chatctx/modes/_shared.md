@@ -23,7 +23,8 @@ Loaded by every data-touching mode.
 - `daily_metrics(date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, state_of_mind, weight_kg)`.
 - `computed_workout(workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60)`.
 - `computed_daily(date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags)`.
-- `insight_correlations(var_x, var_y, lag_days, r, n, p_value)` and `insight_models(name, spec, coefficients, diagnostics)`.
+- `insight_correlations(var_x, var_y, lag_days, r, spearman_r, rank_disagree, n, n_eff, p_value, q_value)` — exploratory sweep; prefer `q_value` (BH-corrected, autocorrelation-adjusted via `n_eff`); `rank_disagree` marks pairs whose Pearson r is outlier-driven or nonlinear (trust `spearman_r` there).
+- `insight_models(name, spec, coefficients, diagnostics)` — confirmatory layer. For `daily_adjusted_finder`: `diagnostics.candidates[].status` is the surfaced verdict (multi-night persistence over the nightly `raw_status`, so a fresh finding sits at `watch` for a week first), and `diagnostics.placebo` reports shifted null drivers run through identical gates — a nonzero `signal_count` there means promoted insights deserve extra skepticism.
 - `user_config(hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, weekly_min_sessions, zone2_weekly_target_min, timezone)` — single row.
 - `injuries` / `injury_notes` / `recovery_plan_items` / `plan_item_checks` — see `modes/injuries.md`.
 - `goals` / `goal_progress` — see `modes/goals.md`.

@@ -359,12 +359,18 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     db.replace_insight_correlations(sb, correlations)
     print(f"insight_correlations: {len(correlations)} pairs")
 
-    finder = discover_adjusted_insights(frame)
+    # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
+    # nights) round-trips its state through the previous night's diagnostics.
+    prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
+    prior_state = ((((prior or {}).get("diagnostics") or {}).get("persistence")) or {}).get("state")
+    finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
+    diag = finder["diagnostics"]
     print(
         "insight_models: daily_adjusted_finder "
-        f"({finder['diagnostics']['signal_count']} signals, "
-        f"{finder['diagnostics']['watch_count']} watch)"
+        f"({diag['signal_count']} signals, {diag['watch_count']} watch, "
+        f"{diag['raw_signal_count']} raw-signal; "
+        f"placebo fired {diag['placebo']['signal_count']}/{diag['placebo']['tested']})"
     )
 
     model = ef_dlm(frame)

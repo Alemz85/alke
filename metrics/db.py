@@ -144,15 +144,13 @@ def upsert_computed_zone2_fitness(sb: Client, rows: list[dict]) -> None:
         sb.table("computed_zone2_fitness").upsert(rows[i : i + WRITE_CHUNK], on_conflict="date").execute()
 
 
-# Columns the insight_correlations table actually has. compute_correlations now
-# also returns n_eff / p_value_naive / q_value (F3), but persisting those needs a
-# migration (out of the metrics surface); until that lands, project each row to the
-# known columns so the write stays valid. p_value already carries the CORRECTED
-# (effective-n) value, so the overconfidence fix reaches the DB today; q_value is
-# available in the return value for callers and will be stored once the columns exist.
+# Columns the insight_correlations table actually has — keep in lockstep with
+# supabase/migrations (latest: 20260719 spearman_r/rank_disagree). The write
+# projects each row to this tuple so a new return field can't break the insert
+# before its migration lands.
 INSIGHT_CORR_COLUMNS = (
     "computed_at", "var_x", "var_y", "lag_days", "r", "n", "p_value",
-    "n_eff", "p_value_naive", "q_value",
+    "n_eff", "p_value_naive", "q_value", "spearman_r", "rank_disagree",
 )
 
 
@@ -166,6 +164,13 @@ def replace_insight_correlations(sb: Client, rows: list[dict]) -> None:
 
 def upsert_insight_model(sb: Client, row: dict) -> None:
     sb.table("insight_models").upsert(row).execute()
+
+
+def fetch_insight_model(sb: Client, name: str) -> dict | None:
+    """Previous nightly row for one model — the adjusted finder reads its own
+    persistence (hysteresis) state back out of diagnostics."""
+    res = sb.table("insight_models").select("*").eq("name", name).execute()
+    return res.data[0] if res.data else None
 
 
 def fetch_active_goals(sb: Client) -> list[dict]:
