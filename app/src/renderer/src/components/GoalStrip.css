@@ -18,23 +18,21 @@
   margin: 0;
 }
 
-/* Bounded tiles: auto-fill adds columns when there are more goals, but the
-   272px ceiling prevents a sparse row from stretching into window-wide slabs
-   and fits four tiles exactly in the standard 1136px content width. */
+/* Goal summaries stay compact and glanceable: four metric cards across the
+   standard dashboard width, following the 12-column dashboard rhythm. */
 .goal-strip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 272px));
-  justify-content: start;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-md);
 }
 
 .goal-strip-card {
   background: var(--color-surface-elevated);
-  border: none;
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
-  padding: var(--space-md);
+  padding: var(--space-lg);
   width: 100%;
-  min-height: 176px;
+  min-height: 152px;
   /* Grid/flex items default to min-width auto, which lets long metric names
      force the row wider than the tile and paint values outside it — allow
      shrinking so the ellipsis rules below can actually engage. */
@@ -55,8 +53,8 @@
 }
 
 .goal-strip-card:focus-visible {
-  outline: 2px solid var(--color-load);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .goal-strip-head {
@@ -90,50 +88,71 @@
 
 .goal-strip-metric-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-xxs);
+  align-items: baseline;
   min-width: 0;
   width: 100%;
-}
-
-.goal-strip-metric-name {
-  font-family: var(--font-body);
-  font-size: var(--type-label-size);
-  font-weight: var(--type-label-weight);
-  letter-spacing: var(--type-label-letter-spacing);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-height: var(--type-label-line-height);
 }
 
 .goal-strip-metric-value {
-  font-family: var(--font-display);
-  font-size: var(--type-heading-md-size);
-  font-weight: var(--type-heading-md-weight);
-  line-height: var(--type-heading-md-line-height);
-  color: var(--color-text);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: var(--space-xs);
+  min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.goal-strip-metric-number {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-lg-size);
+  font-weight: var(--type-heading-lg-weight);
+  line-height: var(--type-heading-lg-line-height);
+  letter-spacing: var(--type-heading-lg-letter-spacing);
+  color: var(--color-text);
+}
+
+.goal-strip-metric-unit {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 400;
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-secondary);
 }
 
 .goal-strip-metric-range {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-secondary);
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.goal-strip-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: auto;
+}
+
+.goal-strip-progress-value {
+  flex-shrink: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.goal-strip-delta {
+  flex-shrink: 0;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
 }
 
 .goal-strip-delta--neutral {
@@ -141,21 +160,19 @@
 }
 
 .goal-strip-delta--improving {
-  color: var(--color-aerobic-text);
+  color: var(--color-load-text);
 }
 
 .goal-strip-delta--regressing {
-  color: var(--color-flag-text);
+  color: var(--color-text-tertiary);
 }
 
 .goal-strip-bar {
   width: 100%;
-  height: 4px;
+  height: 3px;
   border-radius: var(--radius-full);
   background: var(--color-divider-soft);
   overflow: hidden;
-  /* Pin to the tile foot so short cards keep a consistent silhouette. */
-  margin-top: auto;
 }
 
 .goal-strip-bar-fill {
@@ -178,8 +195,18 @@
   color: var(--color-text-tertiary);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 1099px) {
+  .goal-strip-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 759px) {
   .goal-strip-grid {
     grid-template-columns: 1fr;
+  }
+
+  .goal-strip-card {
+    min-height: 144px;
   }
 }

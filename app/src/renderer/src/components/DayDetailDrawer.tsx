@@ -42,6 +42,8 @@ export interface DayDetailDrawerProps {
   workouts: Workout[]
   timezone: string | null | undefined
   onClose: () => void
+  /** Disable the built-in read-only Gym log when the caller supplies an editable one. */
+  showGymLog?: boolean
   children?: ReactNode
 }
 
@@ -50,6 +52,7 @@ export function DayDetailDrawer({
   workouts,
   timezone,
   onClose,
+  showGymLog = true,
   children
 }: DayDetailDrawerProps): ReactElement {
   useEffect(() => {
@@ -78,7 +81,12 @@ export function DayDetailDrawer({
 
         <div className="day-drawer-body">
           {workouts.map((w) => (
-            <SessionCard key={w.id} workout={w} timezone={timezone} />
+            <SessionCard
+              key={w.id}
+              workout={w}
+              timezone={timezone}
+              showGymLog={showGymLog}
+            />
           ))}
           {children}
         </div>
@@ -123,10 +131,12 @@ function StatCell({
 
 function SessionCard({
   workout,
-  timezone
+  timezone,
+  showGymLog
 }: {
   workout: Workout
   timezone: string | null | undefined
+  showGymLog: boolean
 }): ReactElement {
   const detailQuery = useWorkoutDetail(workout.id)
   const domain = modalityToDomain(workout.type)
@@ -137,7 +147,11 @@ function SessionCard({
   // The Gym tab's logged workout details (exercises/sets/notes) — self-sufficient
   // lookup so this section renders identically from Dashboard/Sessions/Gym,
   // not just when opened from the Gym tab. Gated to strength workouts only.
-  const gymSessionQuery = useGymSessionForWorkout(workout.id, workout.start_at, isStrength)
+  const gymSessionQuery = useGymSessionForWorkout(
+    workout.id,
+    workout.start_at,
+    isStrength && showGymLog
+  )
 
   const hrSamples = detailQuery.data?.hrSamples ?? []
   const hrChartData = hrSamples.map((s) => ({
@@ -253,7 +267,7 @@ function SessionCard({
         )}
       </div>
 
-      {isStrength && (
+      {isStrength && showGymLog && (
         <GymLogSection isLoading={gymSessionQuery.isLoading} session={gymSessionQuery.data} />
       )}
 

@@ -1,4 +1,4 @@
-// Compact Goals strip for the Dashboard — one small card per ACTIVE goal,
+// Compact Goals strip for the Dashboard — one metric card per ACTIVE goal,
 // reusing the exact ['goals'] query key + per-goal ['goal-progress', id]
 // fetches ProfileView uses (shared cache, no extra network) and the same
 // metricProgress/timeProgress derivations so the "current vs target" framing
@@ -16,9 +16,9 @@ export interface GoalStripProps {
   onOpenProfile: () => void
 }
 
-/** One goal's compact metric line + thin progress bar. Mirrors ProfileView's
+/** One goal's compact metric readout + thin progress bar. Mirrors ProfileView's
  *  GoalMetricBlock framing (latest value, baseline → target, direction-aware
- *  delta, % bar) but collapsed to a single row — no chart, no build-metric
+ *  delta, % bar) but removes verbose metric metadata — no chart, no build-metric
  *  action (that stays a Profile-only affordance). */
 function GoalStripMetric({ goal }: { goal: Goal }): ReactElement {
   const progressQuery = useQuery({
@@ -44,26 +44,34 @@ function GoalStripMetric({ goal }: { goal: Goal }): ReactElement {
   return (
     <>
       <div className="goal-strip-metric-row">
-        <span className="goal-strip-metric-name">{goal.metric_name}</span>
         {latest != null && (
-          <span className="goal-strip-metric-value tabular-nums">
-            {latest.toLocaleString()}
-            {goal.metric_unit ? ` ${goal.metric_unit}` : ''}
+          <span
+            className="goal-strip-metric-value tabular-nums"
+            aria-label={`${latest.toLocaleString()}${goal.metric_unit ? ` ${goal.metric_unit}` : ''}`}
+          >
+            <span className="goal-strip-metric-number">{latest.toLocaleString()}</span>
+            {goal.metric_unit && <span className="goal-strip-metric-unit">{goal.metric_unit}</span>}
           </span>
         )}
       </div>
 
       {goal.metric_target != null && (
-        <div className="goal-strip-metric-range tabular-nums">
-          {'Target '}
-          {goal.metric_target.toLocaleString()}
-          {goal.metric_unit ? ` ${goal.metric_unit}` : ''}
+        <div className="goal-strip-footer">
+          <div className="goal-strip-metric-range tabular-nums">
+            {'Target '}
+            {goal.metric_target.toLocaleString()}
+          </div>
           {delta != null && (
-            <span className={`goal-strip-delta ${deltaClass}`}>
-              {' · '}
+            <span
+              className={`goal-strip-delta ${deltaClass} tabular-nums`}
+              aria-label={`${delta >= 0 ? '+' : ''}${delta.toLocaleString()} vs start`}
+            >
               {delta >= 0 ? '+' : ''}
-              {delta.toLocaleString()} vs start
+              {delta.toLocaleString()}
             </span>
+          )}
+          {pctToTarget != null && (
+            <span className="goal-strip-progress-value tabular-nums">{pctToTarget}%</span>
           )}
         </div>
       )}

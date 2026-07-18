@@ -276,6 +276,7 @@ export function GymView(): ReactElement {
           workouts={workoutViewerItem.workout ? [workoutViewerItem.workout] : []}
           timezone={timezone}
           onClose={closeWorkoutViewer}
+          showGymLog={false}
         >
           <GymWorkoutPanel
             key={`${workoutViewerItem.key}:${workoutViewerItem.session?.id ?? 'unlogged'}`}

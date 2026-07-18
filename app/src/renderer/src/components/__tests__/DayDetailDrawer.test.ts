@@ -12,23 +12,27 @@ import { describe, expect, it } from 'vitest'
 // tested directly: lib/gymLog.test.ts already covers the shared helpers,
 // and hooks/__tests__/useGymData.test.ts covers resolveGymSessionLookupWindow.
 const source = readFileSync(new URL('../DayDetailDrawer.tsx', import.meta.url), 'utf8')
+const gymViewSource = readFileSync(new URL('../../views/GymView.tsx', import.meta.url), 'utf8')
 
 describe('DayDetailDrawer gym log wiring (source contract)', () => {
-  it('gates the gym log section on isStrength, so cardio/swim days never render it', () => {
-    expect(source).toMatch(/\{isStrength && \(\s*<GymLogSection/)
+  it('gates the gym log section on strength type and the caller display contract', () => {
+    expect(source).toMatch(/\{isStrength && showGymLog && \(\s*<GymLogSection/)
   })
 
-  it('gates the gym-session lookup on isStrength (never fires for non-strength workouts)', () => {
+  it('skips the gym-session lookup when the caller supplies its own log panel', () => {
     expect(source).toMatch(
-      /useGymSessionForWorkout\(workout\.id, workout\.start_at, isStrength\)/
+      /useGymSessionForWorkout\(\s*workout\.id,\s*workout\.start_at,\s*isStrength && showGymLog\s*\)/
     )
   })
 
-  it('renders GymLogSection for every drawer caller — no per-view branch or duplicated markup', () => {
-    // Only one call site: the drawer itself decides whether to show it,
-    // callers (Dashboard/Sessions/Gym) don't each opt in separately.
+  it('keeps one shared read-only call site for ordinary drawer callers', () => {
     const occurrences = source.match(/<GymLogSection/g) ?? []
     expect(occurrences).toHaveLength(1)
+  })
+
+  it('has the Gym view suppress the read-only copy when it injects GymWorkoutPanel', () => {
+    expect(source).toContain('showGymLog = true')
+    expect(gymViewSource).toMatch(/<DayDetailDrawer[\s\S]*?showGymLog=\{false\}[\s\S]*?<GymWorkoutPanel/)
   })
 
   it('has no "Edit log" affordance — the section is read-only outside the Gym tab', () => {

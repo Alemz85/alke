@@ -75,7 +75,7 @@ describe('GoalStrip', () => {
       id: 'g1',
       title: 'Improve VO2max',
       status: 'active',
-      metric_name: 'VO2max',
+      metric_name: 'Cardiorespiratory fitness (28-day rolling)',
       metric_sql: 'select 1',
       metric_direction: 'up',
       metric_unit: 'ml/kg/min',
@@ -89,11 +89,15 @@ describe('GoalStrip', () => {
       ]
     })
     expect(markup).toContain('Improve VO2max')
-    expect(markup).toContain('VO2max')
+    expect(markup).not.toContain('Cardiorespiratory fitness')
     expect(markup).toContain('44')
+    expect(markup).toContain('goal-strip-metric-unit')
     expect(markup).toContain('50')
-    expect(markup).toContain('Target 50 ml/kg/min')
+    expect(markup).toContain('Target 50')
+    expect(markup).not.toContain('Target 50 ml/kg/min')
     expect(markup).toContain('+4 vs start')
+    expect(markup).toContain('goal-strip-progress-value')
+    expect(markup).toContain('40%')
     expect(markup).toContain('role="progressbar"')
     expect(markup).toContain('aria-valuenow="40"')
   })
@@ -111,13 +115,20 @@ describe('GoalStrip', () => {
     expect(markup).not.toContain('Abandoned goal')
   })
 
-  it('keeps compact cards bounded and lets metric rows shrink inside them', () => {
+  it('uses compact four-up metric cards at desktop widths', () => {
     const gridRule = styles.match(/\.goal-strip-grid\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const cardRule = styles.match(/\.goal-strip-card\s*\{([\s\S]*?)\}/)?.[1] ?? ''
     const metricRowRule = styles.match(/\.goal-strip-metric-row\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const regressingRule = styles.match(/\.goal-strip-delta--regressing\s*\{([\s\S]*?)\}/)?.[1] ?? ''
 
-    expect(gridRule).toContain('272px')
-    expect(gridRule).not.toContain('1fr')
+    expect(gridRule).toContain('repeat(4, minmax(0, 1fr))')
+    expect(gridRule).toContain('gap: var(--space-md)')
+    expect(cardRule).toContain('background: var(--color-surface-elevated)')
+    expect(cardRule).toContain('border-radius: var(--radius-lg)')
+    expect(cardRule).toContain('min-height: 152px')
     expect(metricRowRule).toContain('min-width: 0')
     expect(metricRowRule).toContain('width: 100%')
+    expect(regressingRule).toContain('var(--color-text-tertiary)')
+    expect(regressingRule).not.toContain('flag')
   })
 })
