@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DailyMetric, UserConfig, Workout } from '@shared/types'
 import {
+  computeActiveEnergySummary,
   computeBodyWeightSummary,
   countSessionsForGoal,
   EM_DASH,
@@ -308,5 +309,57 @@ describe('computeBodyWeightSummary', () => {
     )
     expect(summary.latestKg).toBe(74.2)
     expect(summary.deltaLabel).toBe('−0.8 kg vs 1 mo ago')
+  })
+})
+
+describe('computeActiveEnergySummary', () => {
+  /** A daily_metrics row carrying only active_energy_kcal. */
+  function makeEnergyMetric(date: string, active_energy_kcal: number | null): DailyMetric {
+    return { ...makeMetric(date, null), active_energy_kcal } as DailyMetric
+  }
+
+  it('returns the no-data shape when active energy has never synced', () => {
+    const summary = computeActiveEnergySummary(
+      [makeEnergyMetric('2026-07-15', null)],
+      '2026-07-16'
+    )
+    expect(summary).toEqual({ todayKcal: null, weekAvgKcal: null, hasAnyData: false })
+  })
+
+  it("reports today's kcal and the prior-7-day average", () => {
+    const summary = computeActiveEnergySummary(
+      [
+        makeEnergyMetric('2026-07-13', 400),
+        makeEnergyMetric('2026-07-14', 500),
+        makeEnergyMetric('2026-07-15', 600),
+        makeEnergyMetric('2026-07-16', 120) // partial today — must NOT join the average
+      ],
+      '2026-07-16'
+    )
+    expect(summary.todayKcal).toBe(120)
+    expect(summary.weekAvgKcal).toBe(500)
+    expect(summary.hasAnyData).toBe(true)
+  })
+
+  it('excludes unsynced days from the average instead of counting them as zero', () => {
+    // Only 2 of the prior 7 days synced — the mean divides by 2, not 7.
+    const summary = computeActiveEnergySummary(
+      [makeEnergyMetric('2026-07-10', 300), makeEnergyMetric('2026-07-14', 500)],
+      '2026-07-16'
+    )
+    expect(summary.weekAvgKcal).toBe(400)
+  })
+
+  it('ignores readings older than 7 days and reports a missing today as null', () => {
+    const summary = computeActiveEnergySummary(
+      [
+        makeEnergyMetric('2026-07-01', 900), // outside the 7-day window
+        makeEnergyMetric('2026-07-15', 450)
+      ],
+      '2026-07-16'
+    )
+    expect(summary.todayKcal).toBeNull()
+    expect(summary.weekAvgKcal).toBe(450)
+    expect(summary.hasAnyData).toBe(true)
   })
 })

@@ -177,6 +177,9 @@ function SessionCard({
     { label: 'Duration', value: formatDuration(workout.duration_s ?? 0) }
   ]
   if (distanceKm) basicStats.push({ label: 'Distance', value: `${distanceKm} km` })
+  if (workout.energy_kcal !== null) {
+    basicStats.push({ label: 'Energy', value: `${Math.round(workout.energy_kcal)} kcal` })
+  }
   if (swimSummary) {
     basicStats.push({
       label: 'Avg set pace',

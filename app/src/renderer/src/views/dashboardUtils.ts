@@ -225,4 +225,50 @@ export function computeBodyWeightSummary(
   }
 }
 
+/**
+ * Active-energy glance for the Dashboard pill. Today's figure is a partial
+ * day (Apple Health accumulates it as the day goes), so the comparison shown
+ * is the average over the 7 FULL days before today — never today vs itself.
+ * Days without a synced value are excluded from the average rather than
+ * counted as zero: an absent row means "no sync", not "burned nothing"
+ * (active-energy history can start later than other series).
+ */
+export interface ActiveEnergySummary {
+  /** Today's active kcal so far, or null when today hasn't synced yet. */
+  todayKcal: number | null
+  /** Mean of the synced values over the 7 days before today, or null. */
+  weekAvgKcal: number | null
+  /** False until any active-energy value has ever synced — pill shows empty state. */
+  hasAnyData: boolean
+}
+
+export function computeActiveEnergySummary(
+  metricsAsc: DailyMetric[],
+  todayKey: string
+): ActiveEnergySummary {
+  const readings = metricsAsc.filter(
+    (m): m is DailyMetric & { active_energy_kcal: number } =>
+      typeof m.active_energy_kcal === 'number'
+  )
+  if (readings.length === 0) {
+    return { todayKcal: null, weekAvgKcal: null, hasAnyData: false }
+  }
+
+  const todayRow = readings.find((m) => m.date === todayKey)
+  const priorWeek = readings.filter((m) => {
+    const days = daysBetweenDates(m.date, todayKey)
+    return days >= 1 && days <= 7
+  })
+  const weekAvgKcal =
+    priorWeek.length > 0
+      ? priorWeek.reduce((sum, m) => sum + m.active_energy_kcal, 0) / priorWeek.length
+      : null
+
+  return {
+    todayKcal: todayRow?.active_energy_kcal ?? null,
+    weekAvgKcal,
+    hasAnyData: true
+  }
+}
+
 export { EM_DASH, fmtDelta, fmtNum }

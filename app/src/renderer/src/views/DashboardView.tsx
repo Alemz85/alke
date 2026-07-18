@@ -8,6 +8,7 @@ import {
   type MetricDetailConfig,
   type MetricDetailPoint
 } from '../components'
+import { ActiveEnergyPill } from '../components/ActiveEnergyPill'
 import { BodyWeightPill } from '../components/BodyWeightPill'
 import { ProteinPill } from '../components/ProteinPill'
 import { CalendarHeatmap } from '../components/CalendarHeatmap'
@@ -31,6 +32,7 @@ import { localDateKey, todayYMD, ymdKey } from '../hooks/sessionsDate'
 import { formatDurationHM, formatPerMonth, formatTrendPct } from '../lib/format'
 import { monthSummary, yearSummary, type SummaryItem } from '../lib/periodSummary'
 import {
+  computeActiveEnergySummary,
   computeBodyWeightSummary,
   countSessionsForGoal,
   fmtDistance,
@@ -221,6 +223,12 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
     [sortedMetrics, todayYmd]
   )
 
+  // Active-energy pill: today so far + prior-7-day average, same metric pull.
+  const energySummary = useMemo(
+    () => computeActiveEnergySummary(sortedMetrics, ymdKey(todayYmd)),
+    [sortedMetrics, todayYmd]
+  )
+
   // Resting HR: latest real value + deviation (computed elsewhere; null for now).
   const latestRhrRow = [...sortedMetrics].reverse().find((m) => m.resting_hr !== null)
   const latestRhr = latestRhrRow?.resting_hr ?? null
@@ -270,10 +278,11 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
     <div className="view">
       <TabHeader eyebrow="Overview" title="Dashboard" />
 
-      {/* Top glance row: body weight + protein (compact pills). */}
+      {/* Top glance row: body weight + protein + active energy (compact pills). */}
       <div className="dashboard-glance-grid">
         <BodyWeightPill summary={weightSummary} />
         <ProteinPill timezone={timezone} />
+        <ActiveEnergyPill summary={energySummary} />
       </div>
 
       {/* Sessions this week + a compact RHR readiness tile, then recent sessions. */}
