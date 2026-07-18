@@ -26,6 +26,8 @@ function makeSetRow(overrides: Partial<SetRow> = {}): SetRow {
     exerciseName: 'Back Squat',
     reps: 8,
     weightKg: 60,
+    rpe: null,
+    note: '',
     isWarmup: false,
     ...overrides
   }
@@ -201,5 +203,23 @@ describe('Derived body-part chips presentation (source contract)', () => {
 
   it('shows the "derived from sets" caption only in the derived tier', () => {
     expect(source).toContain("{chipsDerived && <span className=\"gym-field-label-note\"> · derived from sets</span>}")
+  })
+})
+
+describe('Set effort and note wiring (source contract)', () => {
+  it('hydrates and saves RPE and note with the rest of each set row', () => {
+    expect(source).toContain('rpe: s.rpe')
+    expect(source).toContain('note: s.note')
+    expect(source).toContain('rpe: row.rpe')
+    expect(source).toContain("note: row.note.trim() || null")
+  })
+
+  it('offers constrained optional controls without turning them into required data', () => {
+    expect(source).toContain('aria-label={`Set ${index + 1} RPE`}')
+    expect(source).toContain('min="1"')
+    expect(source).toContain('max="10"')
+    expect(source).toContain('step="0.5"')
+    expect(source).toContain('aria-label={`Set ${index + 1} note`}')
+    expect(source).toContain('maxLength={500}')
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Exercise, GymSession, GymSet, GymTemplate } from '@shared/types'
 import {
   buildQuickSetRows,
+  blocksToNewSets,
   exerciseUsage,
   formatExerciseSetSummary,
   formatRest,
@@ -202,6 +203,29 @@ describe('buildQuickSetRows', () => {
     expect(buildQuickSetRows('bench', 'Bench Press', 0, 8)).toBeNull()
     expect(buildQuickSetRows('bench', 'Bench Press', 3.5, 8)).toBeNull()
     expect(buildQuickSetRows('bench', 'Bench Press', 3, -1)).toBeNull()
+  })
+})
+
+describe('blocksToNewSets', () => {
+  it('preserves optional effort and note context for every set', () => {
+    const rows = [{
+      exerciseId: 'bench',
+      exerciseName: 'Bench Press',
+      reps: 8,
+      weightKg: 60,
+      rpe: 8.5,
+      note: 'Paused on the chest.',
+      isWarmup: false
+    }]
+
+    expect(blocksToNewSets([{ exerciseId: 'bench', sets: rows }])).toEqual([{
+      exercise_id: 'bench',
+      reps: 8,
+      weight_kg: 60,
+      rpe: 8.5,
+      note: 'Paused on the chest.',
+      is_warmup: false
+    }])
   })
 })
 

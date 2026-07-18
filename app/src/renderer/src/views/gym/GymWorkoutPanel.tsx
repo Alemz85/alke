@@ -21,7 +21,7 @@ function sessionTitle(session: GymSession, templateNameById: Map<string, string>
   return (firstTemplate ? templateNameById.get(firstTemplate) : null) ?? 'Gym session'
 }
 
-function ExerciseDisclosure({
+export function ExerciseDisclosure({
   block,
   blockKey,
   muscleGroup,
@@ -60,6 +60,7 @@ function ExerciseDisclosure({
             <span>Set</span>
             <span>Reps</span>
             <span>Load</span>
+            <span>RPE</span>
             <span>Muscle group</span>
           </div>
           {block.sets.map((set, index) => (
@@ -69,7 +70,9 @@ function ExerciseDisclosure({
               <span className="tabular-nums">
                 {set.weight_kg == null ? 'BW' : `${set.weight_kg} kg`}
               </span>
+              <span className="tabular-nums">{set.rpe ?? '—'}</span>
               <span>{muscleGroup ? displayBodyPart(muscleGroup) : '—'}</span>
+              {set.note && <span className="gym-log-set-note">{set.note}</span>}
             </div>
           ))}
         </div>

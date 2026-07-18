@@ -1,6 +1,6 @@
 // The Gym tab's core interaction: log or edit a session. Handles both "quick
 // log" (title/template/notes only, zero set rows) and "full log" (exercise
-// blocks with per-set reps/kg/warmup) — dual granularity is a data shape, not
+// blocks with per-set reps/kg/effort/notes) — dual granularity is a data shape, not
 // a UI mode, so both are the same form with the set editor optionally empty.
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import {
@@ -54,6 +54,8 @@ export type EditorTarget =
 
 export interface SetRow extends PrefillSetRow {
   key: string
+  rpe: number | null
+  note: string
 }
 
 export interface Block {
@@ -73,7 +75,16 @@ function nextKey(): string {
 }
 
 function blankRow(exerciseId: string, exerciseName: string): SetRow {
-  return { key: nextKey(), exerciseId, exerciseName, reps: null, weightKg: null, isWarmup: false }
+  return {
+    key: nextKey(),
+    exerciseId,
+    exerciseName,
+    reps: null,
+    weightKg: null,
+    rpe: null,
+    note: '',
+    isWarmup: false
+  }
 }
 
 function blocksFromSession(session: GymSession): Block[] {
@@ -88,6 +99,8 @@ function blocksFromSession(session: GymSession): Block[] {
       exerciseName: s.exercise_name,
       reps: s.reps,
       weightKg: s.weight_kg,
+      rpe: s.rpe,
+      note: s.note ?? '',
       isWarmup: s.is_warmup
     }))
   }))
@@ -98,14 +111,14 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
   for (const row of rows) {
     const last = blocks[blocks.length - 1]
     if (last && last.exerciseId === row.exerciseId) {
-      last.rows.push({ ...row, key: nextKey() })
+      last.rows.push({ ...row, key: nextKey(), rpe: row.rpe ?? null, note: row.note ?? '' })
     } else {
       blocks.push({
         key: nextKey(),
         exerciseId: row.exerciseId,
         exerciseName: row.exerciseName,
         bodyPartFilter: null,
-        rows: [{ ...row, key: nextKey() }]
+        rows: [{ ...row, key: nextKey(), rpe: row.rpe ?? null, note: row.note ?? '' }]
       })
     }
   }
@@ -121,6 +134,8 @@ function blocksToNewSets(blocks: Block[]): NewGymSession['sets'] {
         exercise_id: block.exerciseId,
         reps: row.reps,
         weight_kg: row.weightKg,
+        rpe: row.rpe,
+        note: row.note.trim() || null,
         is_warmup: row.isWarmup
       })
     }
@@ -174,6 +189,7 @@ function SetRowEditor({
       <input
         className="gym-input gym-set-input"
         type="number"
+        aria-label={`Set ${index + 1} reps`}
         placeholder="reps"
         value={row.reps ?? ''}
         onChange={(e) => onChange({ reps: e.target.value === '' ? null : Number(e.target.value) })}
@@ -181,9 +197,31 @@ function SetRowEditor({
       <input
         className="gym-input gym-set-input"
         type="number"
+        aria-label={`Set ${index + 1} load in kilograms`}
         placeholder="kg (bw)"
         value={row.weightKg ?? ''}
         onChange={(e) => onChange({ weightKg: e.target.value === '' ? null : Number(e.target.value) })}
+      />
+      <input
+        className="gym-input gym-set-input gym-set-input--rpe"
+        type="number"
+        aria-label={`Set ${index + 1} RPE`}
+        min="1"
+        max="10"
+        step="0.5"
+        inputMode="decimal"
+        placeholder="RPE"
+        value={row.rpe ?? ''}
+        onChange={(e) => onChange({ rpe: e.target.value === '' ? null : Number(e.target.value) })}
+      />
+      <input
+        className="gym-input gym-set-note-input"
+        type="text"
+        aria-label={`Set ${index + 1} note`}
+        maxLength={500}
+        placeholder="Set note"
+        value={row.note}
+        onChange={(e) => onChange({ note: e.target.value })}
       />
       <label className="gym-check gym-set-warmup">
         <input
@@ -250,7 +288,7 @@ function ExerciseBlockEditor({
   const addSet = (): void => {
     const last = block.rows[block.rows.length - 1]
     const copy = last
-      ? { ...last, key: nextKey() }
+      ? { ...last, key: nextKey(), rpe: null, note: '' }
       : blankRow(block.exerciseId ?? '', block.exerciseName)
     onChange({ ...block, rows: [...block.rows, copy] })
   }
@@ -266,7 +304,7 @@ function ExerciseBlockEditor({
     if (!rows) return
     onChange({
       ...block,
-      rows: rows.map((row) => ({ ...row, key: nextKey() }))
+      rows: rows.map((row) => ({ ...row, key: nextKey(), rpe: null, note: '' }))
     })
   }
 

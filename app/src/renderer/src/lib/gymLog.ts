@@ -152,6 +152,9 @@ export interface PrefillSetRow {
   reps: number | null
   weightKg: number | null
   isWarmup: boolean
+  /** Session-only context. Templates and quick generators leave these blank. */
+  rpe?: number | null
+  note?: string | null
 }
 
 /** Recover one compact prescription from already-expanded template rows. */
@@ -324,6 +327,8 @@ export function blocksToNewSets(blocks: { exerciseId: string; sets: PrefillSetRo
         exercise_id: block.exerciseId,
         reps: row.reps,
         weight_kg: row.weightKg,
+        rpe: row.rpe ?? null,
+        note: row.note?.trim() || null,
         is_warmup: row.isWarmup
       })
     }

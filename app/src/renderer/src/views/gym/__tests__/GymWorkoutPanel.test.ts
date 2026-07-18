@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Exercise, GymSession } from '@shared/types'
-import { GymWorkoutPanel } from '../GymWorkoutPanel'
+import { ExerciseDisclosure, GymWorkoutPanel } from '../GymWorkoutPanel'
 
 describe('GymWorkoutPanel read view', () => {
   it('exposes distinct hierarchy hooks for the workout header, exercises, and notes', () => {
@@ -37,9 +37,9 @@ describe('GymWorkoutPanel read view', () => {
         position: id - 1,
         reps: 8,
         weight_kg: 60,
-        rpe: null,
+        rpe: id === 2 ? 8.5 : null,
         is_warmup: false,
-        note: null
+        note: id === 2 ? 'Last rep slowed.' : null
       })),
       created_at: null,
       updated_at: null
@@ -68,5 +68,22 @@ describe('GymWorkoutPanel read view', () => {
     expect(markup).toContain('gym-log-edit-button')
     expect(markup).toContain('gym-log-view-section-label')
     expect(markup).toContain('gym-log-notes-label')
+
+    const expandedMarkup = renderToStaticMarkup(
+      createElement(ExerciseDisclosure, {
+        block: {
+          exerciseId: exercise.id,
+          exerciseName: exercise.name,
+          sets: session.sets
+        },
+        blockKey: 'incline-bench',
+        muscleGroup: 'chest',
+        expanded: true,
+        onToggle: () => undefined
+      })
+    )
+    expect(expandedMarkup).toContain('RPE')
+    expect(expandedMarkup).toContain('8.5')
+    expect(expandedMarkup).toContain('Last rep slowed.')
   })
 })
