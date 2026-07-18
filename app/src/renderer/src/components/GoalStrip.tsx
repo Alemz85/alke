@@ -55,15 +55,14 @@ function GoalStripMetric({ goal }: { goal: Goal }): ReactElement {
 
       {goal.metric_target != null && (
         <div className="goal-strip-metric-range tabular-nums">
-          {latest != null ? latest.toLocaleString() : '—'}
-          {' → '}
+          {'Target '}
           {goal.metric_target.toLocaleString()}
           {goal.metric_unit ? ` ${goal.metric_unit}` : ''}
           {delta != null && (
             <span className={`goal-strip-delta ${deltaClass}`}>
-              {' '}
-              ({delta >= 0 ? '+' : ''}
-              {delta.toLocaleString()})
+              {' · '}
+              {delta >= 0 ? '+' : ''}
+              {delta.toLocaleString()} vs start
             </span>
           )}
         </div>

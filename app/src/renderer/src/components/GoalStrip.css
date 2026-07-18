@@ -18,12 +18,13 @@
   margin: 0;
 }
 
-/* Compact squares (user request): self-sizing columns instead of thirds of
-   the view width — at ~220-280px per card the content fills the tile instead
-   of floating in a wide slab, and wide windows get more cards per row. */
+/* Bounded tiles: auto-fill adds columns when there are more goals, but the
+   272px ceiling prevents a sparse row from stretching into window-wide slabs
+   and fits four tiles exactly in the standard 1136px content width. */
 .goal-strip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 272px));
+  justify-content: start;
   gap: var(--space-md);
 }
 
@@ -32,7 +33,8 @@
   border: none;
   border-radius: var(--radius-lg);
   padding: var(--space-md);
-  min-height: 148px;
+  width: 100%;
+  min-height: 176px;
   /* Grid/flex items default to min-width auto, which lets long metric names
      force the row wider than the tile and paint values outside it — allow
      shrinking so the ellipsis rules below can actually engage. */
@@ -59,7 +61,7 @@
 
 .goal-strip-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-sm);
 }
@@ -74,7 +76,9 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .goal-strip-day {
@@ -86,9 +90,11 @@
 
 .goal-strip-metric-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-sm);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xxs);
+  min-width: 0;
+  width: 100%;
 }
 
 .goal-strip-metric-name {
@@ -98,24 +104,36 @@
   letter-spacing: var(--type-label-letter-spacing);
   text-transform: uppercase;
   color: var(--color-text-tertiary);
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: var(--type-label-line-height);
 }
 
 .goal-strip-metric-value {
   font-family: var(--font-display);
-  font-size: var(--type-heading-sm-size);
-  font-weight: var(--type-heading-sm-weight);
+  font-size: var(--type-heading-md-size);
+  font-weight: var(--type-heading-md-weight);
+  line-height: var(--type-heading-md-line-height);
   color: var(--color-text);
-  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .goal-strip-metric-range {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-secondary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .goal-strip-delta--neutral {
@@ -158,4 +176,10 @@
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-tertiary);
+}
+
+@media (max-width: 640px) {
+  .goal-strip-grid {
+    grid-template-columns: 1fr;
+  }
 }

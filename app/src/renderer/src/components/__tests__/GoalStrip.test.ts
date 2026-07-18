@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Goal } from '@shared/types'
 import { GoalStrip } from '../GoalStrip'
+
+const styles = readFileSync(new URL('../GoalStrip.css', import.meta.url), 'utf8')
 
 function makeGoal(overrides: Partial<Goal> & { id: string }): Goal {
   return {
@@ -89,6 +92,8 @@ describe('GoalStrip', () => {
     expect(markup).toContain('VO2max')
     expect(markup).toContain('44')
     expect(markup).toContain('50')
+    expect(markup).toContain('Target 50 ml/kg/min')
+    expect(markup).toContain('+4 vs start')
     expect(markup).toContain('role="progressbar"')
     expect(markup).toContain('aria-valuenow="40"')
   })
@@ -104,5 +109,15 @@ describe('GoalStrip', () => {
     expect(markup).not.toContain('Completed goal')
     expect(markup).not.toContain('On hold goal')
     expect(markup).not.toContain('Abandoned goal')
+  })
+
+  it('keeps compact cards bounded and lets metric rows shrink inside them', () => {
+    const gridRule = styles.match(/\.goal-strip-grid\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const metricRowRule = styles.match(/\.goal-strip-metric-row\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+
+    expect(gridRule).toContain('272px')
+    expect(gridRule).not.toContain('1fr')
+    expect(metricRowRule).toContain('min-width: 0')
+    expect(metricRowRule).toContain('width: 100%')
   })
 })
