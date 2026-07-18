@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DailyMetric, Workout } from '@shared/types'
 import {
   averageDailySteps,
@@ -54,12 +54,15 @@ function workout(id: string, startAt: string, distanceM: number | null, duration
   }
 }
 
-const REAL_NOW = Date.now
+// walkingStats reads the clock via `new Date()`, which a bare `Date.now`
+// override does NOT intercept — fake timers patch the Date constructor too.
+// (The old Date.now override only "passed" while the real date matched the
+// mocked one; these tests went red the day the calendar moved on.)
 function mockToday(iso: string): void {
-  Date.now = () => new Date(iso).getTime()
+  vi.useFakeTimers({ now: new Date(iso) })
 }
 function restoreNow(): void {
-  Date.now = REAL_NOW
+  vi.useRealTimers()
 }
 
 describe('dailyStepsSeries', () => {
