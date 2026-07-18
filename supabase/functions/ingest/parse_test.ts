@@ -8,6 +8,7 @@ import {
   downsampleRoute,
   mergeDailyMetric,
   type NormalizedDailyMetric,
+  type NormalizedWorkout,
   ParseError,
   parseIngestPayload,
 } from "./parse.ts";
@@ -388,6 +389,34 @@ Deno.test("handles flat numeric fields as well as {qty, units} objects", () => {
   assertEquals(w.energy_kcal, 400);
 });
 
+Deno.test("converts workout energy units: kJ->kcal, kcal/unknown pass through", () => {
+  const mk = (id: string, activeEnergyBurned: unknown) => ({
+    id,
+    name: "Cycling",
+    start: "2026-07-08 07:00:00 +0200",
+    end: "2026-07-08 08:00:00 +0200",
+    activeEnergyBurned,
+  });
+  const payload = {
+    data: {
+      workouts: [
+        mk("e-kj", { qty: 764.056, units: "kJ" }),
+        mk("e-kcal", { qty: 320, units: "kcal" }),
+        mk("e-unknown", { qty: 250, units: "widgets" }),
+      ],
+    },
+  };
+  const byId = Object.fromEntries(
+    parseIngestPayload(payload).workouts.map((w: NormalizedWorkout) => [
+      w.external_id,
+      w,
+    ]),
+  );
+  assertAlmostEquals(byId["e-kj"].energy_kcal!, 764.056 / 4.184, 0.001);
+  assertEquals(byId["e-kcal"].energy_kcal, 320);
+  assertEquals(byId["e-unknown"].energy_kcal, 250);
+});
+
 Deno.test("converts distance units: km, mi, yd, m, unknown->m", () => {
   const mk = (units: string, qty: number) => ({
     id: `dist-${units}`,
@@ -722,6 +751,32 @@ Deno.test("sums active_energy per date across multiple samples", () => {
   );
   assertAlmostEquals(byDate["2026-07-08"].active_energy_kcal!, 150.5, 0.001);
   assertEquals(byDate["2026-07-09"].active_energy_kcal, 10);
+});
+
+Deno.test("converts active_energy from kJ to kcal (HAE's real unit)", () => {
+  const payload = {
+    data: {
+      metrics: [
+        {
+          name: "active_energy",
+          units: "kJ",
+          data: [
+            { date: "2026-07-13 08:00:00 +0200", qty: 2000 },
+            { date: "2026-07-13 20:00:00 +0200", qty: 953.123 },
+          ],
+        },
+      ],
+      workouts: [],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  // 2953.123 kJ / 4.184 = 705.8 kcal — the plausible daily figure, not the
+  // raw kJ number that agent_log #8 flagged as implausible.
+  assertAlmostEquals(
+    result.dailyMetrics[0].active_energy_kcal!,
+    2953.123 / 4.184,
+    0.001,
+  );
 });
 
 Deno.test("maps vo2_max, hrv, respiratory_rate, wrist temp metrics", () => {

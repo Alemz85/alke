@@ -86,7 +86,7 @@ const FIELD_MAP = {
     respiratory_rate: "respiratory_rate",
     vo2_max: "vo2max",
     step_count: "steps", // summed per date
-    active_energy: "active_energy_kcal", // summed per date
+    active_energy: "active_energy_kcal", // summed per date; unit-converted to kcal
     apple_sleeping_wrist_temperature: "wrist_temp_deviation_c",
     weight_body_mass: "weight_kg", // scalar per date, last-wins; unit-converted to kg
     walking_running_distance: "walking_running_distance_m", // summed per date; unit-converted to meters
@@ -149,6 +149,15 @@ const FIELD_MAP = {
     lb: 0.45359237,
     lbs: 0.45359237,
     st: 6.35029318,
+  } as Record<string, number>,
+  // Energy unit -> kcal conversion factor. HAE sends energy in kJ (observed
+  // on every real payload for both workout activeEnergyBurned and the
+  // active_energy metric); "cal" from Health means dietary Calories = kcal.
+  // Unknown/absent units assume kcal already.
+  energyUnitToKcal: {
+    kj: 1 / 4.184,
+    kcal: 1,
+    cal: 1,
   } as Record<string, number>,
 } as const;
 
@@ -247,6 +256,15 @@ function metersFromDistance(v: unknown): number | null {
   return qty * factor;
 }
 
+function kcalFromEnergy(v: unknown): number | null {
+  const { qty, units } = readQtyUnits(v);
+  if (qty === null) return null;
+  const factor = units
+    ? FIELD_MAP.energyUnitToKcal[units.toLowerCase()] ?? 1
+    : 1;
+  return qty * factor;
+}
+
 // ===========================================================================
 // Workout parsing
 // ===========================================================================
@@ -275,8 +293,7 @@ function parseWorkout(entry: unknown): NormalizedWorkout {
     endDate,
   );
   const distance_m = metersFromDistance(w[FIELD_MAP.workout.distance]);
-  const energyReading = readQtyUnits(w[FIELD_MAP.workout.energy]);
-  const energy_kcal = energyReading.qty;
+  const energy_kcal = kcalFromEnergy(w[FIELD_MAP.workout.energy]);
 
   const hrSamples = parseHrSamples(w[FIELD_MAP.workout.hrSeries], startDate);
   // Explicit summary fields win over sample-derived values: some workout
@@ -743,6 +760,7 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
       column === "walking_running_distance_m" || column === "flights_climbed";
     const isWeight = column === "weight_kg";
     const isDistance = column === "walking_running_distance_m";
+    const isEnergy = column === "active_energy_kcal";
     // The metric-level `units` field applies to every entry in `data`
     // (Health Auto Export doesn't vary units per-entry within one metric).
     const metricUnits = typeof metric.units === "string"
@@ -769,6 +787,15 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
           : metricUnits;
         const factor = entryUnits
           ? FIELD_MAP.distanceUnitToMeters[entryUnits] ?? 1
+          : 1;
+        qty = qty * factor;
+      }
+      if (isEnergy) {
+        const entryUnits = typeof entry.units === "string"
+          ? entry.units.toLowerCase()
+          : metricUnits;
+        const factor = entryUnits
+          ? FIELD_MAP.energyUnitToKcal[entryUnits] ?? 1
           : 1;
         qty = qty * factor;
       }
