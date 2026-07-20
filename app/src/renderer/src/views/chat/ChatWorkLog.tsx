@@ -1,6 +1,7 @@
-import { useEffect, type ReactElement } from 'react'
+import type { ReactElement } from 'react'
 import { ChevronRight, ListTree, Terminal, X } from 'lucide-react'
 import type { ChatRuntimeSnapshot } from '@shared/types'
+import { useOverlayPanel } from './useOverlayPanel'
 
 interface ChatWorkLogProps {
   runtime: ChatRuntimeSnapshot
@@ -26,20 +27,17 @@ export function ChatWorkLogSummary({
 }
 
 export function ChatWorkLog({ runtime, open, onOpen, onClose }: ChatWorkLogProps): ReactElement {
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose, open])
+  const { panelRef, overlay } = useOverlayPanel<HTMLElement>('(max-width: 920px)', open, onClose)
 
   return (
     <aside
+      ref={panelRef}
       id="chat-worklog"
       className={`chat-worklog${open ? ' is-open' : ''}`}
       aria-label="Work log"
+      role={open && overlay ? 'dialog' : undefined}
+      aria-modal={open && overlay ? true : undefined}
+      tabIndex={open && overlay ? -1 : undefined}
     >
       <div className="chat-worklog-header">
         <div>
@@ -70,12 +68,7 @@ export function ChatWorkLog({ runtime, open, onOpen, onClose }: ChatWorkLogProps
               <div>
                 <div className="chat-worklog-entry-head">
                   <span>{entry.label}</span>
-                  <time dateTime={entry.at}>
-                    {new Date(entry.at).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </time>
+                  <time dateTime={entry.at}>{WORK_TIME_FORMATTER.format(new Date(entry.at))}</time>
                 </div>
                 {entry.detail && (
                   <details>
@@ -108,3 +101,8 @@ function phaseLabel(runtime: ChatRuntimeSnapshot): string {
   }
   return labels[runtime.phase]
 }
+
+const WORK_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit'
+})

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from 'react'
 import { Check, Pencil, Plus, Square, Trash2, X } from 'lucide-react'
 import type { ChatRuntimeSnapshot, ChatSessionMeta } from '@shared/types'
+import { useOverlayPanel } from './useOverlayPanel'
 
 interface ChatHistoryProps {
   sessions: ChatSessionMeta[]
@@ -31,20 +32,17 @@ export function ChatHistory({
   onDeleted,
   onStop
 }: ChatHistoryProps): ReactElement {
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose, open])
+  const { panelRef, overlay } = useOverlayPanel<HTMLElement>('(max-width: 1180px)', open, onClose)
 
   return (
     <aside
+      ref={panelRef}
       id="chat-history"
       className={`chat-history${open ? ' is-open' : ''}`}
       aria-label="Conversation history"
+      role={open && overlay ? 'dialog' : undefined}
+      aria-modal={open && overlay ? true : undefined}
+      tabIndex={open && overlay ? -1 : undefined}
     >
       <div className="chat-history-header">
         <span className="chat-panel-label">History</span>
@@ -58,7 +56,14 @@ export function ChatHistory({
           <X size={16} strokeWidth={1.6} aria-hidden="true" />
         </button>
       </div>
-      <button type="button" className="chat-new-button" onClick={onNew}>
+      <button
+        type="button"
+        className="chat-new-button"
+        onClick={() => {
+          onNew()
+          if (overlay) onClose()
+        }}
+      >
         <Plus size={16} strokeWidth={1.6} aria-hidden="true" />
         New analysis
       </button>
@@ -79,7 +84,7 @@ export function ChatHistory({
                 interrupted={interrupted}
                 onOpen={() => {
                   onSelect(session.id)
-                  onClose()
+                  if (overlay) onClose()
                 }}
                 onRenamed={onRenamed}
                 onDeleted={() => onDeleted(session.id)}
@@ -165,6 +170,8 @@ function SessionRow({
         <input
           ref={inputRef}
           className="chat-history-title-input"
+          name="conversation-title"
+          autoComplete="off"
           value={title}
           aria-label="Conversation title"
           onChange={(event) => setTitle(event.target.value)}
@@ -240,7 +247,17 @@ function formatSessionDate(value: string): string {
   const date = new Date(value)
   const today = new Date()
   if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return SESSION_TIME_FORMATTER.format(date)
   }
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  return SESSION_DATE_FORMATTER.format(date)
 }
+
+const SESSION_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit'
+})
+
+const SESSION_DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric'
+})

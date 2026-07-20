@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, History, ListTree, RotateCcw } from 'lucide-react'
 import Markdown from 'react-markdown'
@@ -117,17 +117,17 @@ export function ChatView(): ReactElement {
     })
   }, [messages.length, runtime?.assistantText, runtime?.lastSequence])
 
-  const closeHistory = (): void => {
+  const closeHistory = useCallback((): void => {
     setHistoryOpen(false)
     historyTriggerRef.current?.focus()
-  }
-  const closeWorkLog = (): void => {
+  }, [setHistoryOpen])
+  const closeWorkLog = useCallback((): void => {
     setWorkLogOpen(false)
     workLogTriggerRef.current?.focus()
-  }
-  const invalidateSessions = (): void => {
+  }, [setWorkLogOpen])
+  const invalidateSessions = useCallback((): void => {
     void queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] })
-  }
+  }, [queryClient])
 
   return (
     <section className="view chat-view" aria-label="Analysis chat">
@@ -142,10 +142,7 @@ export function ChatView(): ReactElement {
           runtime={runtime}
           open={state.historyOpen}
           onClose={closeHistory}
-          onNew={() => {
-            newAnalysis()
-            closeHistory()
-          }}
+          onNew={newAnalysis}
           onSelect={selectSession}
           onRenamed={invalidateSessions}
           onDeleted={(sessionId) => {
@@ -155,15 +152,20 @@ export function ChatView(): ReactElement {
           onStop={(sessionId) => void stop(sessionId)}
         />
 
-        {(state.historyOpen || state.workLogOpen) && (
+        {state.historyOpen && (
           <button
             type="button"
-            className="chat-drawer-scrim"
-            onClick={() => {
-              closeHistory()
-              closeWorkLog()
-            }}
-            aria-label="Close open chat panel"
+            className="chat-drawer-scrim chat-drawer-scrim--history"
+            onClick={closeHistory}
+            aria-label="Close conversation history"
+          />
+        )}
+        {state.workLogOpen && runtimeBelongsHere && (
+          <button
+            type="button"
+            className="chat-drawer-scrim chat-drawer-scrim--worklog"
+            onClick={closeWorkLog}
+            aria-label="Close work log"
           />
         )}
 
@@ -173,7 +175,10 @@ export function ChatView(): ReactElement {
               ref={historyTriggerRef}
               type="button"
               className="chat-icon-button chat-history-toggle"
-              onClick={() => setHistoryOpen(true)}
+              onClick={() => {
+                setWorkLogOpen(false)
+                setHistoryOpen(true)
+              }}
               aria-label="Open conversation history"
               aria-expanded={state.historyOpen}
               aria-controls="chat-history"
@@ -199,7 +204,10 @@ export function ChatView(): ReactElement {
                 ref={workLogTriggerRef}
                 type="button"
                 className="chat-icon-button chat-worklog-toggle"
-                onClick={() => setWorkLogOpen(!state.workLogOpen)}
+                onClick={() => {
+                  setHistoryOpen(false)
+                  setWorkLogOpen(!state.workLogOpen)
+                }}
                 aria-label={state.workLogOpen ? 'Close work log' : 'Open work log'}
                 aria-expanded={state.workLogOpen}
                 aria-controls="chat-worklog"
@@ -237,7 +245,10 @@ export function ChatView(): ReactElement {
                     <RuntimeTurn
                       runtime={runtime}
                       showAnswer={showRuntimeAnswer}
-                      onOpenWorkLog={() => setWorkLogOpen(true)}
+                      onOpenWorkLog={() => {
+                        setHistoryOpen(false)
+                        setWorkLogOpen(true)
+                      }}
                       onContinue={() => void continueInterrupted()}
                     />
                   )}
@@ -453,5 +464,10 @@ function ConversationSkeleton(): ReactElement {
 }
 
 function formatMessageTime(value: string): string {
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return TIME_FORMATTER.format(new Date(value))
 }
+
+const TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit'
+})

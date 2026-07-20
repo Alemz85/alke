@@ -6,6 +6,7 @@ const css = readFileSync(new URL('../ChatView.css', import.meta.url), 'utf8')
 const historySource = readFileSync(new URL('../chat/ChatHistory.tsx', import.meta.url), 'utf8')
 const workLogSource = readFileSync(new URL('../chat/ChatWorkLog.tsx', import.meta.url), 'utf8')
 const composerSource = readFileSync(new URL('../chat/ChatComposer.tsx', import.meta.url), 'utf8')
+const overlaySource = readFileSync(new URL('../chat/useOverlayPanel.ts', import.meta.url), 'utf8')
 
 describe('long-form Chat workspace', () => {
   it('uses a compact session header and document column without TabHeader', () => {
@@ -40,6 +41,16 @@ describe('long-form Chat workspace', () => {
     expect(workLogSource).toContain('<details')
     expect(composerSource).toContain('CHAT_MODES.map')
     expect(composerSource).toContain('Ask about your training')
+  })
+
+  it('labels composition and traps keyboard focus in responsive drawers', () => {
+    expect(composerSource).toContain('aria-label="Message Alke"')
+    expect(composerSource).toContain('autoComplete="off"')
+    expect(historySource).toContain('aria-modal=')
+    expect(workLogSource).toContain('aria-modal=')
+    expect(overlaySource).toContain("event.key === 'Escape'")
+    expect(overlaySource).toContain("event.key !== 'Tab'")
+    expect(overlaySource).toContain('document.activeElement')
   })
 })
 

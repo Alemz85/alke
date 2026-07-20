@@ -174,11 +174,14 @@ Generous but denser than the marketing source: this is a working surface. Sectio
 
 ### Chat (AI tab)
 
-**`chat-panel`** — message column max-width 720px centered.
-- Assistant messages: no bubble — plain `{typography.body-md}` on canvas, full width of the column (reads like a document, fits long analyses with tables/charts).
+**`chat-workspace`** — continuous analysis canvas with a 208px history rail, a centered 760px reading column, and an optional 248px work-log rail. A single `{colors.hairline}` outline contains the workspace; internal regions use hairlines and the neutral surface ladder rather than cards, shadows, or accent color.
+- Compact header: conversation title + mode/status on one row. It replaces the normal tab billboard so long answers own the available height.
+- Assistant messages: no bubble — plain `{typography.body-md}` on canvas, 1.68 line-height, maximum 72ch. Headings use Space Grotesk at weight 500. Tables and code use bordered `{colors.surface}` insets and scroll horizontally instead of widening the reading measure.
 - User messages: `{colors.surface-elevated}` bubble, `{rounded.md}`, padding `12px 16px`, right-aligned, max-width 80%.
-- Input: `{colors.surface}` well, 1px `{colors.hairline}`, `{rounded.md}`, min-height 52px, send as a 36px white circular button.
-- Offline state (Claude Code not running): centered `{typography.body-md}` `{colors.text-tertiary}` explainer + `button-soft` "Retry connection"; past conversations listed below as hoverable rows.
+- Work in progress: the partial answer remains in the document while a compact work-log summary links to chronological tool/status details. Internal reasoning is never presented as prose. Interrupted work keeps its partial answer and offers `Continue` or `Retry` in place.
+- Composer: anchored below the document, `{colors.surface}` well, 1px `{colors.hairline}`, `{rounded.md}`, min-height 52px, and a 36px white circular send button. Draft, mode, and attachments belong to the selected conversation and survive navigation between app tabs. The composer remains editable while a response runs; the send button becomes Stop.
+- Empty state: left-aligned editorial introduction followed by prompt rows separated with hairlines. Offline state keeps past conversations accessible and offers `button-soft` "Retry Connection."
+- At narrow widths, history becomes a left drawer before the reading column is compressed; the work log then becomes a right drawer. Both close with Escape, restore trigger focus, and sit above a neutral scrim.
 
 ### Inputs
 

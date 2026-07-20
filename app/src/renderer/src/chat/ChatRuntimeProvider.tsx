@@ -155,6 +155,24 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
     [selectedKey]
   )
 
+  const removeSession = useCallback(
+    (sessionId: string): void => dispatch({ type: 'remove-session', sessionId }),
+    []
+  )
+  const setHistoryOpen = useCallback(
+    (open: boolean): void => dispatch({ type: 'set-history-open', open }),
+    []
+  )
+  const setWorkLogOpen = useCallback(
+    (open: boolean): void => dispatch({ type: 'set-work-log-open', open }),
+    []
+  )
+  const setNotice = useCallback(
+    (notice: string | null): void => dispatch({ type: 'set-notice', notice }),
+    []
+  )
+  const clearNotice = useCallback((): void => dispatch({ type: 'set-notice', notice: null }), [])
+
   const send = useCallback(
     async (override?: string): Promise<void> => {
       if (sending || isChatRuntimeActive(state.runtime)) return
@@ -250,25 +268,30 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
       send,
       stop,
       continueInterrupted,
-      removeSession: (sessionId) => dispatch({ type: 'remove-session', sessionId }),
-      setHistoryOpen: (open) => dispatch({ type: 'set-history-open', open }),
-      setWorkLogOpen: (open) => dispatch({ type: 'set-work-log-open', open }),
-      setNotice: (notice) => dispatch({ type: 'set-notice', notice }),
-      clearNotice: () => dispatch({ type: 'set-notice', notice: null })
+      removeSession,
+      setHistoryOpen,
+      setWorkLogOpen,
+      setNotice,
+      clearNotice
     }),
     [
       attachments,
+      clearNotice,
       continueInterrupted,
       draft,
       mode,
       newAnalysis,
+      removeSession,
       selectSession,
       selectedKey,
       send,
       sending,
       setAttachments,
       setDraft,
+      setHistoryOpen,
       setMode,
+      setNotice,
+      setWorkLogOpen,
       state,
       stop
     ]

@@ -160,9 +160,12 @@ export function ChatComposer({ offline = false }: { offline?: boolean }): ReactE
             <textarea
               ref={textareaRef}
               className="chat-input"
+              name="chat-message"
+              autoComplete="off"
               rows={1}
               value={draft}
-              placeholder="Ask about your training, recovery, or trends"
+              placeholder="Ask about your training, recovery, or trends…"
+              aria-label="Message Alke"
               aria-describedby="chat-composer-hint"
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {

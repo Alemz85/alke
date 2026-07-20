@@ -40,6 +40,7 @@
   overflow: hidden;
   background: var(--color-surface);
   border-right: 1px solid var(--color-hairline);
+  overscroll-behavior: contain;
 }
 
 .chat-history-header,
@@ -332,6 +333,7 @@
   color: var(--color-text);
   font-size: var(--type-body-md-size);
   line-height: var(--type-body-md-line-height);
+  overflow-wrap: anywhere;
 }
 
 .chat-user-bubble p {
@@ -413,6 +415,8 @@
   font-family: var(--font-display);
   font-weight: 500;
   line-height: 1.3;
+  scroll-margin-top: 72px;
+  text-wrap: balance;
 }
 
 .chat-assistant-document h1 {
@@ -676,6 +680,7 @@
   padding: var(--space-md);
   background: var(--color-surface);
   border-left: 1px solid var(--color-hairline);
+  overscroll-behavior: contain;
 }
 
 .chat-worklog.is-open {
@@ -990,6 +995,7 @@
   font-weight: var(--type-heading-lg-weight);
   line-height: var(--type-heading-lg-line-height);
   letter-spacing: var(--type-heading-lg-letter-spacing);
+  text-wrap: balance;
 }
 
 .chat-empty > p {
@@ -1082,6 +1088,11 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+.chat-view :where(button, summary, a) {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 @keyframes chat-pulse {
   0%,
   100% {
@@ -1129,6 +1140,10 @@
     background: var(--color-scrim);
     cursor: default;
   }
+
+  .chat-drawer-scrim--worklog {
+    display: none;
+  }
 }
 
 @media (max-width: 920px) {
@@ -1148,6 +1163,10 @@
 
   .chat-worklog.is-open {
     transform: translateX(0);
+  }
+
+  .chat-drawer-scrim--worklog {
+    display: block;
   }
 }
 
