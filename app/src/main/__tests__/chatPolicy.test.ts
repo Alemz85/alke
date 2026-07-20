@@ -19,6 +19,27 @@ const EXPECTED_HEALTH_HELPERS = [
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'
 ]
+const EXPECTED_BUILTIN_TOOLS = 'Read,Glob,Grep,Bash,Skill'
+const EXPECTED_INLINE_SETTINGS = {
+  permissions: { allow: EXPECTED_HEALTH_HELPERS },
+  disableAllHooks: true,
+  autoMemoryEnabled: false
+}
+const EXPECTED_PERMISSION_ARGS = [
+  '--permission-mode',
+  'dontAsk',
+  '--setting-sources',
+  'project',
+  '--settings',
+  JSON.stringify(EXPECTED_INLINE_SETTINGS),
+  '--tools',
+  EXPECTED_BUILTIN_TOOLS,
+  '--strict-mcp-config',
+  '--disallowedTools',
+  'mcp__*',
+  '--allowedTools',
+  ...EXPECTED_HEALTH_HELPERS
+]
 
 const chatSource = readFileSync(resolve(import.meta.dirname, '../chat.ts'), 'utf8')
 const builderConfig = readFileSync(
@@ -41,10 +62,7 @@ describe('Claude headless policy', () => {
       'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--permission-mode',
-      'dontAsk',
-      '--allowedTools',
-      ...EXPECTED_HEALTH_HELPERS
+      ...EXPECTED_PERMISSION_ARGS
     ])
   })
 
@@ -58,22 +76,12 @@ describe('Claude headless policy', () => {
       '--include-partial-messages',
       '--resume',
       'session-123',
-      '--permission-mode',
-      'dontAsk',
-      '--allowedTools',
-      ...EXPECTED_HEALTH_HELPERS
+      ...EXPECTED_PERMISSION_ARGS
     ])
   })
 
   it('builds exact goal arguments from the same permission policy', () => {
-    expect(buildGoalClaudeArgs('build it')).toEqual([
-      '-p',
-      'build it',
-      '--permission-mode',
-      'dontAsk',
-      '--allowedTools',
-      ...EXPECTED_HEALTH_HELPERS
-    ])
+    expect(buildGoalClaudeArgs('build it')).toEqual(['-p', 'build it', ...EXPECTED_PERMISSION_ARGS])
   })
 
   it('never grants broad tools or bypasses permissions', () => {
@@ -84,6 +92,71 @@ describe('Claude headless policy', () => {
       expect(invocation.slice(allowlistStart)).toEqual(EXPECTED_HEALTH_HELPERS)
       expect(invocation).not.toContain('--dangerously-skip-permissions')
       expect(invocation).not.toEqual(expect.arrayContaining(['Bash', 'Edit', 'Write']))
+    }
+  })
+
+  it('loads only project settings so the health skill remains without user or local policy', () => {
+    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
+      const settingSourcesIndex = invocation.indexOf('--setting-sources')
+      expect(settingSourcesIndex).toBeGreaterThan(-1)
+      expect(invocation[settingSourcesIndex + 1]).toBe('project')
+      expect(invocation).not.toContain('user')
+      expect(invocation).not.toContain('local')
+    }
+  })
+
+  it('supplies exact inline permissions while disabling hooks and memory', () => {
+    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
+      const settingsIndex = invocation.indexOf('--settings')
+      expect(settingsIndex).toBeGreaterThan(-1)
+      expect(JSON.parse(invocation[settingsIndex + 1] ?? '{}')).toEqual(EXPECTED_INLINE_SETTINGS)
+    }
+  })
+
+  it('restricts built-ins to read-only discovery plus the narrow Bash helpers and Skill router', () => {
+    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
+      const toolsIndex = invocation.indexOf('--tools')
+      expect(toolsIndex).toBeGreaterThan(-1)
+      const tools = (invocation[toolsIndex + 1] ?? '').split(',').filter(Boolean)
+      expect(tools).toEqual(['Read', 'Glob', 'Grep', 'Bash', 'Skill'])
+      expect(tools).not.toEqual(
+        expect.arrayContaining(['Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch'])
+      )
+    }
+  })
+
+  it('blocks every MCP tool and keeps variadic allowedTools as the final argument tail', () => {
+    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
+      const allowedToolsIndex = invocation.indexOf('--allowedTools')
+      expect(invocation).toContain('--strict-mcp-config')
+      expect(
+        invocation.slice(invocation.indexOf('--disallowedTools') + 1, allowedToolsIndex)
+      ).toEqual(['mcp__*'])
+      expect(invocation.slice(allowedToolsIndex + 1)).toEqual(EXPECTED_HEALTH_HELPERS)
+    }
+  })
+
+  it('does not derive pure builder output from simulated broad user settings', () => {
+    const broadUserSettingsFixture = JSON.stringify({
+      permissions: { allow: ['Bash', 'Edit', 'Write', 'mcp__*'] },
+      disableAllHooks: false,
+      autoMemoryEnabled: true
+    })
+    const baseline = buildGoalClaudeArgs('goal')
+
+    vi.stubEnv('CLAUDE_USER_SETTINGS_FIXTURE', broadUserSettingsFixture)
+    try {
+      const isolatedInvocation = buildGoalClaudeArgs('goal')
+      expect(isolatedInvocation).toEqual(baseline)
+      expect(isolatedInvocation[isolatedInvocation.indexOf('--setting-sources') + 1]).toBe(
+        'project'
+      )
+      const inlineSettingsIndex = isolatedInvocation.indexOf('--settings')
+      expect(JSON.parse(isolatedInvocation[inlineSettingsIndex + 1] ?? '{}')).toEqual(
+        EXPECTED_INLINE_SETTINGS
+      )
+    } finally {
+      vi.unstubAllEnvs()
     }
   })
 

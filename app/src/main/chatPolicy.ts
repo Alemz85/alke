@@ -14,7 +14,27 @@ export const CHAT_ALLOWED_TOOLS = [
 export const CLAUDE_STREAM_STDIO: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe']
 
 function permissionArgs(): string[] {
-  return ['--permission-mode', 'dontAsk', '--allowedTools', ...CHAT_ALLOWED_TOOLS]
+  const inlineSettings = JSON.stringify({
+    permissions: { allow: CHAT_ALLOWED_TOOLS },
+    disableAllHooks: true,
+    autoMemoryEnabled: false
+  })
+
+  return [
+    '--permission-mode',
+    'dontAsk',
+    '--setting-sources',
+    'project',
+    '--settings',
+    inlineSettings,
+    '--tools',
+    'Read,Glob,Grep,Bash,Skill',
+    '--strict-mcp-config',
+    '--disallowedTools',
+    'mcp__*',
+    '--allowedTools',
+    ...CHAT_ALLOWED_TOOLS
+  ]
 }
 
 export function buildStreamingClaudeArgs(prompt: string, resumeId?: string): string[] {
