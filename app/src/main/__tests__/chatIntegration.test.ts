@@ -56,6 +56,11 @@ describe('persistent chat main-process integration', () => {
     )
   })
 
+  it('seeds continuation runs with the preserved interrupted answer', () => {
+    expect(chatSource).toContain('continuation: interrupted')
+    expect(chatSource).toContain("let assistantText = options.continuation?.assistantText ?? ''")
+  })
+
   it('blocks deletion of the actively running session', () => {
     expect(chatSource).toContain('Cannot delete a conversation while its response is running.')
   })

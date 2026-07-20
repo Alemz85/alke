@@ -500,7 +500,7 @@
 
 .chat-assistant-document table {
   width: 100%;
-  min-width: 520px;
+  min-width: 680px;
   border-collapse: collapse;
   font-size: var(--type-body-sm-size);
   line-height: var(--type-body-sm-line-height);
@@ -861,6 +861,10 @@
 
 .chat-input::placeholder {
   color: var(--color-text-tertiary);
+}
+
+.chat-input:focus-visible {
+  outline: 0;
 }
 
 .chat-attach-button {

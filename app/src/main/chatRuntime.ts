@@ -1,12 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  renameSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type {
   ChatAttachment,
@@ -44,6 +37,7 @@ export interface BeginChatRuntimeInput {
   message: string
   mode: ChatMode
   attachments: ChatAttachment[]
+  continuation?: Pick<ChatRuntimeSnapshot, 'assistantText' | 'workLog' | 'lastSequence'>
 }
 
 interface RuntimeDependencies {
@@ -54,7 +48,10 @@ interface RuntimeDependencies {
 function truncateUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value)
   if (bytes.byteLength <= maxBytes) return value
-  return bytes.subarray(0, maxBytes).toString('utf8').replace(/\uFFFD$/u, '')
+  return bytes
+    .subarray(0, maxBytes)
+    .toString('utf8')
+    .replace(/\uFFFD$/u, '')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -102,7 +99,10 @@ function sanitizeWorkEntry(value: unknown): ChatWorkLogEntry | null {
 
 function boundWorkLog(entries: ChatWorkLogEntry[]): ChatWorkLogEntry[] {
   const bounded = entries.slice(-MAX_CHAT_WORK_ENTRIES)
-  while (bounded.length > 0 && Buffer.byteLength(JSON.stringify(bounded)) > MAX_CHAT_WORK_LOG_BYTES) {
+  while (
+    bounded.length > 0 &&
+    Buffer.byteLength(JSON.stringify(bounded)) > MAX_CHAT_WORK_LOG_BYTES
+  ) {
     bounded.shift()
   }
   return bounded
@@ -207,6 +207,12 @@ export class ChatRuntimeStore {
     }
 
     const at = this.now().toISOString()
+    const continuedWorkLog = boundWorkLog(structuredClone(input.continuation?.workLog ?? []))
+    const continuedSequence = Math.max(
+      0,
+      input.continuation?.lastSequence ?? 0,
+      ...continuedWorkLog.map(({ sequence }) => sequence)
+    )
     this.current = {
       version: 1,
       generationId: this.id(),
@@ -217,11 +223,14 @@ export class ChatRuntimeStore {
       startedAt: at,
       updatedAt: at,
       phase: 'starting',
-      assistantText: '',
-      workLog: [],
+      assistantText: truncateUtf8(
+        input.continuation?.assistantText ?? '',
+        MAX_CHAT_RUNTIME_PARTIAL_BYTES
+      ),
+      workLog: continuedWorkLog,
       error: null,
       resumeAvailable: false,
-      lastSequence: 0
+      lastSequence: continuedSequence
     }
     const envelope = this.emit({ kind: 'status', label: 'Starting' })
     this.flush()

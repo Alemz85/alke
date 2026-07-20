@@ -80,6 +80,7 @@ interface ActiveChatChild {
 interface SendMessageOptions {
   displayMessage?: string
   runtimeOriginalMessage?: string
+  continuation?: Pick<ChatRuntimeSnapshot, 'assistantText' | 'workLog' | 'lastSequence'>
 }
 
 let activeChild: ActiveChatChild | null = null
@@ -252,7 +253,8 @@ export async function sendMessage(
   if (typeof message !== 'string') throw new Error('message must be text')
 
   const attachments = await validateChatAttachments(attachmentPaths)
-  const promptMessage = message.trim() || (attachments.length > 0 ? 'Review the attached files.' : '')
+  const promptMessage =
+    message.trim() || (attachments.length > 0 ? 'Review the attached files.' : '')
   if (!promptMessage) throw new Error('message cannot be empty')
   const displayMessage = options.displayMessage?.trim() || promptMessage
   const policyPaths = await resolvePolicyPaths(attachments)
@@ -264,7 +266,8 @@ export async function sendMessage(
     sessionId: session.id,
     message: options.runtimeOriginalMessage ?? promptMessage,
     mode,
-    attachments
+    attachments,
+    continuation: options.continuation
   })
   emitEnvelope(window, startingEnvelope)
   const generationId = startingEnvelope.generationId
@@ -291,11 +294,7 @@ export async function sendMessage(
   const prompt = session.claude_session_id
     ? attachmentPrompt
     : `/health ${mode}\n\n${attachmentPrompt}`
-  const args = buildStreamingClaudeArgs(
-    prompt,
-    session.claude_session_id ?? undefined,
-    policyPaths
-  )
+  const args = buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined, policyPaths)
   const child = spawn('claude', args, {
     cwd: CHATCTX_DIR,
     env: process.env,
@@ -311,7 +310,7 @@ export async function sendMessage(
   }
   emitEnvelope(window, runtime.markRunning())
 
-  let assistantText = ''
+  let assistantText = options.continuation?.assistantText ?? ''
   let stderr = ''
   let buffer = ''
   let spawnError: string | null = null
@@ -324,11 +323,7 @@ export async function sendMessage(
     emitEnvelope(window, envelope)
   }
 
-  const emitWork = (
-    kind: 'status' | 'tool',
-    label: string,
-    detail = ''
-  ): void => {
+  const emitWork = (kind: 'status' | 'tool', label: string, detail = ''): void => {
     const envelope = runtime.appendWork({ kind, label, detail })
     emitEnvelope(window, envelope)
   }
@@ -447,11 +442,7 @@ export async function continueMessage(
   sessionId: string
 ): Promise<{ sessionId: string; generationId: string }> {
   const interrupted = runtime.snapshot()
-  if (
-    !interrupted ||
-    interrupted.phase !== 'interrupted' ||
-    interrupted.sessionId !== sessionId
-  ) {
+  if (!interrupted || interrupted.phase !== 'interrupted' || interrupted.sessionId !== sessionId) {
     throw new Error('There is no interrupted response to continue.')
   }
   const session = await db.getChatSession(sessionId)
@@ -466,7 +457,8 @@ export async function continueMessage(
       interrupted.mode,
       {
         displayMessage: 'Retry interrupted request',
-        runtimeOriginalMessage: interrupted.originalMessage
+        runtimeOriginalMessage: interrupted.originalMessage,
+        continuation: interrupted
       }
     )
   }
@@ -477,7 +469,8 @@ export async function continueMessage(
     `Partial response already shown to the user:\n${interrupted.assistantText}`
   return sendMessage(window, sessionId, prompt, [], interrupted.mode, {
     displayMessage: 'Continue interrupted response',
-    runtimeOriginalMessage: interrupted.originalMessage
+    runtimeOriginalMessage: interrupted.originalMessage,
+    continuation: interrupted
   })
 }
 

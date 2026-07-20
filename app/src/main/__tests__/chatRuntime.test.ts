@@ -72,7 +72,8 @@ describe('ChatRuntimeStore', () => {
       store.appendWork({
         kind: 'tool',
         label: `Tool ${index}`,
-        detail: index === MAX_CHAT_WORK_ENTRIES + 39 ? 'x'.repeat(MAX_CHAT_WORK_DETAIL_BYTES * 2) : 'x'
+        detail:
+          index === MAX_CHAT_WORK_ENTRIES + 39 ? 'x'.repeat(MAX_CHAT_WORK_DETAIL_BYTES * 2) : 'x'
       })
     }
     store.appendText('y'.repeat(MAX_CHAT_RUNTIME_PARTIAL_BYTES + 100))
@@ -122,6 +123,36 @@ describe('ChatRuntimeStore', () => {
     expect(restored.restore()).toMatchObject({
       phase: 'completed',
       assistantText: 'Final answer'
+    })
+  })
+
+  it('seeds a continuation with the interrupted answer and work history', () => {
+    const store = makeStore()
+    const started = store.begin({
+      sessionId: 'session-1',
+      message: 'Continue interrupted request',
+      mode: 'analysis',
+      attachments: [],
+      continuation: {
+        assistantText: 'Preserved partial answer',
+        workLog: [
+          {
+            sequence: 7,
+            at: '2026-07-20T12:00:00.000Z',
+            kind: 'tool',
+            label: 'Read analysis.md',
+            detail: ''
+          }
+        ],
+        lastSequence: 11
+      }
+    })
+
+    expect(started.sequence).toBe(12)
+    expect(store.snapshot()).toMatchObject({
+      assistantText: 'Preserved partial answer',
+      lastSequence: 12,
+      workLog: [expect.objectContaining({ sequence: 7, label: 'Read analysis.md' })]
     })
   })
 
