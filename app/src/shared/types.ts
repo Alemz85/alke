@@ -809,6 +809,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   ts: string
+  attachments?: ChatAttachment[]
 }
 
 export interface ChatSessionMeta {
@@ -825,5 +826,46 @@ export interface ChatSession extends ChatSessionMeta {
 export type ChatStreamEvent =
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; detail: string }
+  | { kind: 'status'; label: string; detail?: string }
   | { kind: 'done' }
   | { kind: 'error'; message: string }
+
+export type ChatRuntimePhase =
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+
+export interface ChatWorkLogEntry {
+  sequence: number
+  at: string
+  kind: 'status' | 'tool'
+  label: string
+  detail: string
+}
+
+export interface ChatRuntimeSnapshot {
+  version: 1
+  generationId: string
+  sessionId: string
+  originalMessage: string
+  mode: ChatMode
+  attachments: ChatAttachment[]
+  startedAt: string
+  updatedAt: string
+  phase: ChatRuntimePhase
+  assistantText: string
+  workLog: ChatWorkLogEntry[]
+  error: string | null
+  resumeAvailable: boolean
+  lastSequence: number
+}
+
+export interface ChatRuntimeEnvelope {
+  generationId: string
+  sessionId: string
+  sequence: number
+  event: ChatStreamEvent
+}
