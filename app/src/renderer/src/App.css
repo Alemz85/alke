@@ -96,6 +96,7 @@
 .content-area--chat .content-area-inner {
   height: 100%;
   min-height: 0;
+  gap: var(--space-sm);
   padding-bottom: var(--space-xl);
 }
 

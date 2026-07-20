@@ -1,50 +1,38 @@
-// Claude Code CLI integration (SPEC §7). Each user message spawns
-// `claude -p <msg> --output-format stream-json` in /chatctx (resuming the
-// CLI session when one exists); parsed events stream to the renderer over
-// IPC. The CLI runs ONLY on user message send — never scheduled.
-import { execFile, spawn, type ChildProcess } from 'child_process'
-import { realpath, stat } from 'fs/promises'
-import { basename, extname, isAbsolute, join } from 'path'
+// Claude Code CLI integration. The main process owns one live generation,
+// persists its sequenced runtime, and streams envelopes to any mounted renderer.
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { realpath, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import { app, dialog, ipcMain, type BrowserWindow } from 'electron'
 import {
   IPC_CHANNELS,
   MAX_CHAT_ATTACHMENTS,
   type ChatAttachment,
   type ChatMode,
-  type ChatStatus,
-  type ChatStreamEvent
+  type ChatRuntimeEnvelope,
+  type ChatRuntimeSnapshot,
+  type ChatSession,
+  type ChatStatus
 } from '@shared/types'
 import {
   CLAUDE_STREAM_STDIO,
   buildGoalClaudeArgs,
   buildStreamingClaudeArgs,
-  closeChildStdin
+  closeChildStdin,
+  type ChatPolicyPaths
 } from './chatPolicy'
+import { ChatRuntimeStore } from './chatRuntime'
+import { resolveChatWorkspace } from './chatWorkspace'
 import * as db from './db'
-
-// Packaged apps can't reach the source tree relative to __dirname (which
-// resolves inside app.asar); ship chatctx as an extraResource instead (see
-// electron-builder.yml) and read it from resourcesPath when packaged.
-// Ensure no claude CLI child outlives the app.
-app.on('before-quit', () => {
-  for (const [, entry] of activeChildren) entry.child.kill('SIGTERM')
-})
 
 const CHATCTX_DIR = app.isPackaged
   ? join(process.resourcesPath, 'chatctx')
   : join(__dirname, '../../../chatctx')
-
-// Chat sessions are routed to a role via chatctx's `health` skill: the first
-// message of a fresh CLI session opens with `/health <mode>`, which makes the
-// agent read that mode's instruction files (chatctx/modes/). Resumed CLI
-// sessions already carry the mode files in context, so no prefix is re-sent.
-// (ChatMode itself lives in shared/types.ts — the renderer/preload need it too.)
 const DEFAULT_MODE: ChatMode = 'analysis'
-
-// Standard closing sentence for every headless (non-interactive) spawn, so
-// the contract is one shared constant instead of ad-hoc phrasing per caller.
 const NONINTERACTIVE_SUFFIX =
   'Run end-to-end without asking for confirmations; make reasonable assumptions and state them.'
+const runtime = new ChatRuntimeStore(join(app.getPath('userData'), 'chat-runtime.json'))
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
@@ -81,6 +69,62 @@ const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
 ])
 const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f]/
 
+interface ActiveChatChild {
+  sessionId: string
+  generationId: string
+  child: ChildProcess
+  window: BrowserWindow
+  stopped: boolean
+}
+
+interface SendMessageOptions {
+  displayMessage?: string
+  runtimeOriginalMessage?: string
+  continuation?: Pick<ChatRuntimeSnapshot, 'assistantText' | 'workLog' | 'lastSequence'>
+}
+
+let activeChild: ActiveChatChild | null = null
+let appIsQuitting = false
+
+app.on('before-quit', () => {
+  appIsQuitting = true
+  if (activeChild) {
+    runtime.dispose(true)
+    activeChild.child.kill('SIGTERM')
+  } else {
+    runtime.dispose()
+  }
+})
+
+export async function initializeChatRuntime(): Promise<void> {
+  const restored = runtime.restore()
+  if (!restored) return
+
+  try {
+    const session = await db.getChatSession(restored.sessionId)
+    if (!session) return
+    const lastAssistant = [...(session.messages ?? [])]
+      .reverse()
+      .find((message) => message.role === 'assistant')
+    const persistedAnswerMatches =
+      lastAssistant &&
+      new Date(lastAssistant.ts).getTime() >= new Date(restored.startedAt).getTime() &&
+      lastAssistant.content.startsWith(restored.assistantText)
+
+    if (restored.phase === 'interrupted' && persistedAnswerMatches) {
+      runtime.complete()
+    }
+    runtime.setResumeAvailable(Boolean(session.claude_session_id))
+  } catch {
+    // The database can be temporarily offline at startup. The local interrupted
+    // snapshot still has value, and continuation will re-check the session.
+  }
+}
+
+export function getChatRuntime(): ChatRuntimeSnapshot | null {
+  return runtime.snapshot()
+}
+
 export async function pickChatAttachments(window: BrowserWindow): Promise<ChatAttachment[]> {
   const result = await dialog.showOpenDialog(window, {
     title: 'Attach files to chat',
@@ -97,10 +141,7 @@ export async function pickChatAttachments(window: BrowserWindow): Promise<ChatAt
   return validateChatAttachments(result.filePaths)
 }
 
-/**
- * Canonicalizes and validates paths supplied across IPC. File contents stay in
- * the main/Claude process; the renderer receives metadata only.
- */
+/** Canonicalize renderer-supplied paths before they reach Claude. */
 export async function validateChatAttachments(paths: unknown): Promise<ChatAttachment[]> {
   if (!Array.isArray(paths)) throw new Error('attachments must be a list of file paths')
   if (paths.length > MAX_CHAT_ATTACHMENTS) {
@@ -150,32 +191,44 @@ function promptWithAttachments(message: string, attachments: ChatAttachment[]): 
   )
 }
 
-// Tracks the in-flight CLI child process per DB session id, so a stop
-// request can locate and signal the right one. `markStopped` flips the
-// closure-local `stopped` flag in the matching sendMessage() call, so its
-// `close` handler emits `done` instead of `error` for a deliberate stop.
-const activeChildren = new Map<string, { child: ChildProcess; markStopped: () => void }>()
-
-// The renderer only ever renders ONE session's stream at a time (it tracks a
-// single activeId and drops chat:stream events for any other sessionId — see
-// ChatView.tsx). So a child left running for a session the user has since
-// navigated away from is a pure orphan: nobody will ever see its output, and
-// it just burns a live `claude` process. Rather than let orphans accumulate
-// until the concurrency cap below refuses new sends, kill every OTHER
-// session's child the moment a new send comes in for session X.
-function killOtherSessions(keepSessionId: string): void {
-  for (const [sid, entry] of activeChildren) {
-    if (sid === keepSessionId) continue
-    entry.markStopped()
-    entry.child.kill('SIGTERM')
-    activeChildren.delete(sid)
+async function resolvePolicyPaths(attachments: ChatAttachment[]): Promise<ChatPolicyPaths> {
+  const homeRoot = await realpath(homedir())
+  const workspace = await resolveChatWorkspace({
+    configuredRoot: process.env.ALKE_REPO_ROOT,
+    sourceChatctxDir: app.isPackaged ? undefined : CHATCTX_DIR,
+    packaged: app.isPackaged,
+    ownerFallback: join(homeRoot, 'Projects/Github/Sports app')
+  })
+  return {
+    repoRoot: workspace.repoRoot,
+    appRoot: workspace.appRoot,
+    gitRoot: workspace.gitRoot,
+    runtimeRoot: await realpath(CHATCTX_DIR),
+    homeRoot,
+    attachmentPaths: attachments.map(({ path }) => path)
   }
 }
 
-// Defensive ceiling in case killOtherSessions ever races with a new spawn (or
-// this policy changes later) — never let the app accumulate unbounded live
-// CLI child processes.
-const MAX_CONCURRENT_CHILDREN = 3
+function emitEnvelope(window: BrowserWindow, envelope: ChatRuntimeEnvelope): void {
+  if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.chatStream, envelope)
+}
+
+function isNonterminal(snapshot: ChatRuntimeSnapshot | null): boolean {
+  return Boolean(snapshot && ['starting', 'running', 'stopping'].includes(snapshot.phase))
+}
+
+function readableToolLabel(name: string, input: Record<string, unknown>): string {
+  const path =
+    typeof input.file_path === 'string'
+      ? input.file_path
+      : typeof input.path === 'string'
+        ? input.path
+        : null
+  if (name === 'Read' && path) return `Read ${basename(path)}`
+  if ((name === 'Write' || name === 'Edit') && path) return `${name} ${basename(path)}`
+  if (name === 'Bash' && typeof input.command === 'string') return 'Ran a local command'
+  return name.replace(/_/g, ' ')
+}
 
 export function checkClaude(): Promise<ChatStatus> {
   return new Promise((resolve) => {
@@ -191,186 +244,242 @@ export async function sendMessage(
   sessionId: string | null,
   message: string,
   attachmentPaths: unknown = [],
-  mode: ChatMode = DEFAULT_MODE
-): Promise<{ sessionId: string }> {
+  mode: ChatMode = DEFAULT_MODE,
+  options: SendMessageOptions = {}
+): Promise<{ sessionId: string; generationId: string }> {
+  if (activeChild || isNonterminal(runtime.snapshot())) {
+    throw new Error('A chat response is already running.')
+  }
   if (typeof message !== 'string') throw new Error('message must be text')
+
   const attachments = await validateChatAttachments(attachmentPaths)
-  const userMessage = message.trim() || (attachments.length > 0 ? 'Review the attached files.' : '')
-  if (!userMessage) throw new Error('message cannot be empty')
+  const promptMessage =
+    message.trim() || (attachments.length > 0 ? 'Review the attached files.' : '')
+  if (!promptMessage) throw new Error('message cannot be empty')
+  const displayMessage = options.displayMessage?.trim() || promptMessage
+  const policyPaths = await resolvePolicyPaths(attachments)
 
   let session = sessionId ? await db.getChatSession(sessionId) : null
-  if (!session) {
-    session = await db.createChatSession(userMessage.slice(0, 80))
-  }
+  if (!session) session = await db.createChatSession(displayMessage.slice(0, 80))
 
-  // The renderer can only ever display this (the newly-sent-to) session's
-  // stream — kill any other session's still-running child first, since it's
-  // now a guaranteed orphan (see killOtherSessions doc comment above).
-  killOtherSessions(session.id)
-  if (!activeChildren.has(session.id) && activeChildren.size >= MAX_CONCURRENT_CHILDREN) {
-    throw new Error(
-      `too many chat sessions are already running (max ${MAX_CONCURRENT_CHILDREN}) — stop one and try again`
-    )
-  }
+  const startingEnvelope = runtime.begin({
+    sessionId: session.id,
+    message: options.runtimeOriginalMessage ?? promptMessage,
+    mode,
+    attachments,
+    continuation: options.continuation
+  })
+  emitEnvelope(window, startingEnvelope)
+  const generationId = startingEnvelope.generationId
 
   const messages = [...(session.messages ?? [])]
-  messages.push({ role: 'user', content: userMessage, ts: new Date().toISOString() })
-  await db.updateChatSession(session.id, { messages })
+  messages.push({
+    role: 'user',
+    content: displayMessage,
+    ts: new Date().toISOString(),
+    ...(attachments.length > 0 ? { attachments } : {})
+  })
 
-  const emit = (event: ChatStreamEvent): void => {
-    if (!window.isDestroyed())
-      window.webContents.send('chat:stream', { sessionId: session!.id, event })
+  try {
+    await db.updateChatSession(session.id, { messages })
+  } catch (error) {
+    const envelope = runtime.fail(
+      `Message was not saved: ${error instanceof Error ? error.message : String(error)}`
+    )
+    emitEnvelope(window, envelope)
+    throw error
   }
 
-  // Fresh CLI session → open with the mode route; the stored/displayed
-  // message stays the raw user text, only the spawned prompt is prefixed.
-  const attachmentPrompt = promptWithAttachments(userMessage, attachments)
+  const attachmentPrompt = promptWithAttachments(promptMessage, attachments)
   const prompt = session.claude_session_id
     ? attachmentPrompt
     : `/health ${mode}\n\n${attachmentPrompt}`
-  const args = buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined)
-
+  const args = buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined, policyPaths)
   const child = spawn('claude', args, {
     cwd: CHATCTX_DIR,
     env: process.env,
     stdio: CLAUDE_STREAM_STDIO
   })
-  let assistantText = ''
+
+  activeChild = {
+    sessionId: session.id,
+    generationId,
+    child,
+    window,
+    stopped: false
+  }
+  emitEnvelope(window, runtime.markRunning())
+
+  let assistantText = options.continuation?.assistantText ?? ''
   let stderr = ''
   let buffer = ''
-  let stopped = false
-  activeChildren.set(session.id, {
-    child,
-    markStopped: () => {
-      stopped = true
+  let spawnError: string | null = null
+  const seenToolIds = new Set<string>()
+  let thinkingNoted = false
+
+  const emitText = (text: string): void => {
+    assistantText += text
+    const envelope = runtime.appendText(text)
+    emitEnvelope(window, envelope)
+  }
+
+  const emitWork = (kind: 'status' | 'tool', label: string, detail = ''): void => {
+    const envelope = runtime.appendWork({ kind, label, detail })
+    emitEnvelope(window, envelope)
+  }
+
+  function handleCliEvent(event: Record<string, unknown>): void {
+    const type = event.type
+    if (type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+      session!.claude_session_id = event.session_id
+      runtime.setResumeAvailable(true)
+      void db
+        .updateChatSession(session!.id, { claude_session_id: event.session_id })
+        .catch((error) => {
+          emitWork(
+            'status',
+            'Session context was not saved',
+            error instanceof Error ? error.message : String(error)
+          )
+        })
+      return
     }
-  })
+
+    if (type === 'stream_event') {
+      const inner = event.event as Record<string, unknown> | undefined
+      if (!inner) return
+      if (inner.type === 'content_block_start') {
+        const block = inner.content_block as Record<string, unknown> | undefined
+        if (block?.type === 'text' && assistantText && !assistantText.endsWith('\n')) {
+          emitText('\n\n')
+        } else if (block?.type === 'thinking' && !thinkingNoted) {
+          thinkingNoted = true
+          emitWork('status', 'Working through the request')
+        }
+        return
+      }
+      if (inner.type === 'content_block_delta') {
+        const delta = inner.delta as Record<string, unknown> | undefined
+        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+          emitText(delta.text)
+        }
+      }
+      return
+    }
+
+    if (type !== 'assistant') return
+    const content = (event.message as { content?: unknown[] } | undefined)?.content ?? []
+    for (const block of content as Record<string, unknown>[]) {
+      if (block.type !== 'tool_use') continue
+      const toolId = typeof block.id === 'string' ? block.id : JSON.stringify(block)
+      if (seenToolIds.has(toolId)) continue
+      seenToolIds.add(toolId)
+      const name = String(block.name ?? 'Tool')
+      const input = (block.input as Record<string, unknown> | undefined) ?? {}
+      const detail = JSON.stringify(input)
+      emitWork('tool', readableToolLabel(name, input), detail)
+    }
+  }
+
+  function parseLine(line: string): void {
+    if (!line.trim()) return
+    try {
+      handleCliEvent(JSON.parse(line) as Record<string, unknown>)
+    } catch {
+      // Claude may write a partial final line while it is being terminated.
+    }
+  }
 
   child.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString()
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line.trim()) continue
-      let event: Record<string, unknown>
-      try {
-        event = JSON.parse(line)
-      } catch {
-        continue
-      }
-      handleCliEvent(event)
-    }
+    for (const line of lines) parseLine(line)
   })
-
-  function handleCliEvent(event: Record<string, unknown>): void {
-    const type = event.type
-    if (type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
-      // Losing this write silently would mean the CLI's session id (needed for
-      // --resume) never lands in the DB — the next message would open a FRESH
-      // CLI session, silently discarding the agent's prior context. Surface a
-      // failure on the same chat:stream error path the rest of the pipeline
-      // uses, so it's visible instead of a silent, confusing context loss.
-      db.updateChatSession(session!.id, { claude_session_id: event.session_id }).catch((error) => {
-        emit({
-          kind: 'error',
-          message: `failed to save chat session id: ${error instanceof Error ? error.message : String(error)}`
-        })
-      })
-      session!.claude_session_id = event.session_id
-      return
-    }
-    if (type === 'stream_event') {
-      const inner = event.event as Record<string, unknown> | undefined
-      if (!inner) return
-      const innerType = inner.type
-      if (innerType === 'content_block_start') {
-        const block = inner.content_block as Record<string, unknown> | undefined
-        if (block?.type === 'text' && assistantText && !assistantText.endsWith('\n')) {
-          assistantText += '\n\n'
-          emit({ kind: 'text', text: '\n\n' })
-        }
-        return
-      }
-      if (innerType === 'content_block_delta') {
-        const delta = inner.delta as Record<string, unknown> | undefined
-        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          assistantText += delta.text
-          emit({ kind: 'text', text: delta.text })
-        }
-        return
-      }
-      // Unknown stream_event types (message_start, content_block_stop,
-      // message_delta, message_stop, etc.) are ignored.
-      return
-    }
-    if (type === 'assistant') {
-      // With --include-partial-messages, text is already emitted/accumulated
-      // via stream_event text deltas above. Only extract tool_use blocks here
-      // to avoid double-counting/duplicating text.
-      const content = (event.message as { content?: unknown[] } | undefined)?.content ?? []
-      for (const block of content as Record<string, unknown>[]) {
-        if (block.type === 'tool_use') {
-          if (assistantText && !assistantText.endsWith('\n')) assistantText += '\n\n'
-          emit({ kind: 'text', text: '\n\n' })
-          const input = JSON.stringify(block.input ?? {})
-          emit({
-            kind: 'tool',
-            name: String(block.name ?? 'tool'),
-            detail: input.length > 400 ? `${input.slice(0, 400)}…` : input
-          })
-        }
-      }
-    }
-  }
-
   child.stderr.on('data', (chunk: Buffer) => {
     stderr += chunk.toString()
   })
-
+  child.on('error', (error) => {
+    spawnError = `failed to start claude CLI: ${error.message}`
+  })
   child.on('close', (code) => {
+    parseLine(buffer)
+    const stopped = activeChild?.generationId === generationId && activeChild.stopped
+    if (activeChild?.generationId === generationId) activeChild = null
+    if (appIsQuitting) return
+
     void (async () => {
-      activeChildren.delete(session!.id)
       try {
-        if (assistantText.trim().length > 0) {
-          messages.push({ role: 'assistant', content: assistantText, ts: new Date().toISOString() })
+        if (assistantText.trim()) {
+          messages.push({
+            role: 'assistant',
+            content: assistantText,
+            ts: new Date().toISOString()
+          })
           await db.updateChatSession(session!.id, { messages })
         }
-        if (code === 0 || stopped) emit({ kind: 'done' })
-        else emit({ kind: 'error', message: stderr.trim() || `claude exited with code ${code}` })
+
+        if (code === 0 || stopped) {
+          emitEnvelope(window, runtime.complete())
+        } else {
+          const message = spawnError || stderr.trim() || `claude exited with code ${code}`
+          emitEnvelope(window, runtime.fail(message))
+        }
       } catch (error) {
-        // The assistant's reply streamed to the renderer fine, but persisting
-        // it to the DB just failed — without this catch that failure is
-        // silently swallowed (this whole handler is a `void`-invoked async
-        // IIFE) and the reply looks saved but is gone on reload. Surface it.
-        emit({
-          kind: 'error',
-          message: `reply generated but failed to save: ${error instanceof Error ? error.message : String(error)}`
-        })
+        const message = `Reply generated but was not saved: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+        emitEnvelope(window, runtime.fail(message))
       }
     })()
   })
 
-  child.on('error', (error) => {
-    activeChildren.delete(session!.id)
-    emit({ kind: 'error', message: `failed to start claude CLI: ${error.message}` })
-  })
-
-  return { sessionId: session.id }
+  return { sessionId: session.id, generationId }
 }
 
-// One headless CLI run per goal: the chat agent (with its chatctx/CLAUDE.md
-// Goals instructions) designs the goal's progress metric and writes it via
-// goals.py. Plain -p output — nothing streams to the renderer; the caller
-// refetches goals when the promise resolves. Runs ONLY on explicit request
-// from the Profile tab — never scheduled.
+export async function continueMessage(
+  window: BrowserWindow,
+  sessionId: string
+): Promise<{ sessionId: string; generationId: string }> {
+  const interrupted = runtime.snapshot()
+  if (!interrupted || interrupted.phase !== 'interrupted' || interrupted.sessionId !== sessionId) {
+    throw new Error('There is no interrupted response to continue.')
+  }
+  const session = await db.getChatSession(sessionId)
+  if (!session) throw new Error('The interrupted conversation no longer exists.')
+
+  if (!session.claude_session_id) {
+    return sendMessage(
+      window,
+      sessionId,
+      interrupted.originalMessage,
+      interrupted.attachments.map(({ path }) => path),
+      interrupted.mode,
+      {
+        displayMessage: 'Retry interrupted request',
+        runtimeOriginalMessage: interrupted.originalMessage,
+        continuation: interrupted
+      }
+    )
+  }
+
+  const prompt =
+    `Continue the response that was interrupted when Alke closed. Do not repeat completed work.\n\n` +
+    `Original request:\n${interrupted.originalMessage}\n\n` +
+    `Partial response already shown to the user:\n${interrupted.assistantText}`
+  return sendMessage(window, sessionId, prompt, [], interrupted.mode, {
+    displayMessage: 'Continue interrupted response',
+    runtimeOriginalMessage: interrupted.originalMessage,
+    continuation: interrupted
+  })
+}
+
 const METRIC_BUILD_TIMEOUT_MS = 5 * 60 * 1000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const metricBuildsInFlight = new Set<string>()
 
 export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }> {
-  if (!UUID_RE.test(goalId)) {
-    return Promise.resolve({ ok: false, error: 'invalid goal id' })
-  }
+  if (!UUID_RE.test(goalId)) return Promise.resolve({ ok: false, error: 'invalid goal id' })
   if (metricBuildsInFlight.has(goalId)) {
     return Promise.resolve({ ok: false, error: 'metric build already running for this goal' })
   }
@@ -396,35 +505,32 @@ export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: 
       },
       (error, _stdout, stderr) => {
         metricBuildsInFlight.delete(goalId)
-        if (error) {
-          resolve({ ok: false, error: String(stderr).trim() || error.message })
-        } else {
-          resolve({ ok: true })
-        }
+        if (error) resolve({ ok: false, error: String(stderr).trim() || error.message })
+        else resolve({ ok: true })
       }
     )
     closeChildStdin(child)
   })
 }
 
-// Kills the in-flight CLI process for a session, if any. The `close`
-// handler in sendMessage() still runs afterward — it persists whatever
-// partial text was accumulated and, because markStopped() flips `stopped`
-// first, emits `done` rather than `error` for this deliberate stop.
 export function stopMessage(sessionId: string): boolean {
-  const entry = activeChildren.get(sessionId)
-  if (!entry) return false
-  entry.markStopped()
-  return entry.child.kill('SIGTERM')
+  if (!activeChild || activeChild.sessionId !== sessionId) return false
+  activeChild.stopped = true
+  emitEnvelope(activeChild.window, runtime.markStopping())
+  return activeChild.child.kill('SIGTERM')
 }
 
-// Registered here (not main/index.ts, which is owned by another surface)
-// so the stop button has an IPC channel to call.
 ipcMain.handle(IPC_CHANNELS.chatStop, (_event, sessionId: string) => stopMessage(sessionId))
-
-// Registered here (not main/index.ts, which is owned by another surface)
-// so session rename/delete have IPC channels to call.
 ipcMain.handle(IPC_CHANNELS.chatRename, (_event, id: string, title: string) =>
   db.renameChatSession(id, title)
 )
-ipcMain.handle(IPC_CHANNELS.chatDelete, (_event, id: string) => db.deleteChatSession(id))
+ipcMain.handle(IPC_CHANNELS.chatDelete, async (_event, id: string) => {
+  const snapshot = runtime.snapshot()
+  if (snapshot?.sessionId === id && isNonterminal(snapshot)) {
+    throw new Error('Cannot delete a conversation while its response is running.')
+  }
+  await db.deleteChatSession(id)
+  if (snapshot?.sessionId === id) runtime.clear()
+})
+
+export type { ChatSession }

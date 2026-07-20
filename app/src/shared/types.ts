@@ -656,6 +656,7 @@ export interface HealthApi {
   chatStatus(): Promise<ChatStatus>
   chatListSessions(): Promise<ChatSessionMeta[]>
   chatGetSession(id: string): Promise<ChatSession | null>
+  chatGetRuntime(): Promise<ChatRuntimeSnapshot | null>
   chatPickAttachments(): Promise<ChatAttachment[]>
   // Validate drag-and-dropped file paths through the same size/type/existence
   // checks as the picker; returns the accepted attachments or throws.
@@ -668,13 +669,12 @@ export interface HealthApi {
     message: string,
     attachmentPaths?: string[],
     mode?: ChatMode
-  ): Promise<{ sessionId: string }>
+  ): Promise<{ sessionId: string; generationId: string }>
+  chatContinue(sessionId: string): Promise<{ sessionId: string; generationId: string }>
   chatStop(sessionId: string): Promise<boolean>
   chatRename(id: string, title: string): Promise<void>
   chatDelete(id: string): Promise<void>
-  onChatStream(
-    listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void
-  ): () => void
+  onChatStream(listener: (payload: ChatRuntimeEnvelope) => void): () => void
 }
 
 export const IPC_CHANNELS = {
@@ -735,9 +735,12 @@ export const IPC_CHANNELS = {
   chatStatus: 'chat:status',
   chatListSessions: 'chat:listSessions',
   chatGetSession: 'chat:getSession',
+  chatGetRuntime: 'chat:getRuntime',
   chatPickAttachments: 'chat:pickAttachments',
   chatValidateAttachments: 'chat:validateAttachments',
   chatSend: 'chat:send',
+  chatContinue: 'chat:continue',
+  chatStream: 'chat:stream',
   // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
   chatStop: 'chat:stop',
   chatRename: 'chat:rename',
@@ -809,6 +812,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   ts: string
+  attachments?: ChatAttachment[]
 }
 
 export interface ChatSessionMeta {
@@ -825,5 +829,46 @@ export interface ChatSession extends ChatSessionMeta {
 export type ChatStreamEvent =
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; detail: string }
+  | { kind: 'status'; label: string; detail?: string }
   | { kind: 'done' }
   | { kind: 'error'; message: string }
+
+export type ChatRuntimePhase =
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+
+export interface ChatWorkLogEntry {
+  sequence: number
+  at: string
+  kind: 'status' | 'tool'
+  label: string
+  detail: string
+}
+
+export interface ChatRuntimeSnapshot {
+  version: 1
+  generationId: string
+  sessionId: string
+  originalMessage: string
+  mode: ChatMode
+  attachments: ChatAttachment[]
+  startedAt: string
+  updatedAt: string
+  phase: ChatRuntimePhase
+  assistantText: string
+  workLog: ChatWorkLogEntry[]
+  error: string | null
+  resumeAvailable: boolean
+  lastSequence: number
+}
+
+export interface ChatRuntimeEnvelope {
+  generationId: string
+  sessionId: string
+  sequence: number
+  event: ChatStreamEvent
+}

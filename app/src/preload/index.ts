@@ -75,6 +75,7 @@ const api: HealthApi = {
   chatStatus: () => ipcRenderer.invoke(IPC_CHANNELS.chatStatus),
   chatListSessions: () => ipcRenderer.invoke(IPC_CHANNELS.chatListSessions),
   chatGetSession: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatGetSession, id),
+  chatGetRuntime: () => ipcRenderer.invoke(IPC_CHANNELS.chatGetRuntime),
   chatPickAttachments: () => ipcRenderer.invoke(IPC_CHANNELS.chatPickAttachments),
   chatValidateAttachments: (paths) =>
     ipcRenderer.invoke(IPC_CHANNELS.chatValidateAttachments, paths),
@@ -83,13 +84,14 @@ const api: HealthApi = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
   chatSend: (sessionId, message, attachmentPaths = [], mode) =>
     ipcRenderer.invoke(IPC_CHANNELS.chatSend, sessionId, message, attachmentPaths, mode),
+  chatContinue: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatContinue, sessionId),
   chatStop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatStop, sessionId),
   chatRename: (id: string, title: string) => ipcRenderer.invoke(IPC_CHANNELS.chatRename, id, title),
   chatDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatDelete, id),
-  onChatStream: (listener: (payload: never) => void) => {
-    const wrapped = (_e: unknown, payload: never): void => listener(payload)
-    ipcRenderer.on('chat:stream', wrapped as never)
-    return () => ipcRenderer.removeListener('chat:stream', wrapped as never)
+  onChatStream: (listener) => {
+    const wrapped = (_e: unknown, payload: Parameters<typeof listener>[0]): void => listener(payload)
+    ipcRenderer.on(IPC_CHANNELS.chatStream, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatStream, wrapped)
   }
 }
 

@@ -8,6 +8,7 @@ import { useDbStatus } from './hooks/useDbStatus'
 import { useOfflineQueue } from './hooks/useOfflineQueue'
 import { invalidateWorkoutViews } from './hooks/useGymData'
 import { subscribeMutationErrors } from './lib/mutationFeedback'
+import { ChatRuntimeProvider } from './chat/ChatRuntimeProvider'
 import { DbErrorState } from './views/DbErrorState'
 import { DashboardView } from './views/DashboardView'
 import { Zone2View } from './views/Zone2View'
@@ -24,10 +25,7 @@ import './App.css'
 // Views that need no navigation wiring render from this map directly. Dashboard,
 // Sessions, and Cardio (Zone2) cross-link, so they're special-cased in the render
 // below (they receive an onOpenSessions / onBack callback) rather than listed here.
-const VIEWS: Record<
-  Exclude<TabId, 'dashboard' | 'sessions' | 'zone2'>,
-  () => ReactElement
-> = {
+const VIEWS: Record<Exclude<TabId, 'dashboard' | 'sessions' | 'zone2'>, () => ReactElement> = {
   gym: GymView,
   recovery: RecoveryView,
   insights: InsightsView,
@@ -254,63 +252,65 @@ function App(): ReactElement {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar active={activeTab} onSelect={handleSelectTab} />
-      <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
-        <div className="content-area-inner">
-          <div className="content-area-toolbar">
-            <OfflineQueueStatus
-              connected={connected}
-              status={offlineQueue.status}
-              onRetry={() => {
-                void offlineQueue.retry()
-              }}
-            />
-            <ButtonSoft
-              className="button-soft--icon"
-              onClick={toggleTheme}
-              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            >
-              {theme === 'dark' ? (
-                <Sun size={18} strokeWidth={1.5} />
-              ) : (
-                <Moon size={18} strokeWidth={1.5} />
-              )}
-            </ButtonSoft>
-            <ButtonSoft onClick={handleRefresh} aria-label="Refresh" disabled={refreshing}>
-              <RefreshCw
-                size={16}
-                strokeWidth={1.5}
-                className={refreshing ? 'icon-spin' : undefined}
+    <ChatRuntimeProvider>
+      <div className="app-shell">
+        <Sidebar active={activeTab} onSelect={handleSelectTab} />
+        <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
+          <div className="content-area-inner">
+            <div className="content-area-toolbar">
+              <OfflineQueueStatus
+                connected={connected}
+                status={offlineQueue.status}
+                onRetry={() => {
+                  void offlineQueue.retry()
+                }}
               />
-              Refresh
-            </ButtonSoft>
-            <ButtonSoft
-              className="button-soft--icon"
-              onClick={() => {
-                void handleRecomputeMetrics()
-              }}
-              aria-label="Recompute metrics"
-              title="Run the nightly metrics job now"
-              disabled={recomputing}
-            >
-              <Calculator
-                size={16}
-                strokeWidth={1.5}
-                className={recomputing ? 'icon-spin' : undefined}
-              />
-            </ButtonSoft>
+              <ButtonSoft
+                className="button-soft--icon"
+                onClick={toggleTheme}
+                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              >
+                {theme === 'dark' ? (
+                  <Sun size={18} strokeWidth={1.5} />
+                ) : (
+                  <Moon size={18} strokeWidth={1.5} />
+                )}
+              </ButtonSoft>
+              <ButtonSoft onClick={handleRefresh} aria-label="Refresh" disabled={refreshing}>
+                <RefreshCw
+                  size={16}
+                  strokeWidth={1.5}
+                  className={refreshing ? 'icon-spin' : undefined}
+                />
+                Refresh
+              </ButtonSoft>
+              <ButtonSoft
+                className="button-soft--icon"
+                onClick={() => {
+                  void handleRecomputeMetrics()
+                }}
+                aria-label="Recompute metrics"
+                title="Run the nightly metrics job now"
+                disabled={recomputing}
+              >
+                <Calculator
+                  size={16}
+                  strokeWidth={1.5}
+                  className={recomputing ? 'icon-spin' : undefined}
+                />
+              </ButtonSoft>
+            </div>
+            {showDbError ? (
+              <DbErrorState message={dbStatus.data?.error} onRetry={() => dbStatus.refetch()} />
+            ) : (
+              renderActiveView()
+            )}
           </div>
-          {showDbError ? (
-            <DbErrorState message={dbStatus.data?.error} onRetry={() => dbStatus.refetch()} />
-          ) : (
-            renderActiveView()
-          )}
-        </div>
-      </main>
-      {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
-    </div>
+        </main>
+        {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
+      </div>
+    </ChatRuntimeProvider>
   )
 }
 

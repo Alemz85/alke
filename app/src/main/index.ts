@@ -335,6 +335,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.chatStatus, () => chat.checkClaude())
   ipcMain.handle(IPC_CHANNELS.chatListSessions, () => db.listChatSessions())
   ipcMain.handle(IPC_CHANNELS.chatGetSession, (_event, id: string) => db.getChatSession(id))
+  ipcMain.handle(IPC_CHANNELS.chatGetRuntime, () => chat.getChatRuntime())
   ipcMain.handle(IPC_CHANNELS.chatPickAttachments, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) throw new Error('no window for attachment picker')
@@ -357,9 +358,14 @@ function registerIpcHandlers(): void {
       return chat.sendMessage(win, sessionId, message, attachmentPaths, mode)
     }
   )
+  ipcMain.handle(IPC_CHANNELS.chatContinue, (event, sessionId: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) throw new Error('no window for chat continuation')
+    return chat.continueMessage(win, sessionId)
+  })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.healthanalytics.app')
 
   app.on('browser-window-created', (_, window) => {
@@ -368,6 +374,7 @@ app.whenReady().then(() => {
 
   setupTileProtocol()
   registerIpcHandlers()
+  await chat.initializeChatRuntime()
   createWindow()
 
   void offlineWrites.flush()
