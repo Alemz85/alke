@@ -43,6 +43,7 @@ export interface ChatRuntimeContextValue {
   removeSession(sessionId: string): void
   setHistoryOpen(open: boolean): void
   setWorkLogOpen(open: boolean): void
+  setNotice(notice: string | null): void
   clearNotice(): void
 }
 
@@ -252,6 +253,7 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
       removeSession: (sessionId) => dispatch({ type: 'remove-session', sessionId }),
       setHistoryOpen: (open) => dispatch({ type: 'set-history-open', open }),
       setWorkLogOpen: (open) => dispatch({ type: 'set-work-log-open', open }),
+      setNotice: (notice) => dispatch({ type: 'set-notice', notice }),
       clearNotice: () => dispatch({ type: 'set-notice', notice: null })
     }),
     [
