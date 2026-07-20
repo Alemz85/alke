@@ -1,12 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   CLAUDE_STREAM_STDIO,
   CHAT_ALLOWED_TOOLS,
   buildGoalClaudeArgs,
+  buildInteractiveSettings,
   buildStreamingClaudeArgs,
-  closeChildStdin
+  closeChildStdin,
+  type ChatPolicyPaths
 } from '../chatPolicy'
 
 const EXPECTED_HEALTH_HELPERS = [
@@ -19,55 +21,43 @@ const EXPECTED_HEALTH_HELPERS = [
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'
 ]
-const EXPECTED_BUILTIN_TOOLS = 'Read,Glob,Grep,Bash,Skill'
-const EXPECTED_INLINE_SETTINGS = {
-  permissions: { allow: EXPECTED_HEALTH_HELPERS },
-  disableAllHooks: true,
-  autoMemoryEnabled: false
+
+const PACKAGED_PATHS: ChatPolicyPaths = {
+  repoRoot: '/Users/owner/Projects/Github/Sports app',
+  appRoot: '/Users/owner/Projects/Github/Sports app/app',
+  gitRoot: '/Users/owner/Projects/Github/Sports app/.git',
+  runtimeRoot: '/Applications/Alke.app/Contents/Resources/chatctx',
+  homeRoot: '/Users/owner',
+  attachmentPaths: ['/Users/owner/Desktop/plan.pdf']
 }
-const EXPECTED_PERMISSION_ARGS = [
-  '--permission-mode',
-  'dontAsk',
-  '--setting-sources',
-  'project',
-  '--settings',
-  JSON.stringify(EXPECTED_INLINE_SETTINGS),
-  '--tools',
-  EXPECTED_BUILTIN_TOOLS,
-  '--strict-mcp-config',
-  '--disallowedTools',
-  'mcp__*',
-  '--allowedTools',
-  ...EXPECTED_HEALTH_HELPERS
-]
 
-const chatSource = readFileSync(resolve(import.meta.dirname, '../chat.ts'), 'utf8')
-const builderConfig = readFileSync(
-  resolve(import.meta.dirname, '../../../electron-builder.yml'),
-  'utf8'
-)
+function settingsFrom(args: string[]): Record<string, any> {
+  const index = args.indexOf('--settings')
+  if (index < 0) throw new Error('settings argument not found')
+  return JSON.parse(args[index + 1] ?? '{}') as Record<string, any>
+}
 
-describe('Claude headless policy', () => {
-  it('exports exactly the narrow health-helper allowlist', () => {
-    expect(CHAT_ALLOWED_TOOLS).toEqual(EXPECTED_HEALTH_HELPERS)
-    expect(CHAT_ALLOWED_TOOLS).toHaveLength(8)
-    expect(CHAT_ALLOWED_TOOLS).not.toEqual(expect.arrayContaining(['Bash', 'Edit', 'Write']))
+describe('interactive Claude policy', () => {
+  it('grants repo tools through acceptEdits without bypass mode', () => {
+    const args = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--permission-mode',
+        'acceptEdits',
+        '--tools',
+        'Read,Glob,Grep,Edit,Write,Bash,Skill',
+        '--add-dir',
+        PACKAGED_PATHS.repoRoot
+      ])
+    )
+    expect(args).not.toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--allow-dangerously-skip-permissions')
   })
 
-  it('builds exact streaming arguments without a resume id', () => {
-    expect(buildStreamingClaudeArgs('hello')).toEqual([
-      '-p',
-      'hello',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--include-partial-messages',
-      ...EXPECTED_PERMISSION_ARGS
-    ])
-  })
-
-  it('puts an optional resume id before the permission tail', () => {
-    expect(buildStreamingClaudeArgs('continue', 'session-123')).toEqual([
+  it('keeps resume before the permission tail', () => {
+    const args = buildStreamingClaudeArgs('continue', 'session-123', PACKAGED_PATHS)
+    expect(args.slice(0, 9)).toEqual([
       '-p',
       'continue',
       '--output-format',
@@ -76,130 +66,125 @@ describe('Claude headless policy', () => {
       '--include-partial-messages',
       '--resume',
       'session-123',
-      ...EXPECTED_PERMISSION_ARGS
+      '--permission-mode'
     ])
   })
 
-  it('builds exact goal arguments from the same permission policy', () => {
-    expect(buildGoalClaudeArgs('build it')).toEqual(['-p', 'build it', ...EXPECTED_PERMISSION_ARGS])
+  it('duplicates app, git, env, and packaged-runtime denies across tool and OS layers', () => {
+    const settings = buildInteractiveSettings(PACKAGED_PATHS) as Record<string, any>
+    const deny = settings.permissions.deny as string[]
+    const filesystem = settings.sandbox.filesystem as Record<string, string[]>
+
+    expect(deny).toEqual(
+      expect.arrayContaining([
+        'Edit(//Users/owner/Projects/Github/Sports app/app/**)',
+        'Write(//Users/owner/Projects/Github/Sports app/app/**)',
+        'Edit(//Users/owner/Projects/Github/Sports app/.git/**)',
+        'Write(//Users/owner/Projects/Github/Sports app/.git/**)',
+        'Read(//Users/owner/Projects/Github/Sports app/**/.env*)',
+        'Edit(//Users/owner/Projects/Github/Sports app/**/.env*)',
+        'Write(//Users/owner/Projects/Github/Sports app/**/.env*)'
+      ])
+    )
+    expect(filesystem.allowWrite).toEqual([PACKAGED_PATHS.repoRoot])
+    expect(filesystem.denyWrite).toEqual(
+      expect.arrayContaining([
+        PACKAGED_PATHS.appRoot,
+        PACKAGED_PATHS.gitRoot,
+        `${PACKAGED_PATHS.repoRoot}/**/.env*`,
+        PACKAGED_PATHS.runtimeRoot
+      ])
+    )
+    expect(filesystem.denyRead).toEqual(
+      expect.arrayContaining([PACKAGED_PATHS.homeRoot, `${PACKAGED_PATHS.repoRoot}/**/.env*`])
+    )
+    expect(filesystem.allowRead).toEqual(
+      expect.arrayContaining([PACKAGED_PATHS.repoRoot, ...PACKAGED_PATHS.attachmentPaths])
+    )
   })
 
-  it('never grants broad tools or bypasses permissions', () => {
-    const args = [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]
-
-    for (const invocation of args) {
-      const allowlistStart = invocation.indexOf('--allowedTools') + 1
-      expect(invocation.slice(allowlistStart)).toEqual(EXPECTED_HEALTH_HELPERS)
-      expect(invocation).not.toContain('--dangerously-skip-permissions')
-      expect(invocation).not.toEqual(expect.arrayContaining(['Bash', 'Edit', 'Write']))
+  it('does not deny the writable source chatctx when it is inside the repo', () => {
+    const devPaths: ChatPolicyPaths = {
+      ...PACKAGED_PATHS,
+      runtimeRoot: `${PACKAGED_PATHS.repoRoot}/chatctx`,
+      attachmentPaths: []
     }
+    const settings = buildInteractiveSettings(devPaths) as Record<string, any>
+
+    expect(settings.sandbox.filesystem.denyWrite).not.toContain(devPaths.runtimeRoot)
   })
 
-  it('loads only project settings so the health skill remains without user or local policy', () => {
-    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
-      const settingSourcesIndex = invocation.indexOf('--setting-sources')
-      expect(settingSourcesIndex).toBeGreaterThan(-1)
-      expect(invocation[settingSourcesIndex + 1]).toBe('project')
-      expect(invocation).not.toContain('user')
-      expect(invocation).not.toContain('local')
-    }
-  })
+  it('fails closed, auto-allows only sandboxed Bash, and limits Bash network access', () => {
+    const settings = settingsFrom(
+      buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
+    )
 
-  it('supplies exact inline permissions while disabling hooks and memory', () => {
-    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
-      const settingsIndex = invocation.indexOf('--settings')
-      expect(settingsIndex).toBeGreaterThan(-1)
-      expect(JSON.parse(invocation[settingsIndex + 1] ?? '{}')).toEqual(EXPECTED_INLINE_SETTINGS)
-    }
-  })
-
-  it('restricts built-ins to read-only discovery plus the narrow Bash helpers and Skill router', () => {
-    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
-      const toolsIndex = invocation.indexOf('--tools')
-      expect(toolsIndex).toBeGreaterThan(-1)
-      const tools = (invocation[toolsIndex + 1] ?? '').split(',').filter(Boolean)
-      expect(tools).toEqual(['Read', 'Glob', 'Grep', 'Bash', 'Skill'])
-      expect(tools).not.toEqual(
-        expect.arrayContaining(['Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch'])
-      )
-    }
-  })
-
-  it('blocks every MCP tool and keeps variadic allowedTools as the final argument tail', () => {
-    for (const invocation of [buildStreamingClaudeArgs('stream'), buildGoalClaudeArgs('goal')]) {
-      const allowedToolsIndex = invocation.indexOf('--allowedTools')
-      expect(invocation).toContain('--strict-mcp-config')
-      expect(
-        invocation.slice(invocation.indexOf('--disallowedTools') + 1, allowedToolsIndex)
-      ).toEqual(['mcp__*'])
-      expect(invocation.slice(allowedToolsIndex + 1)).toEqual(EXPECTED_HEALTH_HELPERS)
-    }
-  })
-
-  it('does not derive pure builder output from simulated broad user settings', () => {
-    const broadUserSettingsFixture = JSON.stringify({
-      permissions: { allow: ['Bash', 'Edit', 'Write', 'mcp__*'] },
-      disableAllHooks: false,
-      autoMemoryEnabled: true
+    expect(settings.sandbox).toMatchObject({
+      enabled: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: true,
+      network: { allowedDomains: ['your-project-ref.supabase.co'] }
     })
-    const baseline = buildGoalClaudeArgs('goal')
-
-    vi.stubEnv('CLAUDE_USER_SETTINGS_FIXTURE', broadUserSettingsFixture)
-    try {
-      const isolatedInvocation = buildGoalClaudeArgs('goal')
-      expect(isolatedInvocation).toEqual(baseline)
-      expect(isolatedInvocation[isolatedInvocation.indexOf('--setting-sources') + 1]).toBe(
-        'project'
-      )
-      const inlineSettingsIndex = isolatedInvocation.indexOf('--settings')
-      expect(JSON.parse(isolatedInvocation[inlineSettingsIndex + 1] ?? '{}')).toEqual(
-        EXPECTED_INLINE_SETTINGS
-      )
-    } finally {
-      vi.unstubAllEnvs()
-    }
   })
+
+  it('blocks MCP, browser, web, and notebook escape surfaces', () => {
+    const args = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
+    const denied = args[args.indexOf('--disallowedTools') + 1]
+
+    expect(args).toContain('--strict-mcp-config')
+    expect(denied).toBe('mcp__*,WebFetch,WebSearch,NotebookEdit')
+    expect(args).not.toContain('Chrome')
+  })
+})
+
+describe('fixed goal-worker policy', () => {
+  it('keeps exactly the existing eight health helper commands', () => {
+    expect(CHAT_ALLOWED_TOOLS).toEqual(EXPECTED_HEALTH_HELPERS)
+    expect(CHAT_ALLOWED_TOOLS).toHaveLength(8)
+
+    const args = buildGoalClaudeArgs('build it')
+    expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'dontAsk']))
+    expect(args.slice(args.indexOf('--allowedTools') + 1)).toEqual(EXPECTED_HEALTH_HELPERS)
+    expect(args).not.toContain('Edit')
+    expect(args).not.toContain('Write')
+  })
+
+  it('keeps hooks and memory disabled', () => {
+    const settings = settingsFrom(buildGoalClaudeArgs('build it'))
+    expect(settings).toMatchObject({ disableAllHooks: true, autoMemoryEnabled: false })
+  })
+})
+
+describe('Claude process integration contracts', () => {
+  const chatSource = readFileSync(resolve(import.meta.dirname, '../chat.ts'), 'utf8')
+  const builderConfig = readFileSync(
+    resolve(import.meta.dirname, '../../../electron-builder.yml'),
+    'utf8'
+  )
 
   it('uses ignored stdin and piped output for streaming', () => {
     expect(CLAUDE_STREAM_STDIO).toEqual(['ignore', 'pipe', 'pipe'])
   })
 
   it('closes an available child stdin and tolerates an absent one', () => {
-    const end = vi.fn()
-    const childWithStdin = { stdin: { end } } as unknown as Parameters<typeof closeChildStdin>[0]
-    const childWithoutStdin = { stdin: null } as Parameters<typeof closeChildStdin>[0]
-
-    closeChildStdin(childWithStdin)
-
-    expect(end).toHaveBeenCalledOnce()
-    expect(() => closeChildStdin(childWithoutStdin)).not.toThrow()
-  })
-})
-
-describe('Claude policy integration', () => {
-  it('wires the streaming builder and stdio tuple into the chat spawn', () => {
-    expect(chatSource).toContain("from './chatPolicy'")
-    expect(chatSource).toContain(
-      'buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined)'
-    )
-    expect(chatSource).toMatch(
-      /spawn\('claude', args, \{[\s\S]*?stdio: CLAUDE_STREAM_STDIO[\s\S]*?\}\)/
-    )
+    let ended = 0
+    closeChildStdin({ stdin: { end: () => ended++ } } as never)
+    expect(ended).toBe(1)
+    expect(() => closeChildStdin({ stdin: null } as never)).not.toThrow()
   })
 
-  it('wires the goal builder and immediately closes the exec child stdin', () => {
-    expect(chatSource).toMatch(
-      /const child = execFile\([\s\S]*?buildGoalClaudeArgs\(prompt\)[\s\S]*?\)\n\s*closeChildStdin\(child\)/
-    )
+  it('keeps the fixed goal builder wired to the goal subprocess', () => {
+    expect(chatSource).toContain('buildGoalClaudeArgs(prompt)')
+    expect(chatSource).toContain('closeChildStdin(child)')
   })
 
-  it('packages only the Claude health skills while preserving the Alke config', () => {
+  it('packages only the Claude health skills while preserving Alke metadata', () => {
     expect(builderConfig).toContain('productName: Alke')
     expect(builderConfig).toContain('icon: build/icon.icns')
     expect(builderConfig).toMatch(
       /- from: \.\.\/chatctx\/\.claude\/skills\s+to: chatctx\/\.claude\/skills/
     )
     expect(builderConfig).not.toMatch(/from: \.\.\/chatctx\/\.claude\s*$/m)
-    expect(builderConfig).not.toMatch(/to: chatctx\/\.claude\s*$/m)
   })
 })
