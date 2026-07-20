@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   renameSync,
   writeFileSync
 } from 'node:fs'
@@ -266,7 +267,11 @@ export class ChatRuntimeStore {
         detail
       }
     ])
-    const envelope = this.emit({ kind: 'tool', name: label, detail })
+    const envelope = this.emit(
+      entry.kind === 'status'
+        ? { kind: 'status', label, detail }
+        : { kind: 'tool', name: label, detail }
+    )
     this.scheduleFlush()
     return envelope
   }
@@ -318,6 +323,13 @@ export class ChatRuntimeStore {
       this.flush()
     }
     this.cancelScheduledFlush()
+  }
+
+  clear(): void {
+    this.cancelScheduledFlush()
+    this.current = null
+    rmSync(this.filePath, { force: true })
+    rmSync(`${this.filePath}.tmp`, { force: true })
   }
 
   private transition(phase: ChatRuntimePhase, event: ChatStreamEvent): ChatRuntimeEnvelope {

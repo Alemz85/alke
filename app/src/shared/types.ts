@@ -656,6 +656,7 @@ export interface HealthApi {
   chatStatus(): Promise<ChatStatus>
   chatListSessions(): Promise<ChatSessionMeta[]>
   chatGetSession(id: string): Promise<ChatSession | null>
+  chatGetRuntime(): Promise<ChatRuntimeSnapshot | null>
   chatPickAttachments(): Promise<ChatAttachment[]>
   // Validate drag-and-dropped file paths through the same size/type/existence
   // checks as the picker; returns the accepted attachments or throws.
@@ -668,13 +669,12 @@ export interface HealthApi {
     message: string,
     attachmentPaths?: string[],
     mode?: ChatMode
-  ): Promise<{ sessionId: string }>
+  ): Promise<{ sessionId: string; generationId: string }>
+  chatContinue(sessionId: string): Promise<{ sessionId: string; generationId: string }>
   chatStop(sessionId: string): Promise<boolean>
   chatRename(id: string, title: string): Promise<void>
   chatDelete(id: string): Promise<void>
-  onChatStream(
-    listener: (payload: { sessionId: string; event: ChatStreamEvent }) => void
-  ): () => void
+  onChatStream(listener: (payload: ChatRuntimeEnvelope) => void): () => void
 }
 
 export const IPC_CHANNELS = {
@@ -735,9 +735,12 @@ export const IPC_CHANNELS = {
   chatStatus: 'chat:status',
   chatListSessions: 'chat:listSessions',
   chatGetSession: 'chat:getSession',
+  chatGetRuntime: 'chat:getRuntime',
   chatPickAttachments: 'chat:pickAttachments',
   chatValidateAttachments: 'chat:validateAttachments',
   chatSend: 'chat:send',
+  chatContinue: 'chat:continue',
+  chatStream: 'chat:stream',
   // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
   chatStop: 'chat:stop',
   chatRename: 'chat:rename',
