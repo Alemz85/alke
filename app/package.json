@@ -1,9 +1,9 @@
 {
   "name": "health-analytics-app",
   "version": "0.1.0",
-  "description": "Personal health analytics desktop app",
+  "description": "Alke personal performance analytics desktop app",
   "main": "./out/main/index.js",
-  "author": "Health Analytics",
+  "author": "Alke",
   "private": true,
   "type": "module",
   "scripts": {

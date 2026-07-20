@@ -1,6 +1,6 @@
-# Personal Health Analytics Platform
+# Alke
 
-A single-user analytics platform for my own Apple Watch / Apple Health data — training
+A personal performance lab for my own Apple Watch / Apple Health data — training
 load, recovery, and aerobic-base (Zone 2) trends, with an AI chat that reasons over the
 numbers. Built as a personal project: the whole stack runs against one private database,
 and no data is collected from anyone but the owner.
@@ -62,7 +62,7 @@ renderer/main bundles with `electron-vite` and packages a `.dmg` and `.zip` with
 `electron-builder` into `app/release/` (gitignored). The build is unsigned
 (`identity: null`, no Apple Developer account) — on first launch of a copy that carries the
 Gatekeeper quarantine flag, macOS refuses to open it with a normal double-click; **right-click
-the app → Open → Open** once to bypass Gatekeeper, or run `xattr -cr "Health Analytics.app"`
+the app → Open → Open** once to bypass Gatekeeper, or run `xattr -cr "Alke.app"`
 before launching.
 
 **Packaged build credentials** — in dev the main process loads `app/.env` (resolved

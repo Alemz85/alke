@@ -59,7 +59,23 @@ function renderNavItem(item: NavItem, active: TabId, onSelect: (tab: TabId) => v
 export function Sidebar({ active, onSelect }: SidebarProps): ReactElement {
   return (
     <nav className="sidebar" aria-label="Primary">
-      <div className="sidebar-brand">Health</div>
+      <div className="sidebar-brand">
+        <svg
+          className="sidebar-brand-mark"
+          viewBox="0 0 100 100"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            d="M16 29c19-14 31 10 49 1 7-3 12-8 17-15M16 51c20-12 31 12 51 2 6-3 11-8 15-14M16 73c20-10 30 10 50 1 7-4 12-9 16-15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="11"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span className="sidebar-brand-wordmark">alke</span>
+      </div>
       <ul className="sidebar-list">
         {NAV_ITEMS.map((item) => renderNavItem(item, active, onSelect))}
       </ul>

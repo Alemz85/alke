@@ -13,12 +13,21 @@
 }
 
 .sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
   font-family: var(--font-display);
   font-size: var(--type-heading-sm-size);
   font-weight: 500;
   color: var(--color-text);
   padding: 0 var(--space-sm);
   -webkit-app-region: drag;
+}
+
+.sidebar-brand-mark {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
 }
 
 .sidebar-list {
