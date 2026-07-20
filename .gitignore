@@ -40,6 +40,7 @@ metrics/.venv/
 
 # Local brainstorming mockups and browser interaction state
 .superpowers/
+.worktrees/
 
 # Internal working files — kept local, not part of the public repo
 /CLAUDE.md
