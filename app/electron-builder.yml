@@ -61,8 +61,8 @@ extraResources:
     to: chatctx/workout_template_contract.mjs
   - from: ../chatctx/modes
     to: chatctx/modes
-  - from: ../chatctx/.claude
-    to: chatctx/.claude
+  - from: ../chatctx/.claude/skills
+    to: chatctx/.claude/skills
   - from: ../knowledge
     to: knowledge
     filter:

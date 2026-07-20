@@ -14,6 +14,12 @@ import {
   type ChatStatus,
   type ChatStreamEvent
 } from '@shared/types'
+import {
+  CLAUDE_STREAM_STDIO,
+  buildGoalClaudeArgs,
+  buildStreamingClaudeArgs,
+  closeChildStdin
+} from './chatPolicy'
 import * as db from './db'
 
 // Packaged apps can't reach the source tree relative to __dirname (which
@@ -222,17 +228,13 @@ export async function sendMessage(
   const prompt = session.claude_session_id
     ? attachmentPrompt
     : `/health ${mode}\n\n${attachmentPrompt}`
-  const args = [
-    '-p',
-    prompt,
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--include-partial-messages'
-  ]
-  if (session.claude_session_id) args.push('--resume', session.claude_session_id)
+  const args = buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined)
 
-  const child = spawn('claude', args, { cwd: CHATCTX_DIR, env: process.env })
+  const child = spawn('claude', args, {
+    cwd: CHATCTX_DIR,
+    env: process.env,
+    stdio: CLAUDE_STREAM_STDIO
+  })
   let assistantText = ''
   let stderr = ''
   let buffer = ''
@@ -383,9 +385,9 @@ export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: 
     `write a short factual one via goals.py update. ${NONINTERACTIVE_SUFFIX}`
 
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       'claude',
-      ['-p', prompt],
+      buildGoalClaudeArgs(prompt),
       {
         cwd: CHATCTX_DIR,
         env: process.env,
@@ -401,6 +403,7 @@ export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: 
         }
       }
     )
+    closeChildStdin(child)
   })
 }
 
