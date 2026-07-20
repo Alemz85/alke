@@ -18,18 +18,26 @@ describe('injury full-view lifecycle actions placement', () => {
     expect(footerBody).toContain('<InjuryDeleteControl')
   })
 
-  it('does not render StatusControl inside the top action rows anymore', () => {
-    // The old placement rendered <StatusControl /> immediately after the
-    // flare form / inside the readOnly injury-actions div, above the
-    // stat row and charts. Guard against reintroducing it there.
-    const readOnlyActionsBlock = source.match(
-      /\{readOnly && \(\s*<div className="injury-actions">([\s\S]*?)<\/div>\s*\)\}/
-    )
-    expect(readOnlyActionsBlock).not.toBeNull()
-    expect(readOnlyActionsBlock?.[1] ?? '').not.toContain('StatusControl')
+  it('keeps routine logging to two actions in full view while previews retain plan access', () => {
+    const preview = source.match(/function ActiveInjuryCard\([\s\S]*?\n\/\/ ── full injury view/)?.[0] ?? ''
+    const full = source.match(/function InjuryFullView\([\s\S]*?\n\/\/ ── history row/)?.[0] ?? ''
+
+    expect(preview).toContain('<ActionRow')
+    expect(preview).not.toContain('showPlanAction={false}')
+    expect(full).toContain('showPlanAction={false}')
   })
 
   it('groups the footer as a flex row (lifecycle actions read as one group)', () => {
     expect(css).toMatch(/\.injury-lifecycle-footer\s*\{[^}]*display:\s*flex/s)
+  })
+
+  it('keeps recovery plan access beside plan timing for every full-view lifecycle state', () => {
+    const full = source.match(/function InjuryFullView\([\s\S]*?\n\/\/ ── history row/)?.[0] ?? ''
+    const accessRow = full.match(/<div className="injury-plan-access-row">([\s\S]*?)<\/div>/)?.[1] ?? ''
+
+    expect(accessRow).toContain('<PlanStartControl')
+    expect(accessRow).toContain('View recovery plan')
+    expect(full).not.toMatch(/\{readOnly && \(\s*<div className="injury-actions">/)
+    expect(css).toMatch(/\.injury-plan-access-row\s*\{[^}]*flex-wrap:\s*wrap/s)
   })
 })

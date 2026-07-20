@@ -12,4 +12,24 @@ describe('injury adherence column headers', () => {
     expect(css).toMatch(/\.injury-adh-th-label\s*\{[^}]*white-space:\s*normal/s)
     expect(css).toMatch(/\.injury-adh-th-meta\s*\{[^}]*display:\s*block/s)
   })
+
+  it('shows the accountable exercise dose thresholds and labels activities as unscored', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+
+    expect(thisWeek).toContain('currentWeekAdherenceSummary(plan, checks, todayYMD, planStartedAt)')
+    expect(thisWeek).toContain('acceptable')
+    expect(thisWeek).toContain('minimum')
+    expect(thisWeek).toContain('prescribed')
+    expect(thisWeek).toContain('Unscored')
+  })
+
+  it('renders a threshold-colored week-to-date score or an honest unavailable state', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+
+    expect(thisWeek).toContain('Week-to-date adherence')
+    expect(thisWeek).toContain('Not yet scored')
+    expect(thisWeek).toContain('adherenceRating(summary.pct, 100)')
+  })
 })

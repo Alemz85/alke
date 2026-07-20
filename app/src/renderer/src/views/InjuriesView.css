@@ -233,13 +233,21 @@
   letter-spacing: var(--type-caption-letter-spacing);
 }
 
+.injury-plan-access-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
 .injury-plan-timing {
   display: flex;
   align-items: center;
   width: max-content;
   max-width: 100%;
   gap: var(--space-xs);
-  margin-top: var(--space-sm);
+  margin-top: 0;
   padding: 6px 10px;
   border: 1px solid var(--color-divider-soft);
   border-radius: var(--radius-full);
@@ -271,6 +279,18 @@
 .injury-plan-date-field { display:flex; align-items:center; gap:var(--space-xs); font-size:var(--type-caption-size); }
 .injury-plan-date-field input { border:0; background:transparent; color:var(--color-text); font:inherit; color-scheme:dark; }
 .injury-plan-date-error { color:var(--color-flag-text); font-size:var(--type-caption-size); }
+
+.injury-plan-access-button {
+  height: 34px;
+  border: 1px solid var(--color-hairline);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.injury-plan-access-button:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
 
 /* ── stat row ────────────────────────────────────────────────────────────── */
 .injury-stat-row {
@@ -934,6 +954,30 @@
 }
 
 /* ── adherence tables (This week · Past weeks) ───────────────────────────── */
+.injury-current-week-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.injury-current-week-summary-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line-height);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.injury-current-week-summary-empty {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
 .injury-adh-wrap {
   overflow-x: auto;
 }
@@ -989,7 +1033,7 @@
   line-height: var(--type-caption-line-height);
   letter-spacing: var(--type-caption-letter-spacing);
   text-transform: none;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* Activity columns read as "allowed training", not scored: lighter + italicised. */
@@ -1104,8 +1148,10 @@
 
 /* Weekly-progress marker inside an item column header ("Heel walks · 2/3"). */
 .injury-adh-th-progress {
+  display: inline-block;
   font-weight: 400;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
 /* "Done for the week": weekly target met → the whole column mutes for the

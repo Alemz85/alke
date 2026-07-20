@@ -53,7 +53,7 @@ import {
   adherencePct,
   adherenceRating,
   currentPlanWeek,
-  doseTarget,
+  currentWeekAdherenceSummary,
   itemAdherenceRating,
   isPlanItemAccountable,
   phaseStartYMD,
@@ -67,7 +67,6 @@ import {
   todayUserEntry,
   weeklyAdherence,
   weeklyMatrix,
-  weeklyProgress,
   weeklyProgressStatus,
   type FlareStats
 } from '../lib/injuryStats'
@@ -527,7 +526,8 @@ function ActionRow({
   log,
   flareOpen,
   onToggleFlare,
-  onOpenPlan
+  onOpenPlan,
+  showPlanAction = true
 }: {
   injury: Injury
   todayYMD: string
@@ -535,6 +535,7 @@ function ActionRow({
   flareOpen: boolean
   onToggleFlare: () => void
   onOpenPlan: () => void
+  showPlanAction?: boolean
 }): ReactElement {
   const queryClient = useQueryClient()
 
@@ -613,9 +614,11 @@ function ActionRow({
       >
         Log flare-up
       </button>
-      <button type="button" className="injury-btn injury-action-btn" onClick={stop(onOpenPlan)}>
-        Recovery plan
-      </button>
+      {showPlanAction && (
+        <button type="button" className="injury-btn injury-action-btn" onClick={stop(onOpenPlan)}>
+          Recovery plan
+        </button>
+      )}
     </div>
   )
 }
@@ -1152,6 +1155,8 @@ function ThisWeekTable({
 
   const { exercises, activities } = checkableColumns(plan)
   const columns = [...exercises, ...activities]
+  const summary = currentWeekAdherenceSummary(plan, checks, todayYMD, planStartedAt)
+  const summaryByItem = new Map(summary.rows.map((row) => [row.itemId, row]))
 
   // checked ids per YMD, and day-max pain per YMD.
   const checkedByDay = useMemo(() => {
@@ -1181,15 +1186,17 @@ function ThisWeekTable({
   const rows: string[] = []
   for (let d = weekStart; d <= todayYMD; d = shiftYMD(d, 1)) rows.push(d)
 
-  // "Done for the week": a targeted item whose weekly count met its target —
-  // its whole column mutes for the rest of the week (still clickable).
-  const progressFor = (item: RecoveryPlanItem): { done: number; target: number } | null =>
-    weeklyProgress(item, checks, todayYMD)
+  // "Done for the week": a scored item whose weekly count met its acceptable
+  // dose. Its whole column mutes for the rest of the week (still clickable).
   const isMet = (item: RecoveryPlanItem): boolean => {
-    if (!isPlanItemAccountable(item, planStartedAt, todayYMD)) return false
-    const p = progressFor(item)
-    const dose = doseTarget(item)
-    return p != null && dose != null && p.done >= dose
+    const row = summaryByItem.get(item.id)
+    return (
+      row != null &&
+      row.accountable &&
+      row.scored &&
+      row.acceptable != null &&
+      row.done >= row.acceptable
+    )
   }
 
   const toggle = (itemId: string, dateYMD: string, done: boolean): void => {
@@ -1198,10 +1205,31 @@ function ThisWeekTable({
   }
 
   const renderHeader = (item: RecoveryPlanItem, isActivity: boolean, i: number): ReactElement => {
-    const progressStatus = weeklyProgressStatus(item, checks, todayYMD, planStartedAt)
+    const summaryRow = summaryByItem.get(item.id)
     const met = isMet(item)
     const accountable = isPlanItemAccountable(item, planStartedAt, todayYMD)
     const phaseStart = accountable ? null : phaseStartYMD(item, planStartedAt)
+    const progressDetails: string[] = []
+    if (summaryRow != null) {
+      if (!summaryRow.scored) {
+        progressDetails.push('Unscored')
+        progressDetails.push(
+          summaryRow.prescribed != null && summaryRow.prescribed > 0
+            ? `${summaryRow.done}/${summaryRow.prescribed} this week`
+            : `${summaryRow.done} this week`
+        )
+      } else if (!summaryRow.accountable) {
+        if (summaryRow.done > 0) progressDetails.push(`${summaryRow.done} done early`)
+      } else if (summaryRow.acceptable != null) {
+        progressDetails.push(`${summaryRow.done}/${summaryRow.acceptable} acceptable`)
+        if (summaryRow.minimum != null && summaryRow.minimum !== summaryRow.acceptable) {
+          progressDetails.push(`${summaryRow.minimum} minimum`)
+        }
+        if (summaryRow.prescribed != null && summaryRow.prescribed !== summaryRow.acceptable) {
+          progressDetails.push(`${summaryRow.prescribed} prescribed`)
+        }
+      }
+    }
     const cls = [
       'injury-adh-th-item',
       isActivity ? 'injury-adh-th-activity' : '',
@@ -1214,17 +1242,20 @@ function ThisWeekTable({
     return (
       <th key={item.id} className={cls} title={item.name}>
         <span className="injury-adh-th-label">{item.name}</span>
-        {(phaseStart || progressStatus) && (
+        {(phaseStart || progressDetails.length > 0) && (
           <span className="injury-adh-th-meta">
             {phaseStart && (
               <span className="injury-adh-th-phase tabular-nums">
                 Starts {formatDateShort(phaseStart)}
               </span>
             )}
-            {phaseStart && progressStatus && <span aria-hidden="true"> · </span>}
-            {progressStatus && (
-              <span className="injury-adh-th-progress tabular-nums">{progressStatus}</span>
-            )}
+            {phaseStart && progressDetails.length > 0 && <span aria-hidden="true"> · </span>}
+            {progressDetails.map((detail, detailIndex) => (
+              <span key={detail} className="injury-adh-th-progress tabular-nums">
+                {detailIndex > 0 && <span aria-hidden="true"> · </span>}
+                {detail}
+              </span>
+            ))}
           </span>
         )}
       </th>
@@ -1276,8 +1307,21 @@ function ThisWeekTable({
   }
 
   return (
-    <div className="injury-adh-wrap">
-      <table className="injury-adh-table">
+    <>
+      <div className="injury-current-week-summary">
+        <span className="injury-current-week-summary-label">Week-to-date adherence</span>
+        {summary.pct != null ? (
+          <span
+            className={`injury-rate-chip injury-rate--${adherenceRating(summary.pct, 100)} tabular-nums`}
+          >
+            {summary.pct}%
+          </span>
+        ) : (
+          <span className="injury-current-week-summary-empty">Not yet scored</span>
+        )}
+      </div>
+      <div className="injury-adh-wrap">
+        <table className="injury-adh-table">
         <thead>
           <tr>
             <th className="injury-adh-th-date">Date</th>
@@ -1317,8 +1361,9 @@ function ThisWeekTable({
             )
           })}
         </tbody>
-      </table>
-    </div>
+        </table>
+      </div>
+    </>
   )
 }
 
@@ -1824,9 +1869,18 @@ function InjuryFullView({
 
       <StartedAtControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
 
-      {plan.some((item) => item.active) && (
-        <PlanStartControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
-      )}
+      <div className="injury-plan-access-row">
+        {plan.some((item) => item.active) && (
+          <PlanStartControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
+        )}
+        <button
+          type="button"
+          className="injury-btn injury-plan-access-button"
+          onClick={() => setPlanOpen(true)}
+        >
+          View recovery plan
+        </button>
+      </div>
 
       {!readOnly && (
         <>
@@ -1837,6 +1891,7 @@ function InjuryFullView({
             flareOpen={flareOpen}
             onToggleFlare={() => setFlareOpen((v) => !v)}
             onOpenPlan={() => setPlanOpen(true)}
+            showPlanAction={false}
           />
           {flareOpen && (
             <FlareForm
@@ -1848,14 +1903,6 @@ function InjuryFullView({
           )}
         </>
       )}
-      {readOnly && (
-        <div className="injury-actions">
-          <button type="button" className="injury-btn injury-action-btn" onClick={() => setPlanOpen(true)}>
-            Recovery plan
-          </button>
-        </div>
-      )}
-
       <StatRow stats={stats} adherence={adherence} />
 
       {series.length > 0 && (

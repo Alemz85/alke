@@ -6,6 +6,7 @@ import {
   doseTarget,
   itemAdherenceRating,
   buildTimeline,
+  currentWeekAdherenceSummary,
   currentPlanWeek,
   dailyPainSeries,
   dayScore,
@@ -420,6 +421,108 @@ describe('adherencePct', () => {
   it('returns null while every targeted item is still in a future phase', () => {
     const items = [item({ id: 'future', weekly_target: 3, start_week: 2 })]
     expect(adherencePct(items, [check('future', TODAY)], TODAY, 7, '2026-07-08')).toBeNull()
+  })
+})
+
+// ── currentWeekAdherenceSummary ───────────────────────────────────────────────
+
+describe('currentWeekAdherenceSummary', () => {
+  it('returns active exercise and activity rows with distinct current-week progress', () => {
+    const items = [
+      item({ id: 'exercise', weekly_target: 7, green_min: 5, yellow_min: 3 }),
+      item({ id: 'activity', kind: 'activity', weekly_target: 4, green_min: 3, yellow_min: 2 }),
+      item({ id: 'habit', kind: 'habit', weekly_target: 7 }),
+      item({ id: 'inactive', active: false, weekly_target: 2 })
+    ]
+    const checks = [
+      check('exercise', '2026-07-06'),
+      check('exercise', '2026-07-06'),
+      check('exercise', '2026-07-08'),
+      check('exercise', '2026-07-05'),
+      check('activity', '2026-07-07')
+    ]
+
+    expect(currentWeekAdherenceSummary(items, checks, TODAY)).toMatchObject({
+      rows: [
+        {
+          itemId: 'exercise',
+          kind: 'exercise',
+          scored: true,
+          done: 2,
+          accountable: true,
+          prescribed: 7,
+          acceptable: 5,
+          minimum: 3
+        },
+        {
+          itemId: 'activity',
+          kind: 'activity',
+          scored: false,
+          done: 1,
+          accountable: true,
+          prescribed: 4,
+          acceptable: null,
+          minimum: null
+        }
+      ]
+    })
+  })
+
+  it('scores current-week pace against elapsed accountable days in five-point bands', () => {
+    const items = [
+      item({ id: 'green-dose', weekly_target: 7, green_min: 5, yellow_min: 3 }),
+      item({ id: 'legacy-dose', weekly_target: 5 })
+    ]
+    const checks = [
+      check('green-dose', '2026-07-06'),
+      check('green-dose', '2026-07-07'),
+      check('green-dose', '2026-07-08'),
+      check('legacy-dose', '2026-07-06'),
+      check('legacy-dose', '2026-07-07')
+    ]
+
+    // Friday has five elapsed days. Green dose: 3 / (5 * 5/7) = 84%.
+    // Legacy dose: 2 / (5 * 5/7) = 56%. Mean 70%, already a 5-point band.
+    expect(currentWeekAdherenceSummary(items, checks, TODAY).pct).toBe(70)
+  })
+
+  it('keeps early future-phase progress visible while excluding it from the score', () => {
+    const items = [
+      item({ id: 'current', weekly_target: 7, green_min: 7, start_week: 1 }),
+      item({ id: 'future', weekly_target: 3, green_min: 2, yellow_min: 1, start_week: 2 })
+    ]
+    const checks = [
+      check('current', '2026-07-08'),
+      check('current', '2026-07-09'),
+      check('current', '2026-07-10'),
+      check('future', '2026-07-10')
+    ]
+
+    const summary = currentWeekAdherenceSummary(items, checks, TODAY, '2026-07-08')
+    expect(summary.rows[1]).toMatchObject({ done: 1, accountable: false, scored: true })
+    expect(summary.pct).toBe(100)
+  })
+
+  it('returns null when there is no accountable scored exercise', () => {
+    expect(
+      currentWeekAdherenceSummary(
+        [
+          item({ id: 'activity', kind: 'activity', weekly_target: 3 }),
+          item({ id: 'untargeted', weekly_target: null })
+        ],
+        [],
+        TODAY
+      ).pct
+    ).toBeNull()
+
+    expect(
+      currentWeekAdherenceSummary(
+        [item({ id: 'future', weekly_target: 3, start_week: 2 })],
+        [check('future', TODAY)],
+        TODAY,
+        '2026-07-08'
+      ).pct
+    ).toBeNull()
   })
 })
 

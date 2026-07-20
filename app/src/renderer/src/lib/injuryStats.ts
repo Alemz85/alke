@@ -297,6 +297,73 @@ export function adherencePct(
   return accountableCount === 0 ? null : adherenceBand((sum / accountableCount) * 100)
 }
 
+export interface CurrentWeekAdherenceRow {
+  itemId: string
+  kind: 'exercise' | 'activity'
+  scored: boolean
+  done: number
+  accountable: boolean
+  prescribed: number | null
+  acceptable: number | null
+  minimum: number | null
+}
+
+export interface CurrentWeekAdherenceSummary {
+  rows: CurrentWeekAdherenceRow[]
+  /** Pace against elapsed accountable days, in five-point bands. */
+  pct: number | null
+}
+
+/**
+ * Current ISO-week progress for every active, checkable plan item. Exercise
+ * rows with a positive weekly target are scored against their acceptable dose;
+ * activities and untargeted exercises stay visible as unscored progress.
+ */
+export function currentWeekAdherenceSummary(
+  items: RecoveryPlanItem[],
+  checks: PlanItemCheck[],
+  todayYMD: string,
+  planStartedAt: string | null = null
+): CurrentWeekAdherenceSummary {
+  const weekStart = isoWeekStart(todayYMD)
+  const weekEnd = shiftYMD(weekStart, 6)
+  const checkable = items.filter(
+    (item): item is RecoveryPlanItem & { kind: 'exercise' | 'activity' } =>
+      item.active && (item.kind === 'exercise' || item.kind === 'activity')
+  )
+
+  const rows = checkable.map((item): CurrentWeekAdherenceRow => {
+    const scored = item.kind === 'exercise' && item.weekly_target != null && item.weekly_target > 0
+    return {
+      itemId: item.id,
+      kind: item.kind,
+      scored,
+      done: checkedDays(checks, item.id, weekStart, weekEnd),
+      accountable: isPlanItemAccountable(item, planStartedAt, todayYMD),
+      prescribed: item.weekly_target,
+      acceptable: scored ? item.green_min ?? item.weekly_target : null,
+      minimum: scored ? item.yellow_min : null
+    }
+  })
+
+  let sum = 0
+  let accountableCount = 0
+  for (const item of checkable) {
+    if (item.kind !== 'exercise' || item.weekly_target == null || item.weekly_target <= 0) continue
+    const window = accountableWindow(item, planStartedAt, weekStart, todayYMD)
+    if (window == null) continue
+    const expected = adherenceDose(item) * (window.days / 7)
+    const done = checkedDays(checks, item.id, window.fromYMD, todayYMD)
+    sum += Math.min(1, expected === 0 ? 0 : done / expected)
+    accountableCount++
+  }
+
+  return {
+    rows,
+    pct: accountableCount === 0 ? null : adherenceBand((sum / accountableCount) * 100)
+  }
+}
+
 /**
  * Weekly adherence % for the trailing `weeks` ISO weeks (oldest → newest), for
  * the sparkline underlay. Completed weeks use the full acceptable dose. The
