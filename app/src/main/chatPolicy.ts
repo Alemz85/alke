@@ -14,6 +14,8 @@ export const CHAT_ALLOWED_TOOLS = [
 
 export const CLAUDE_STREAM_STDIO: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe']
 
+const CHAT_MODEL_ARGS = ['--model', 'opus', '--effort', 'high']
+
 export interface ChatPolicyPaths {
   repoRoot: string
   appRoot: string
@@ -132,7 +134,8 @@ export function buildStreamingClaudeArgs(
     '--output-format',
     'stream-json',
     '--verbose',
-    '--include-partial-messages'
+    '--include-partial-messages',
+    ...CHAT_MODEL_ARGS
   ]
   if (resumeId) args.push('--resume', resumeId)
   if (!paths) return [...args, ...fixedHealthPermissionArgs()]
@@ -156,7 +159,7 @@ export function buildStreamingClaudeArgs(
 }
 
 export function buildGoalClaudeArgs(prompt: string): string[] {
-  return ['-p', prompt, ...fixedHealthPermissionArgs()]
+  return ['-p', prompt, ...CHAT_MODEL_ARGS, ...fixedHealthPermissionArgs()]
 }
 
 export function closeChildStdin(child: Pick<ChildProcess, 'stdin'>): void {

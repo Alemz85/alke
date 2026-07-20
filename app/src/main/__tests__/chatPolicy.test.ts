@@ -57,17 +57,29 @@ describe('interactive Claude policy', () => {
 
   it('keeps resume before the permission tail', () => {
     const args = buildStreamingClaudeArgs('continue', 'session-123', PACKAGED_PATHS)
-    expect(args.slice(0, 9)).toEqual([
+    expect(args.slice(0, 13)).toEqual([
       '-p',
       'continue',
       '--output-format',
       'stream-json',
       '--verbose',
       '--include-partial-messages',
+      '--model',
+      'opus',
+      '--effort',
+      'high',
       '--resume',
       'session-123',
       '--permission-mode'
     ])
+  })
+
+  it('pins the model and effort level regardless of the CLI default', () => {
+    const streaming = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
+    const goal = buildGoalClaudeArgs('build it')
+
+    expect(streaming).toEqual(expect.arrayContaining(['--model', 'opus', '--effort', 'high']))
+    expect(goal).toEqual(expect.arrayContaining(['--model', 'opus', '--effort', 'high']))
   })
 
   it('duplicates app, git, env, and packaged-runtime denies across tool and OS layers', () => {
