@@ -278,61 +278,63 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
     <div className="view">
       <TabHeader eyebrow="Overview" title="Dashboard" />
 
-      {/* Top glance row: body weight + protein + active energy (compact pills). */}
-      <div className="dashboard-glance-grid">
-        <BodyWeightPill summary={weightSummary} />
-        <ProteinPill timezone={timezone} />
-        <ActiveEnergyPill summary={energySummary} />
-      </div>
+      <div className="dashboard-card-stack">
+        {/* Top glance row: body weight + protein + active energy (compact pills). */}
+        <div className="dashboard-glance-grid">
+          <BodyWeightPill summary={weightSummary} />
+          <ProteinPill timezone={timezone} />
+          <ActiveEnergyPill summary={energySummary} />
+        </div>
 
-      {/* Sessions this week + a compact RHR readiness tile, then recent sessions. */}
-      <div className="dashboard-grid">
-        <div className="dashboard-grid--span-8">
-          <div className="metric-card dashboard-sessions-card">
-            <div className="metric-card-eyebrow">Sessions this week</div>
-            {minSessionEntries.length === 0 ? (
-              <div className="metric-card-value metric-card-value--sessions tabular-nums">
-                {EM_DASH}
-              </div>
-            ) : (
-              <div className="dashboard-sessions-list">
-                {minSessionEntries.map(([type, min]) => (
-                  <div className="dashboard-sessions-row" key={type}>
-                    <span
-                      className="dashboard-sessions-pill"
-                      style={{ color: activityEnvironmentAccent(type) }}
-                    >
-                      <ModalityIcon type={type} size={14} />
-                      <ActivityBadge type={type} label={humanizeWorkoutType(type)} />
-                    </span>
-                    <span className="dashboard-sessions-row-value tabular-nums">
-                      {countSessionsForGoal(workoutsThisWeek, type)} of {min}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+        {/* Sessions this week + a compact RHR readiness tile, then recent sessions. */}
+        <div className="dashboard-grid">
+          <div className="dashboard-grid--span-8">
+            <div className="metric-card dashboard-sessions-card">
+              <div className="metric-card-eyebrow">Sessions this week</div>
+              {minSessionEntries.length === 0 ? (
+                <div className="metric-card-value metric-card-value--sessions tabular-nums">
+                  {EM_DASH}
+                </div>
+              ) : (
+                <div className="dashboard-sessions-list">
+                  {minSessionEntries.map(([type, min]) => (
+                    <div className="dashboard-sessions-row" key={type}>
+                      <span
+                        className="dashboard-sessions-pill"
+                        style={{ color: activityEnvironmentAccent(type) }}
+                      >
+                        <ModalityIcon type={type} size={14} />
+                        <ActivityBadge type={type} label={humanizeWorkoutType(type)} />
+                      </span>
+                      <span className="dashboard-sessions-row-value tabular-nums">
+                        {countSessionsForGoal(workoutsThisWeek, type)} of {min}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="dashboard-grid--span-4">
-          <StatSquare
-            label="RHR"
-            name="Resting HR"
-            value={latestRhr === null ? EM_DASH : Math.round(latestRhr).toString()}
-            sub={latestRhr === null ? 'no data' : 'bpm · last night'}
-            domain="recovery"
-            onClick={() => setRhrOpen(true)}
-          />
-        </div>
+          <div className="dashboard-grid--span-4">
+            <StatSquare
+              label="RHR"
+              name="Resting HR"
+              value={latestRhr === null ? EM_DASH : Math.round(latestRhr).toString()}
+              sub={latestRhr === null ? 'no data' : 'bpm · last night'}
+              domain="recovery"
+              onClick={() => setRhrOpen(true)}
+            />
+          </div>
 
-        <div className="dashboard-grid--span-12">
-          <RecentSessionsBox
-            workouts={recentWorkouts}
-            timezone={timezone}
-            onOpenSessions={onOpenSessions}
-            onSelectWorkout={setRecentWorkout}
-          />
+          <div className="dashboard-grid--span-12">
+            <RecentSessionsBox
+              workouts={recentWorkouts}
+              timezone={timezone}
+              onOpenSessions={onOpenSessions}
+              onSelectWorkout={setRecentWorkout}
+            />
+          </div>
         </div>
       </div>
 

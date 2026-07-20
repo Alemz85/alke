@@ -1,3 +1,10 @@
+/* Keep the two top card grids in the same vertical rhythm. */
+.dashboard-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
 /* Top glance row — body-weight + protein + active-energy pills side by side.
    Their own grid so the compact pills share a row and collapse when narrow. */
 .dashboard-glance-grid {
