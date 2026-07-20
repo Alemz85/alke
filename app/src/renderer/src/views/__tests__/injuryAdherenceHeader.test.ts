@@ -24,6 +24,19 @@ describe('injury adherence column headers', () => {
     expect(thisWeek).toContain('Unscored')
   })
 
+  it('does not present future-phase items as owing current-week progress', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+    const renderHeader =
+      thisWeek.match(/const renderHeader = \([\s\S]*?\n  const renderCell =/)?.[0] ?? ''
+    const futureBranch =
+      renderHeader.match(/if \(!summaryRow\.accountable\) \{([\s\S]*?)\} else if \(!summaryRow\.scored\)/)?.[1] ?? ''
+
+    expect(futureBranch).toContain("progressDetails.push('Unscored')")
+    expect(futureBranch).toContain('`${summaryRow.done} done early`')
+    expect(futureBranch).not.toContain('this week')
+  })
+
   it('renders a threshold-colored week-to-date score or an honest unavailable state', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
     const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''

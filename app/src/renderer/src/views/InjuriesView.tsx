@@ -1211,15 +1211,16 @@ function ThisWeekTable({
     const phaseStart = accountable ? null : phaseStartYMD(item, planStartedAt)
     const progressDetails: string[] = []
     if (summaryRow != null) {
-      if (!summaryRow.scored) {
+      if (!summaryRow.accountable) {
+        if (!summaryRow.scored) progressDetails.push('Unscored')
+        if (summaryRow.done > 0) progressDetails.push(`${summaryRow.done} done early`)
+      } else if (!summaryRow.scored) {
         progressDetails.push('Unscored')
         progressDetails.push(
           summaryRow.prescribed != null && summaryRow.prescribed > 0
             ? `${summaryRow.done}/${summaryRow.prescribed} this week`
             : `${summaryRow.done} this week`
         )
-      } else if (!summaryRow.accountable) {
-        if (summaryRow.done > 0) progressDetails.push(`${summaryRow.done} done early`)
       } else if (summaryRow.acceptable != null) {
         progressDetails.push(`${summaryRow.done}/${summaryRow.acceptable} acceptable`)
         if (summaryRow.minimum != null && summaryRow.minimum !== summaryRow.acceptable) {
