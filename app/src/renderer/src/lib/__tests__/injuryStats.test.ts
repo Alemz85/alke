@@ -486,6 +486,16 @@ describe('currentWeekAdherenceSummary', () => {
     expect(currentWeekAdherenceSummary(items, checks, TODAY).pct).toBe(70)
   })
 
+  it('excludes future-dated checks from current-week row progress', () => {
+    const items = [item({ id: 'exercise', weekly_target: 7, green_min: 5, yellow_min: 3 })]
+    const checks = [
+      check('exercise', TODAY),
+      check('exercise', shiftYMD(TODAY, 1))
+    ]
+
+    expect(currentWeekAdherenceSummary(items, checks, TODAY).rows[0].done).toBe(1)
+  })
+
   it('keeps early future-phase progress visible while excluding it from the score', () => {
     const items = [
       item({ id: 'current', weekly_target: 7, green_min: 7, start_week: 1 }),

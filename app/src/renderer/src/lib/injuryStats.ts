@@ -326,7 +326,6 @@ export function currentWeekAdherenceSummary(
   planStartedAt: string | null = null
 ): CurrentWeekAdherenceSummary {
   const weekStart = isoWeekStart(todayYMD)
-  const weekEnd = shiftYMD(weekStart, 6)
   const checkable = items.filter(
     (item): item is RecoveryPlanItem & { kind: 'exercise' | 'activity' } =>
       item.active && (item.kind === 'exercise' || item.kind === 'activity')
@@ -338,7 +337,7 @@ export function currentWeekAdherenceSummary(
       itemId: item.id,
       kind: item.kind,
       scored,
-      done: checkedDays(checks, item.id, weekStart, weekEnd),
+      done: checkedDays(checks, item.id, weekStart, todayYMD),
       accountable: isPlanItemAccountable(item, planStartedAt, todayYMD),
       prescribed: item.weekly_target,
       acceptable: scored ? item.green_min ?? item.weekly_target : null,
