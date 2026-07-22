@@ -156,12 +156,12 @@ function GymSessionReadView({
         <p className="gym-quicklog-hint">Quick log only. No exercise sets were recorded.</p>
       ) : (
         <div className="gym-log-exercises">
-          {exerciseGroups.map((group) => (
-            <section key={group.bodyPart} className="gym-log-muscle-group">
+          {exerciseGroups.map((group, groupIndex) => (
+            <section key={`${group.bodyPart}-${groupIndex}`} className="gym-log-muscle-group">
               <h5 className="gym-log-muscle-group-title">{displayBodyPart(group.bodyPart)}</h5>
               <div className="gym-log-muscle-group-list">
                 {group.blocks.map((block, blockIndex) => {
-                  const blockKey = `${group.bodyPart}-${block.exerciseId}-${blockIndex}`
+                  const blockKey = `${groupIndex}-${group.bodyPart}-${block.exerciseId}-${blockIndex}`
                   return (
                     <ExerciseDisclosure
                       key={blockKey}

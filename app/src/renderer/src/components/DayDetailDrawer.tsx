@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, Heart, X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
@@ -22,6 +22,8 @@ import {
   type ExerciseBlock
 } from '../lib/gymLog'
 import { isGymType } from '../lib/periodSummary'
+import { GymSessionEditorHost } from '../views/gym/GymSessionEditorHost'
+import type { EditorTarget } from '../views/gym/SessionEditorModal'
 import {
   activeTimePercent,
   buildSetComposition,
@@ -55,43 +57,72 @@ export function DayDetailDrawer({
   showGymLog = true,
   children
 }: DayDetailDrawerProps): ReactElement {
+  const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null)
+  const editorTriggerRef = useRef<HTMLElement | null>(null)
+
+  const openEditor = (target: EditorTarget): void => {
+    editorTriggerRef.current = document.activeElement as HTMLElement
+    setEditorTarget(target)
+  }
+
+  const closeEditor = (): void => {
+    setEditorTarget(null)
+    requestAnimationFrame(() => editorTriggerRef.current?.focus())
+  }
+
   useEffect(() => {
+    if (editorTarget) return
     function handleKeyDown(e: KeyboardEvent): void {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [onClose, editorTarget])
 
   return (
-    <div className="day-drawer-overlay" onClick={onClose}>
+    <>
       <div
-        className="day-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Sessions on ${dateLabel}`}
-        onClick={(e) => e.stopPropagation()}
+        className="day-drawer-overlay"
+        onClick={onClose}
+        inert={editorTarget ? true : undefined}
+        aria-hidden={editorTarget ? true : undefined}
       >
-        <div className="day-drawer-header">
-          <h3 className="day-drawer-title">{dateLabel}</h3>
-          <button type="button" className="day-drawer-close" aria-label="Close" onClick={onClose}>
-            <X size={18} strokeWidth={1.5} />
-          </button>
-        </div>
+        <div
+          className="day-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Sessions on ${dateLabel}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="day-drawer-header">
+            <h3 className="day-drawer-title">{dateLabel}</h3>
+            <button type="button" className="day-drawer-close" aria-label="Close" onClick={onClose}>
+              <X size={18} strokeWidth={1.5} />
+            </button>
+          </div>
 
-        <div className="day-drawer-body">
-          {workouts.map((w) => (
-            <SessionCard
-              key={w.id}
-              workout={w}
-              timezone={timezone}
-              showGymLog={showGymLog}
-            />
-          ))}
-          {children}
+          <div className="day-drawer-body">
+            {workouts.map((w) => (
+              <SessionCard
+                key={w.id}
+                workout={w}
+                timezone={timezone}
+                showGymLog={showGymLog}
+                onEditorTarget={openEditor}
+              />
+            ))}
+            {children}
+          </div>
         </div>
       </div>
-    </div>
+      {editorTarget && (
+        <GymSessionEditorHost
+          target={editorTarget}
+          timezone={timezone}
+          onClose={closeEditor}
+        />
+      )}
+    </>
   )
 }
 
@@ -132,11 +163,13 @@ function StatCell({
 function SessionCard({
   workout,
   timezone,
-  showGymLog
+  showGymLog,
+  onEditorTarget
 }: {
   workout: Workout
   timezone: string | null | undefined
   showGymLog: boolean
+  onEditorTarget: (target: EditorTarget) => void
 }): ReactElement {
   const detailQuery = useWorkoutDetail(workout.id)
   const domain = modalityToDomain(workout.type)
@@ -165,9 +198,7 @@ function SessionCard({
     workout.max_hr ?? (hrSamples.length > 0 ? Math.max(...hrSamples.map((s) => s.bpm)) : null)
   const gymAvgHr =
     workout.avg_hr ??
-    (hrSamples.length > 0
-      ? hrSamples.reduce((sum, s) => sum + s.bpm, 0) / hrSamples.length
-      : null)
+    (hrSamples.length > 0 ? hrSamples.reduce((sum, s) => sum + s.bpm, 0) / hrSamples.length : null)
 
   const computed = detailQuery.data?.computed
   const trimp = computed?.trimp
@@ -204,8 +235,7 @@ function SessionCard({
     })
     basicStats.push({
       label: 'Rest',
-      value:
-        swimSummary.medianRestS !== null ? `~${Math.round(swimSummary.medianRestS)}s` : EM_DASH
+      value: swimSummary.medianRestS !== null ? `~${Math.round(swimSummary.medianRestS)}s` : EM_DASH
     })
   }
   if (swimSummary || isStrength) {
@@ -270,6 +300,22 @@ function SessionCard({
       {isStrength && showGymLog && (
         <GymLogSection isLoading={gymSessionQuery.isLoading} session={gymSessionQuery.data} />
       )}
+      {isStrength && showGymLog && (
+        <button
+          type="button"
+          className="day-drawer-gym-action"
+          disabled={gymSessionQuery.isLoading}
+          onClick={() =>
+            onEditorTarget(
+              gymSessionQuery.data
+                ? { kind: 'edit', session: gymSessionQuery.data }
+                : { kind: 'new-linked', workout }
+            )
+          }
+        >
+          {gymSessionQuery.data ? 'Edit log' : 'Log workout'}
+        </button>
+      )}
 
       <RouteMap route={detailQuery.data?.route ?? []} geo={detailQuery.data?.geo ?? null} />
 
@@ -328,9 +374,7 @@ function SessionCard({
 
       {swimSets.length > 0 && <SwimSetsSection sets={swimSets} hrSamples={hrSamples} />}
 
-      {swimSets.length > 0 && (
-        <SprintsSection sets={swimSets} currentWorkoutId={workout.id} />
-      )}
+      {swimSets.length > 0 && <SprintsSection sets={swimSets} currentWorkoutId={workout.id} />}
     </div>
   )
 }
@@ -404,13 +448,9 @@ function GymLogExerciseDisclosure({
  * Read-only rendering of a logged strength workout's exercises/sets/notes —
  * the same section the Gym tab shows (GymWorkoutPanel's GymSessionReadView),
  * so opening a strength day from Dashboard or Sessions is no longer a
- * stats-only dead end. No "Edit log" button here: SessionEditorModal pulls in
- * the whole Gym tab's template/exercise-picker machinery, which isn't worth
- * dragging into Dashboard/Sessions — editing stays a Gym-tab action, this is
- * a viewer. `exercisesById`/`templateNameById` are the same cheap, shared,
- * view-neutral queries the Gym tab already uses (staleTime 60s), so mounting
- * them here for the first time (e.g. opening straight into Dashboard) costs
- * one extra pair of small fetches, not a duplicate of Gym-tab state.
+ * stats-only dead end. The action opens a lazily-mounted, query-owning editor
+ * host; this section remains the same read-only view. `exercisesById` and
+ * `templateNameById` are cheap, shared, view-neutral queries (staleTime 60s).
  */
 function GymLogSection({
   session,
@@ -455,7 +495,7 @@ function GymLogSection({
         <div className="day-drawer-section-label">Workout log</div>
         <div className="day-drawer-zones-empty">
           <span className="day-drawer-empty-text">
-            Not logged yet — log this session from the Gym tab.
+            Not logged yet. Use Log workout below to add the details.
           </span>
         </div>
       </div>
@@ -503,14 +543,17 @@ function GymLogSection({
         <p className="day-drawer-empty-text">Quick log only. No exercise sets were recorded.</p>
       ) : (
         <div className="day-drawer-gymlog-exercises">
-          {exerciseGroups.map((group) => (
-            <section key={group.bodyPart} className="day-drawer-gymlog-muscle-group">
+          {exerciseGroups.map((group, groupIndex) => (
+            <section
+              key={`${group.bodyPart}-${groupIndex}`}
+              className="day-drawer-gymlog-muscle-group"
+            >
               <h5 className="day-drawer-gymlog-muscle-group-title">
                 {displayBodyPart(group.bodyPart)}
               </h5>
               <div className="day-drawer-gymlog-muscle-group-list">
                 {group.blocks.map((block, blockIndex) => {
-                  const blockKey = `${group.bodyPart}-${block.exerciseId}-${blockIndex}`
+                  const blockKey = `${groupIndex}-${group.bodyPart}-${block.exerciseId}-${blockIndex}`
                   return (
                     <GymLogExerciseDisclosure
                       key={blockKey}
@@ -618,9 +661,7 @@ function SetComposition({ sets }: { sets: SwimSet[] }): ReactElement | null {
     <div className="day-drawer-set-composition" aria-label="Set composition by distance">
       {rows.map((row) => (
         <div key={row.distanceM} className="day-drawer-set-composition-row">
-          <span className="day-drawer-set-composition-distance tabular-nums">
-            {row.distanceM}m
-          </span>
+          <span className="day-drawer-set-composition-distance tabular-nums">{row.distanceM}m</span>
           <span className="day-drawer-set-composition-track" aria-hidden="true">
             <span
               className="day-drawer-set-composition-bar"
@@ -765,9 +806,13 @@ function SwimSetsSection({
                 <td className="tabular-nums">{formatClock(s.duration_s)}</td>
                 <td className="tabular-nums">{formatPace100(paceSecPer100m(s))}</td>
                 <td className="tabular-nums">{Math.round(s.strokes)}</td>
-                {hasHr && <td className="tabular-nums">{hr === null ? EM_DASH : Math.round(hr)}</td>}
+                {hasHr && (
+                  <td className="tabular-nums">{hr === null ? EM_DASH : Math.round(hr)}</td>
+                )}
                 <td className="tabular-nums">{sw === null ? EM_DASH : sw.toFixed(1)}</td>
-                <td className="tabular-nums">{s.rest_after_s === null ? EM_DASH : `${s.rest_after_s}s`}</td>
+                <td className="tabular-nums">
+                  {s.rest_after_s === null ? EM_DASH : `${s.rest_after_s}s`}
+                </td>
               </tr>
             )
           })}
@@ -857,9 +902,7 @@ function SprintsSection({
           <span className="day-drawer-sprints-stat-label">Avg speed</span>
         </div>
         <div className="day-drawer-sprints-stat">
-          <span className="day-drawer-sprints-stat-value tabular-nums">
-            {stats.count} × ~25m
-          </span>
+          <span className="day-drawer-sprints-stat-value tabular-nums">{stats.count} × ~25m</span>
           <span className="day-drawer-sprints-stat-label">Sprints</span>
         </div>
       </div>

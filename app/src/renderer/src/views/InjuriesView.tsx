@@ -24,7 +24,6 @@ import {
 } from 'lucide-react'
 import {
   ComposedChart,
-  Bar,
   Line,
   XAxis,
   YAxis,
@@ -32,6 +31,7 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts'
+import { scaleBand } from 'd3-scale'
 import {
   INJURY_CONTEXTS,
   type Injury,
@@ -77,6 +77,12 @@ import {
   patchInjuryStatus
 } from '../lib/offlineOptimistic'
 import { isQueuedWriteReceipt, replaceById } from '../lib/optimisticEntities'
+import {
+  buildPainTimeAxis,
+  formatPainAxisDate,
+  formatPainTooltipDate,
+  painDateTimestamp
+} from '../lib/injuryChartScales'
 import './InjuriesView.css'
 
 const STATUS_LABEL: Record<Injury['status'], string> = {
@@ -289,37 +295,21 @@ function StatRow({
 
 interface PainPoint {
   date: string
+  timestamp: number
   pain: number | null
-  adherence: number | null
 }
 
-/** Chart series: per-day-max pain (last 90d) + weekly-adherence underlay bars. */
-function usePainSeries(
-  log: InjuryLogEntry[],
-  plan: RecoveryPlanItem[],
-  checks: PlanItemCheck[],
-  todayYMD: string,
-  planStartedAt: string | null
-): PainPoint[] {
+/** Daily pain domain stays dense so the x-axis represents actual elapsed days. */
+function usePainSeries(log: InjuryLogEntry[], todayYMD: string): PainPoint[] {
   return useMemo(() => {
     const start = shiftYMD(todayYMD, -90)
-    // 13 ISO weeks ≈ 90 days of underlay bars.
-    const weekly = weeklyAdherence(plan, checks, todayYMD, 13, planStartedAt)
-
+    const painByDate = new Map(dailyPainSeries(log).map((day) => [day.date, day.pain]))
     const points: PainPoint[] = []
-    // One point per day carrying that day's MAX pain.
-    for (const d of dailyPainSeries(log)) {
-      if (d.date < start || d.date > todayYMD) continue
-      points.push({ date: d.date, pain: d.pain, adherence: null })
+    for (let date = start; date <= todayYMD; date = shiftYMD(date, 1)) {
+      points.push({ date, timestamp: painDateTimestamp(date), pain: painByDate.get(date) ?? null })
     }
-    // Adherence underlay: one point per week start carrying its pct.
-    for (const w of weekly) {
-      if (w.weekStart < start) continue
-      points.push({ date: w.weekStart, pain: null, adherence: w.pct })
-    }
-    points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     return points
-  }, [log, plan, checks, todayYMD, planStartedAt])
+  }, [log, todayYMD])
 }
 
 const CHART_TERTIARY = 'var(--color-text-tertiary)'
@@ -327,7 +317,6 @@ const CHART_GRID = 'var(--color-divider-soft)'
 // Pain is the flagged metric in this view: the line takes the flag accent so
 // a glance at the chart reads the same as a glance at the pain digits.
 const CHART_LINE = 'var(--color-flag)'
-const CHART_UNDERLAY = 'var(--color-zone-neutral-1)'
 
 const tooltipStyle = {
   backgroundColor: 'var(--color-surface-hover)',
@@ -338,18 +327,24 @@ const tooltipStyle = {
 }
 
 function PainChart({ data, tall }: { data: PainPoint[]; tall: boolean }): ReactElement {
+  const painTimeAxis = buildPainTimeAxis(data.map((point) => point.date))
+
   return (
     <ResponsiveContainer width="100%" height={tall ? 200 : 64}>
       <ComposedChart data={data} margin={{ top: 6, right: 6, left: tall ? -20 : -40, bottom: 0 }}>
         {tall && <CartesianGrid stroke={CHART_GRID} vertical={false} />}
         <XAxis
-          dataKey="date"
+          dataKey="timestamp"
+          type="number"
+          scale="time"
+          domain={painTimeAxis.domain}
+          ticks={painTimeAxis.ticks}
+          interval={0}
           hide={!tall}
           tick={{ fill: CHART_TERTIARY, fontSize: 11 }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={(d: string) => d.slice(5)}
-          minTickGap={24}
+          tickFormatter={formatPainAxisDate}
         />
         <YAxis
           yAxisId="pain"
@@ -360,16 +355,13 @@ function PainChart({ data, tall }: { data: PainPoint[]; tall: boolean }): ReactE
           tickLine={false}
           width={28}
         />
-        <YAxis yAxisId="adh" domain={[0, 100]} hide orientation="right" />
-        {tall && <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--color-chart-cursor)' }} />}
-        <Bar
-          yAxisId="adh"
-          dataKey="adherence"
-          fill={CHART_UNDERLAY}
-          radius={[2, 2, 0, 0]}
-          maxBarSize={tall ? 28 : 14}
-          isAnimationActive={false}
-        />
+        {tall && (
+          <Tooltip
+            contentStyle={tooltipStyle}
+            cursor={{ fill: 'var(--color-chart-cursor)' }}
+            labelFormatter={(value) => formatPainTooltipDate(Number(value))}
+          />
+        )}
         <Line
           yAxisId="pain"
           type="monotone"
@@ -382,6 +374,59 @@ function PainChart({ data, tall }: { data: PainPoint[]; tall: boolean }): ReactE
         />
       </ComposedChart>
     </ResponsiveContainer>
+  )
+}
+
+function WeeklyAdherenceStrip({
+  weeks,
+  todayYMD
+}: {
+  weeks: Array<{ weekStart: string; pct: number | null }>
+  todayYMD: string
+}): ReactElement {
+  const WEEK_STRIP_CELL_WIDTH = 80
+  const stripWidth = weeks.length * WEEK_STRIP_CELL_WIDTH
+  const x = scaleBand<string>()
+    .domain(weeks.map((week) => week.weekStart))
+    .range([0, stripWidth])
+    .paddingInner(0.08)
+
+  return (
+    <div className="injury-weekly-adherence">
+      <div className="injury-weekly-adherence-head">
+        <span>Adherence weekly</span>
+        <span>13 ISO weeks</span>
+      </div>
+      <div
+        className="injury-weekly-adherence-scroll"
+        tabIndex={0}
+        aria-label="Weekly adherence, oldest to newest"
+      >
+        <ol className="injury-weekly-adherence-strip" style={{ width: stripWidth }}>
+          {weeks.map((week) => {
+            const isCurrent = week.weekStart === isoWeekStart(todayYMD)
+            const weekEnd = shiftYMD(week.weekStart, 6)
+            const label = `${formatDateShort(week.weekStart)} to ${formatDateShort(weekEnd)}`
+            const status = week.pct == null ? 'not-scored' : week.pct === 0 ? 'zero' : 'scored'
+            const xPos = x(week.weekStart) ?? 0
+            const value = week.pct == null ? 'Not scored' : `${week.pct}%${isCurrent ? ' pace' : ''}`
+            return (
+              <li
+                key={week.weekStart}
+                className={`injury-weekly-adherence-cell injury-weekly-adherence-cell--${status}`}
+                style={{ left: xPos, width: x.bandwidth() }}
+                title={`${label}: ${value}`}
+                aria-label={`${label}: ${value}`}
+              >
+                <span className="injury-weekly-adherence-date">{label}</span>
+                <strong className="tabular-nums">{week.pct == null ? '—' : `${week.pct}%`}</strong>
+                {isCurrent && <small>pace</small>}
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+    </div>
   )
 }
 
@@ -1204,63 +1249,29 @@ function ThisWeekTable({
     checkMutation.mutate({ itemId, dateYMD, done })
   }
 
-  const renderHeader = (item: RecoveryPlanItem, isActivity: boolean, i: number): ReactElement => {
-    const summaryRow = summaryByItem.get(item.id)
-    const met = isMet(item)
-    const accountable = isPlanItemAccountable(item, planStartedAt, todayYMD)
-    const phaseStart = accountable ? null : phaseStartYMD(item, planStartedAt)
-    const progressDetails: string[] = []
-    if (summaryRow != null) {
-      if (!summaryRow.accountable) {
-        if (!summaryRow.scored) progressDetails.push('Unscored')
-        if (summaryRow.done > 0) progressDetails.push(`${summaryRow.done} done early`)
-      } else if (!summaryRow.scored) {
-        progressDetails.push('Unscored')
-        progressDetails.push(
-          summaryRow.prescribed != null && summaryRow.prescribed > 0
-            ? `${summaryRow.done}/${summaryRow.prescribed} this week`
-            : `${summaryRow.done} this week`
-        )
-      } else if (summaryRow.acceptable != null) {
-        progressDetails.push(`${summaryRow.done}/${summaryRow.acceptable} acceptable`)
-        if (summaryRow.minimum != null && summaryRow.minimum !== summaryRow.acceptable) {
-          progressDetails.push(`${summaryRow.minimum} minimum`)
-        }
-        if (summaryRow.prescribed != null && summaryRow.prescribed !== summaryRow.acceptable) {
-          progressDetails.push(`${summaryRow.prescribed} prescribed`)
-        }
-      }
+  const renderStatus = (item: RecoveryPlanItem): ReactElement => {
+    const row = summaryByItem.get(item.id)
+    if (row == null) return <span className="injury-scorecard-status--unscored">Unscored</span>
+    if (!row.accountable) {
+      const phaseStart = phaseStartYMD(item, planStartedAt)
+      return (
+        <span className="injury-scorecard-status injury-scorecard-status--future">
+          {phaseStart && <span>Starts {formatDateShort(phaseStart)}</span>}
+          {row.done > 0 && <span className="tabular-nums">{`${row.done} done early`}</span>}
+        </span>
+      )
     }
-    const cls = [
-      'injury-adh-th-item',
-      isActivity ? 'injury-adh-th-activity' : '',
-      isActivity && i === 0 ? 'injury-adh-th-divider' : '',
-      met ? 'injury-adh-th--met' : '',
-      !accountable ? 'injury-adh-th--future' : ''
-    ]
-      .filter(Boolean)
-      .join(' ')
-    return (
-      <th key={item.id} className={cls} title={item.name}>
-        <span className="injury-adh-th-label">{item.name}</span>
-        {(phaseStart || progressDetails.length > 0) && (
-          <span className="injury-adh-th-meta">
-            {phaseStart && (
-              <span className="injury-adh-th-phase tabular-nums">
-                Starts {formatDateShort(phaseStart)}
-              </span>
-            )}
-            {phaseStart && progressDetails.length > 0 && <span aria-hidden="true"> · </span>}
-            {progressDetails.map((detail, detailIndex) => (
-              <span key={detail} className="injury-adh-th-progress tabular-nums">
-                {detailIndex > 0 && <span aria-hidden="true"> · </span>}
-                {detail}
-              </span>
-            ))}
-          </span>
-        )}
-      </th>
-    )
+    if (!row.scored) return <span className="injury-scorecard-status--unscored">Unscored</span>
+    if (row.acceptable != null && row.done >= row.acceptable) {
+      return <span className="injury-scorecard-status injury-scorecard-status--met">Acceptable</span>
+    }
+    if (row.minimum != null && row.done >= row.minimum) {
+      return <span className="injury-scorecard-status injury-scorecard-status--low">Minimum</span>
+    }
+    if (row.minimum != null) {
+      return <span className="injury-scorecard-status injury-scorecard-status--none">Below minimum</span>
+    }
+    return <span className="injury-scorecard-status injury-scorecard-status--progress">In progress</span>
   }
 
   const renderCell = (
@@ -1309,26 +1320,68 @@ function ThisWeekTable({
 
   return (
     <>
-      <div className="injury-current-week-summary">
-        <span className="injury-current-week-summary-label">Week-to-date adherence</span>
-        {summary.pct != null ? (
-          <span
-            className={`injury-rate-chip injury-rate--${adherenceRating(summary.pct, 100)} tabular-nums`}
-          >
-            {summary.pct}%
-          </span>
-        ) : (
-          <span className="injury-current-week-summary-empty">Not yet scored</span>
-        )}
+      <div className="injury-current-week-scorecard">
+        <div className="injury-current-week-scorecard-head">
+          <span className="injury-current-week-summary-label">Current week adherence</span>
+          {summary.pct != null ? (
+            <span
+              className={`injury-rate-chip injury-rate--${adherenceRating(summary.pct, 100)} tabular-nums`}
+            >
+              {summary.pct}% pace
+            </span>
+          ) : (
+            <span className="injury-current-week-summary-empty">Not scored</span>
+          )}
+        </div>
+        <div
+          className="injury-current-week-scorecard-wrap"
+          tabIndex={0}
+          aria-label="Current week adherence details"
+        >
+          <table className="injury-current-week-scorecard-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Completed</th>
+                <th>Prescribed</th>
+                <th>Acceptable</th>
+                <th>Minimum</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((item) => {
+                const row = summaryByItem.get(item.id)
+                return (
+                  <tr key={item.id}>
+                    <td>{item.name}</td>
+                    <td className="tabular-nums">{row?.done ?? 0}</td>
+                    <td className="tabular-nums">{row?.prescribed ?? '—'}</td>
+                    <td className="tabular-nums">{row?.acceptable ?? '—'}</td>
+                    <td className="tabular-nums">{row?.minimum ?? '—'}</td>
+                    <td>{renderStatus(item)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
       <div className="injury-adh-wrap">
         <table className="injury-adh-table">
         <thead>
           <tr>
             <th className="injury-adh-th-date">Date</th>
-            <th className="injury-adh-th-score">Score</th>
-            {exercises.map((item) => renderHeader(item, false, -1))}
-            {activities.map((item, i) => renderHeader(item, true, i))}
+            <th className="injury-adh-th-score">Score / pain</th>
+            {columns.map((item, i) => (
+              <th
+                key={item.id}
+                className={i === exercises.length ? 'injury-adh-th-divider' : undefined}
+                title={item.name}
+              >
+                {item.name}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -1848,7 +1901,11 @@ function InjuryFullView({
   const now = useMemo(() => new Date(`${todayYMD}T12:00:00Z`), [todayYMD])
   const stats = useMemo(() => flareStats(log, now), [log, now])
   const adherence = adherencePct(plan, checks, todayYMD, 7, injury.plan_started_at)
-  const series = usePainSeries(log, plan, checks, todayYMD, injury.plan_started_at)
+  const series = usePainSeries(log, todayYMD)
+  const weekly = useMemo(
+    () => weeklyAdherence(plan, checks, todayYMD, 13, injury.plan_started_at),
+    [plan, checks, todayYMD, injury.plan_started_at]
+  )
 
   const [flareOpen, setFlareOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
@@ -1870,6 +1927,7 @@ function InjuryFullView({
 
       <StartedAtControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
 
+      <SectionTitle eyebrow="Plan" title="Recovery plan" />
       <div className="injury-plan-access-row">
         {plan.some((item) => item.active) && (
           <PlanStartControl injury={injury} todayYMD={todayYMD} readOnly={readOnly} />
@@ -1906,10 +1964,15 @@ function InjuryFullView({
       )}
       <StatRow stats={stats} adherence={adherence} />
 
-      {series.length > 0 && (
+      {(series.some((point) => point.pain != null) || weekly.some((week) => week.pct != null)) && (
         <section className="injury-section">
           <SectionTitle eyebrow="Trend" title="Pain & adherence" />
+          <div className="injury-trend-key" aria-label="Trend chart explanation">
+            <span><i className="injury-trend-key-pain" aria-hidden="true" />Pain daily</span>
+            <span><i className="injury-trend-key-adherence" aria-hidden="true" />Adherence weekly</span>
+          </div>
           <PainChart data={series} tall />
+          <WeeklyAdherenceStrip weeks={weekly} todayYMD={todayYMD} />
         </section>
       )}
 

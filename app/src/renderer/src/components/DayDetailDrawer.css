@@ -91,6 +91,31 @@
   padding-bottom: 0;
 }
 
+.day-drawer-gym-action {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+}
+
+.day-drawer-gym-action:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.day-drawer-gym-action:focus-visible,
+.day-drawer-close:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
 .day-drawer-session-header {
   display: flex;
   align-items: center;

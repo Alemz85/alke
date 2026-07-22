@@ -124,6 +124,10 @@ export const MUSCLE_FATIGUE_PARAMS = {
   r0: 1.0, // relIntensity threshold where hardness kicks in — tuning
   refPercentile: 0.9, // ref30 = 90th-pctile working weight over trailing 30 d
   referenceSetReps: 10, // normalizes lifting into 10-rep hard-set equivalents
+  // MARKED PRIOR: conservative added cost for an explicitly eccentric working
+  // set. Applied only to its final fatigue stimulus, never descriptive volume
+  // or the exercise's relative-load histories; personalizable after calibration.
+  eccentricStimulusMultiplier: 1.25,
 
   // --- cardio stimulus ---
   // MARKED PRIOR: no literature scalar. Conservative start so cardio deposits
@@ -537,7 +541,15 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
         .map((w) => w.weightKg)
       const intensityFactor = relIntensityFactor(set, priorLoads)
 
-      const sigma = hardSetEquivalent * hardness * loadCoeff * intensityFactor
+      // Eccentric work gets a conservative final-stimulus multiplier. It is
+      // deliberately applied after reference/history calculations, leaving
+      // ref30, relative intensity, and descriptive set counts unchanged.
+      const sigma =
+        hardSetEquivalent *
+        hardness *
+        loadCoeff *
+        intensityFactor *
+        (set.is_eccentric ? P.eccentricStimulusMultiplier : 1)
 
       for (const m of ex.primary_muscles) {
         if ((MUSCLES as readonly string[]).includes(m)) deposit(dayKey, m as Muscle, sigma * P.primaryShare)

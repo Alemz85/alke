@@ -18,8 +18,8 @@ readouts: a **Volume** (descriptive — what you did) and a **Fatigue** score �
 impulse-response**: each session deposits a load impulse into every muscle it works (lifting
 AND cardio), the impulse decays with a recovery time-constant, and the acute total is read
 relative to that muscle's chronic capacity ("how used to the load you are"). It runs entirely
-**app-side, in real time** (pure functions, no nightly job, no new DB schema) because every
-input already exists client-side.
+**app-side, in real time** (pure functions, no nightly job) because every input is available
+client-side after the small `gym_sets.is_eccentric` persistence migration.
 
 **Design invariant:** Volume and Fatigue are never summed or conflated. Volume = sets (and
 tonnage); Fatigue = the modeled recovery state. They answer different questions ("what did I
@@ -29,7 +29,7 @@ train?" vs "what's recovered enough to train today?").
 
 | Input | Source | Notes |
 | --- | --- | --- |
-| Sets: reps, weight_kg, is_warmup, exercise_id | `gym_sets` (via `useGymData`) | warmups excluded from volume + stimulus |
+| Sets: reps, weight_kg, is_warmup, is_eccentric, exercise_id | `gym_sets` (via `useGymData`) | warmups excluded from volume + stimulus; explicitly eccentric working sets get the conservative fatigue multiplier |
 | Exercise → muscles | `exercises.primary_muscles` / `secondary_muscles` (20-muscle vocab) | primary weight 1.0, secondary 0.5 (matches `muscleSetVolume`) |
 | Exercise → group | `exercises.body_part` (6 groups) + the §4 muscle→group map | |
 | rpe | `gym_sets.rpe` (nullable, usually null) | reserved for a later refinement; v1 works without it |
@@ -37,7 +37,8 @@ train?" vs "what's recovered enough to train today?").
 | Cardio modality | `cardioModalityOf(type)` → swim/running/cycling/rowing/elliptical/walking | |
 | Overall aerobic fitness | Zone-2 durable base (or CTL) | modulates recovery rate |
 
-No new migration. No metrics-job change. `rpe` is used **only if present**.
+One small `gym_sets.is_eccentric` migration persists the set flag. No metrics-job change. `rpe`
+is used **only if present**.
 
 ## 2. Per-muscle daily stimulus `s_m(d)`
 
@@ -50,12 +51,13 @@ Per non-warmup set, its stress is distributed to the muscles it works:
 ```
 liftStim_m(d) = Σ_sets σ(set) · share(set.exercise, m)
 share(ex, m)  = 1.0 if m ∈ ex.primary_muscles, 0.5 if m ∈ ex.secondary_muscles, else 0
-σ(set)        = hardSetEquivalent(set) · hardness(set)
+σ(set)        = hardSetEquivalent(set) · hardness(set) · loadCoeff(exercise) · relativeIntensityFactor(set) · eccentricMultiplier(set)
 hardSetEquivalent = reps · load / (10 · referenceLoad)
 referenceLoad = ref30(set.exercise), fallback: that set's own load
 hardness(set) = 1 + κ_h · max(0, relIntensity − r0)          # near-max sets cost extra fatigue
 relIntensity  = load / ref30(set.exercise)                    # this set's weight vs YOUR recent norm
 ref30(ex)     = 90th-pctile working weight for `ex` over the trailing 30 d, excluding the current day
+eccentricMultiplier(set) = 1.25 if is_eccentric, otherwise 1.0
 ```
 
 - `relIntensity` is weight relative to *your own* prior 30-day norm for that lift, so a top
@@ -63,6 +65,9 @@ ref30(ex)     = 90th-pctile working weight for `ex` over the trailing 30 d, excl
   approximately one hard-set equivalent; this avoids treating raw kilogram volume as recovery
   load while preserving an extra cost for unusually heavy sets. **Dynamic** — no absolute
   loading standard is hardcoded.
+- `eccentricMultiplier` is a **conservative, tunable prior** applied only to the final fatigue
+  stimulus of a non-warmup eccentric set. It does not alter weekly/monthly set counts or the
+  exercise's `ref30` and relative-load histories.
 
 ### 2b. Cardio stimulus (grounded structure; magnitude a marked prior)
 
@@ -176,6 +181,7 @@ its muscles. A few muscles split across two groups (fractional membership):
 | volume landmarks (context) | <5 low / 5–9 mod / 10+ maximizing sets·muscle⁻¹·wk⁻¹ | grounded (Schoenfeld 2017; no MRV ceiling asserted) |
 | fitness→faster recovery | direction of `g(·)` | grounded (direction); magnitude marked |
 | `k_cardio` | conservative start | **MARKED PRIOR** — no literature scalar; personalizable |
+| `eccentricStimulusMultiplier` | 1.25 | **MARKED PRIOR** — conservative lifting-specific magnitude; tunable after personal calibration |
 | `τ0` recovery base ≈ 2.5 d | | **MARKED PRIOR** — no per-muscle recovery number in the library |
 | `τ_cap` ≈ 35 d, `κ_h`, `r0`, `κ_scale`, `BW_PROXY`, 10-rep set normalization, 6-set cold-start capacity | | model tuning constants; sensible defaults, documented, personalize later |
 
@@ -189,8 +195,8 @@ All marked priors live in one `MUSCLE_FATIGUE_PARAMS` object (single source of t
   logged history shows a widened/greyed state, not a confident number.
 - **Dynamic-not-hardcoded audit:** `relIntensity` (vs your 30-d norm), `cap_m`, `τ_rec` (scales
   with capacity + aerobic base), group rollup weights are the only structural constants — all
-  state/timing terms are continuous functions of the user's own data. `k_cardio`, `τ0` are the
-  sole irreducible priors, flagged.
+  state/timing terms are continuous functions of the user's own data. `k_cardio`,
+  `eccentricStimulusMultiplier`, and `τ0` are irreducible priors, flagged.
 
 ## 7. Architecture
 
@@ -223,6 +229,8 @@ before build.)
   - `share`/rollup: a bench set adds 1.0 to chest, 0.5 to front delts; group rollup sums correctly.
   - leaky-integrator identity vs a hand-computed short series; a rest-day gap decays acute toward 0.
   - `relIntensity`: a heavier set vs a lighter set of equal tonnage yields higher stimulus.
+  - eccentric lifting: an explicitly eccentric non-warmup set gets higher fatigue stimulus while
+    weekly/monthly set counts remain unchanged.
   - cardio: a Z4 run deposits ≫ a Z1 walk of equal duration into legs; a swim deposits into
     back/shoulders/core and ~0 into quads; `mech(running) > mech(cycling)`.
   - detrained edge: zero-history muscle → fatigue ~0 AND low-confidence flag (not "recovered").

@@ -46,6 +46,7 @@ function sessionSets(sessionId: string, sets: NewGymSet[], exercises: Exercise[]
     weight_kg: set.weight_kg,
     rpe: set.rpe ?? null,
     is_warmup: set.is_warmup ?? false,
+    is_eccentric: set.is_eccentric ?? false,
     note: set.note ?? null
   }))
 }

@@ -1,10 +1,18 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Exercise, GymSession } from '@shared/types'
 import { ExerciseDisclosure, GymWorkoutPanel } from '../GymWorkoutPanel'
 
+const source = readFileSync(new URL('../GymWorkoutPanel.tsx', import.meta.url), 'utf8')
+
 describe('GymWorkoutPanel read view', () => {
+  it('keeps repeated body-part runs and disclosure ids distinct in logged order', () => {
+    expect(source).toContain('exerciseGroups.map((group, groupIndex) =>')
+    expect(source).toContain('`${groupIndex}-${group.bodyPart}-${block.exerciseId}-${blockIndex}`')
+  })
+
   it('exposes distinct hierarchy hooks for the workout header, exercises, and notes', () => {
     const exercise: Exercise = {
       id: 'incline-bench',
@@ -39,6 +47,7 @@ describe('GymWorkoutPanel read view', () => {
         weight_kg: 60,
         rpe: id === 2 ? 8.5 : null,
         is_warmup: false,
+        is_eccentric: false,
         note: id === 2 ? 'Last rep slowed.' : null
       })),
       created_at: null,

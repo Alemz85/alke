@@ -602,6 +602,47 @@ select.gym-input {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.gym-exercise-block-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gym-block-action {
+  min-height: 32px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  padding: 4px 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+}
+
+.gym-block-action:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.gym-block-action:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-disabled);
+}
+
+.gym-block-action:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.gym-block-eccentric {
+  align-self: flex-start;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-secondary);
 }
 
 .gym-exercise-input {
@@ -825,6 +866,17 @@ select.gym-input {
   transform: rotate(-45deg);
 }
 
+.gym-check-input:indeterminate + .gym-check-mark {
+  background: var(--color-surface-hover);
+  border-color: var(--color-text-secondary);
+}
+
+.gym-check-input:indeterminate + .gym-check-mark::after {
+  content: '';
+  width: 8px;
+  border-top: 1.5px solid var(--color-text);
+}
+
 .gym-check-input:focus-visible + .gym-check-mark {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
@@ -849,6 +901,39 @@ select.gym-input {
 .gym-set-remove:hover {
   background: var(--color-surface-hover);
   color: var(--color-text);
+}
+
+.gym-draft-status {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+}
+
+.gym-discard-guard {
+  width: min(420px, calc(100vw - 2 * var(--space-xl)));
+  margin: auto;
+  padding: var(--space-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+}
+
+.gym-discard-guard::backdrop {
+  background: var(--color-scrim);
+}
+
+.gym-discard-guard p {
+  margin: 0 0 var(--space-sm);
+}
+
+.gym-discard-guard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
 }
 
 .gym-add-set {
@@ -1744,7 +1829,9 @@ select.gym-input {
   background: none;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  transition: background var(--motion-hover), color var(--motion-hover);
+  transition:
+    background var(--motion-hover),
+    color var(--motion-hover);
 }
 
 .reorder-step:hover:not(:disabled) {

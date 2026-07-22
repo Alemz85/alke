@@ -599,8 +599,8 @@ describe('weeklyAdherence', () => {
     expect(rows).toHaveLength(4)
     expect(rows[3].weekStart).toBe(isoWeekStart(TODAY))
     expect(rows[0].weekStart).toBe(shiftYMD(isoWeekStart(TODAY), -21))
-    // No targeted items → 0% each.
-    expect(rows.every((r) => r.pct === 0)).toBe(true)
+    // No targeted items means adherence is unavailable, not a failed dose.
+    expect(rows.every((r) => r.pct === null)).toBe(true)
   })
 
   it('scores each week against weekly_target', () => {
