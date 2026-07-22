@@ -51,6 +51,27 @@ describe('injury weekly scorecard and daily checklist', () => {
     expect(renderStatus).not.toContain('itemAdherenceRating')
   })
 
+  it('color codes each scorecard row and status from those same adherence thresholds', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const css = readFileSync(new URL('../InjuriesView.css', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+
+    expect(thisWeek).toContain('scorecardRowRating(item)')
+    expect(thisWeek).toContain('injury-current-week-scorecard-row--${scorecardRowRating(item)}')
+    expect(css).toMatch(
+      /\.injury-current-week-scorecard-row--met td\s*\{[^}]*background: var\(--color-aerobic-dim\)/
+    )
+    expect(css).toMatch(
+      /\.injury-current-week-scorecard-row--low td\s*\{[^}]*background: var\(--color-sessions-dim\)/
+    )
+    expect(css).toMatch(
+      /\.injury-current-week-scorecard-row--none td\s*\{[^}]*background: var\(--color-flag-dim\)/
+    )
+    expect(css).toMatch(/\.injury-scorecard-status--met\s*\{[^}]*var\(--color-aerobic-text\)/)
+    expect(css).toMatch(/\.injury-scorecard-status--low\s*\{[^}]*var\(--color-sessions-text\)/)
+    expect(css).toMatch(/\.injury-scorecard-status--none\s*\{[^}]*var\(--color-flag-text\)/)
+  })
+
   it('separates the weekly scorecard from the simplified daily checklist', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
     const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''

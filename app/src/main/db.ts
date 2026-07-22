@@ -1807,6 +1807,23 @@ async function insertGymSets(sessionId: string, sets: NewGymSet[]): Promise<void
   if (error) throw new Error(`insertGymSets: ${error.message}`)
 }
 
+async function replaceGymSetsAtomically(sessionId: string, sets: NewGymSet[]): Promise<void> {
+  const rows = sets.map((set) => ({
+    exercise_id: set.exercise_id,
+    reps: set.reps,
+    weight_kg: set.weight_kg,
+    rpe: set.rpe ?? null,
+    is_warmup: set.is_warmup ?? false,
+    is_eccentric: set.is_eccentric ?? false,
+    note: set.note ?? null
+  }))
+  const { error } = await getClient().rpc('replace_gym_session_sets', {
+    p_session_id: sessionId,
+    p_sets: rows
+  })
+  if (error) throw new Error(`replaceGymSetsAtomically: ${error.message}`)
+}
+
 async function replaceGymSessionTemplates(sessionId: string, templateIds: string[]): Promise<void> {
   const supabase = getClient()
   const { error: clearError } = await supabase
@@ -1929,9 +1946,7 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
   }
 
   if (patch.sets !== undefined) {
-    const { error: deleteError } = await supabase.from('gym_sets').delete().eq('session_id', id)
-    if (deleteError) throw new Error(`updateGymSession (clear sets): ${deleteError.message}`)
-    await insertGymSets(id, patch.sets)
+    await replaceGymSetsAtomically(id, patch.sets)
     const session = await getGymSessionById(id)
     await syncPlanChecksFromGymSets(patch.sets, session.performed_at)
     return session

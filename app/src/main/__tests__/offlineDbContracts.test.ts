@@ -34,4 +34,25 @@ describe('offline write idempotency contracts', () => {
     expect(source).toMatch(/addProtein\([\s\S]*mutationId: string/)
     expect(source).toContain(".rpc('apply_protein_delta'")
   })
+
+  it('replaces gym-session sets atomically so a failed insert preserves the previous log', () => {
+    const migrationPath = resolve(
+      root,
+      'supabase/migrations/20260722220000_atomic_gym_set_replacement.sql'
+    )
+    expect(existsSync(migrationPath)).toBe(true)
+
+    const sql = readFileSync(migrationPath, 'utf8')
+    expect(sql).toContain('function replace_gym_session_sets')
+    expect(sql).toContain('delete from gym_sets')
+    expect(sql).toContain('jsonb_array_elements(p_sets) with ordinality')
+    expect(sql).toContain('grant execute on function replace_gym_session_sets(uuid, jsonb) to service_role')
+
+    const source = readFileSync(resolve(root, 'app/src/main/db.ts'), 'utf8')
+    const update = source.match(/export async function updateGymSession[\s\S]*?\n}\n\nexport async function deleteGymSession/)?.[0] ?? ''
+    expect(source).toContain(".rpc('replace_gym_session_sets'")
+    expect(update).toContain('replaceGymSetsAtomically(id, patch.sets)')
+    expect(update).not.toContain(".from('gym_sets').delete()")
+    expect(update).not.toContain('insertGymSets(id, patch.sets)')
+  })
 })

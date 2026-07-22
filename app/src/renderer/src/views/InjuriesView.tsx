@@ -1249,6 +1249,14 @@ function ThisWeekTable({
     checkMutation.mutate({ itemId, dateYMD, done })
   }
 
+  const scorecardRowRating = (item: RecoveryPlanItem): 'met' | 'low' | 'none' | 'untargeted' => {
+    const row = summaryByItem.get(item.id)
+    if (row == null || !row.accountable || !row.scored) return 'untargeted'
+    if (row.acceptable != null && row.done >= row.acceptable) return 'met'
+    if (row.minimum != null && row.done >= row.minimum) return 'low'
+    return row.minimum != null ? 'none' : 'untargeted'
+  }
+
   const renderStatus = (item: RecoveryPlanItem): ReactElement => {
     const row = summaryByItem.get(item.id)
     if (row == null) return <span className="injury-scorecard-status--unscored">Unscored</span>
@@ -1353,7 +1361,10 @@ function ThisWeekTable({
               {columns.map((item) => {
                 const row = summaryByItem.get(item.id)
                 return (
-                  <tr key={item.id}>
+                  <tr
+                    key={item.id}
+                    className={`injury-current-week-scorecard-row injury-current-week-scorecard-row--${scorecardRowRating(item)}`}
+                  >
                     <td>{item.name}</td>
                     <td className="tabular-nums">{row?.done ?? 0}</td>
                     <td className="tabular-nums">{row?.prescribed ?? '—'}</td>

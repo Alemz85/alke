@@ -1160,6 +1160,20 @@
   border-bottom: none;
 }
 
+/* The row tint and status label share the same therapeutic-dose rating.
+   Existing dim tokens keep the table restrained in both themes. */
+.injury-current-week-scorecard-row--met td {
+  background: var(--color-aerobic-dim);
+}
+
+.injury-current-week-scorecard-row--low td {
+  background: var(--color-sessions-dim);
+}
+
+.injury-current-week-scorecard-row--none td {
+  background: var(--color-flag-dim);
+}
+
 .injury-scorecard-status {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1168,11 +1182,17 @@
 }
 
 .injury-scorecard-status--met {
+  color: var(--color-aerobic-text);
+}
+
+.injury-scorecard-status--low {
   color: var(--color-sessions-text);
 }
 
-.injury-scorecard-status--low,
-.injury-scorecard-status--none,
+.injury-scorecard-status--none {
+  color: var(--color-flag-text);
+}
+
 .injury-scorecard-status--progress,
 .injury-scorecard-status--unscored,
 .injury-scorecard-status--future {
