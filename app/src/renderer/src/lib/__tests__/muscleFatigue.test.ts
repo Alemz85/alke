@@ -3,6 +3,7 @@ import type { Exercise, GymSession, GymSet, Workout } from '@shared/types'
 import {
   computeMuscleFatigue,
   exerciseLoadCoefficient,
+  isBodyweightBearing,
   relIntensityFactor,
   fatigueStatus,
   MUSCLE_FATIGUE_PARAMS,
@@ -722,6 +723,132 @@ describe('relative-intensity factor', () => {
     expect(Number.isFinite(chest)).toBe(true)
     expect(chest).toBeGreaterThanOrEqual(0)
     expect(chest).toBeLessThanOrEqual(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Bodyweight-bearing load: added weight reads as MORE load than pure bodyweight
+// (body mass + added), and null = pure bodyweight — not a flat sub-bodyweight
+// proxy that used to invert the two.
+// ---------------------------------------------------------------------------
+
+describe('bodyweight-bearing effective load', () => {
+  // Heel Walk: equipment='bodyweight' → body IS the resistance; a logged weight
+  // is ADDED load on top (e.g. dumbbells). tibialis so it lands in legs.
+  const HEEL = exercise({
+    id: 'heel',
+    name: 'Heel Walk',
+    body_part: 'legs',
+    primary_muscles: ['tibialis'],
+    secondary_muscles: [],
+    equipment: 'bodyweight',
+    mechanics: 'isolation',
+    movement_pattern: 'carry'
+  })
+  const BW: { date: string; weightKg: number }[] = [{ date: '2026-05-01', weightKg: 90 }]
+
+  // Prior weeks of pure-bodyweight heel walks so ref30 is well-defined (a single
+  // isolated set can't distinguish loads — the ref falls back to the set's own
+  // load and the magnitude cancels; that's the model's relative design).
+  const bwHistory = (): GymSession[] => [
+    session('2026-06-20T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: null })]),
+    session('2026-06-27T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: null })]),
+    session('2026-07-04T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: null })]),
+    session('2026-07-09T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: null })])
+  ]
+
+  const tibialisFatigue = (finalWeight: number | null, bodyWeightSeries = BW): number => {
+    const res = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          ...bwHistory(),
+          session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: finalWeight })])
+        ],
+        exercisesById: mapOf(HEEL),
+        bodyWeightSeries,
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    return muscleDetail(groupBy(res, 'legs'), 'tibialis').fatigue
+  }
+
+  it('the core fix: adding 12kg reads as MORE load than pure bodyweight (no inversion)', () => {
+    // The exact bug from the diagnosis: with a bodyweight history, a +12kg set
+    // used to deposit LESS than a bodyweight set (12 < BW_PROXY 40). Now the
+    // weighted set (90+12) beats the bodyweight set (90).
+    const bodyweight = tibialisFatigue(null)
+    const plus12 = tibialisFatigue(12)
+    expect(plus12).toBeGreaterThan(bodyweight)
+  })
+
+  it('is monotone in added weight: +12kg > +6kg > bodyweight', () => {
+    const bw = tibialisFatigue(null)
+    const plus6 = tibialisFatigue(6)
+    const plus12 = tibialisFatigue(12)
+    expect(plus6).toBeGreaterThan(bw)
+    expect(plus12).toBeGreaterThan(plus6)
+  })
+
+  it('null weight counts the body mass, not a flat proxy (registers real load)', () => {
+    // A single pure-bodyweight heel walk deposits load into tibialis and clears
+    // the low-data flag — it is no longer invisible.
+    const res = computeMuscleFatigue(
+      baseInput({
+        sessions: [session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'heel', reps: 20, weight_kg: null })])],
+        exercisesById: mapOf(HEEL),
+        bodyWeightSeries: BW,
+        asOf: new Date('2026-07-12T20:00:00.000Z')
+      })
+    )
+    const tib = muscleDetail(groupBy(res, 'legs'), 'tibialis')
+    expect(tib.fatigue).toBeGreaterThan(0)
+    expect(tib.lowData).toBe(false)
+  })
+
+  it('uses the body mass as of each session date (a heavier body today = more relative load)', () => {
+    // History logged while at 80kg; today weighed either 80 or 95. Same set, but
+    // the 95kg-today body deposits more relative to the 80kg ref30 history.
+    const runToday = (todayKg: number): number => {
+      const series = [
+        { date: '2026-06-01', weightKg: 80 },
+        { date: '2026-07-10', weightKg: todayKg }
+      ]
+      return tibialisFatigue(null, series)
+    }
+    expect(runToday(95)).toBeGreaterThan(runToday(80))
+  })
+
+  it('does not touch external-load exercises: bodyweight series is irrelevant to a barbell lift', () => {
+    // BENCH is equipment=null (not bodyweight-bearing) → weight_kg is the whole
+    // load; supplying a body-mass series must not change its fatigue at all.
+    const bench = (bodyWeightSeries?: { date: string; weightKg: number }[]): number => {
+      const res = computeMuscleFatigue(
+        baseInput({
+          sessions: [session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'bench', reps: 8, weight_kg: 80 })])],
+          exercisesById: mapOf(BENCH),
+          bodyWeightSeries,
+          asOf: new Date('2026-07-12T20:00:00.000Z')
+        })
+      )
+      return muscleDetail(groupBy(res, 'chest'), 'chest').fatigue
+    }
+    expect(bench(BW)).toBeCloseTo(bench(undefined), 12)
+  })
+
+  it('classifies bodyweight-bearing exercises from the equipment tag alone', () => {
+    expect(isBodyweightBearing(HEEL)).toBe(true)
+    expect(isBodyweightBearing(exercise({ id: 'x', equipment: '  BodyWeight ' }))).toBe(true) // trim + case
+    expect(isBodyweightBearing(BENCH)).toBe(false) // equipment null
+    expect(isBodyweightBearing(exercise({ id: 'm', equipment: 'machine' }))).toBe(false)
+    expect(isBodyweightBearing(undefined)).toBe(false)
+  })
+
+  it('with no body-mass reading at all, the fallback still makes added weight monotone', () => {
+    // Omit the series entirely → bodyWeightFallbackKg. The user's core property
+    // (added weight > bodyweight) must still hold on the fallback mass.
+    const bw = tibialisFatigue(null, [])
+    const plus12 = tibialisFatigue(12, [])
+    expect(plus12).toBeGreaterThan(bw)
   })
 })
 

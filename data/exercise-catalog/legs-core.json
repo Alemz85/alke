@@ -398,15 +398,14 @@
   {
     "name": "Standing Calf Raise",
     "aliases": [
-      "polpacci in piedi",
-      "standing calf raise machine"
+      "polpacci in piedi"
     ],
     "body_part": "legs",
     "primary_muscles": [
       "calves"
     ],
     "secondary_muscles": [],
-    "equipment": "machine",
+    "equipment": "bodyweight",
     "mechanics": "isolation",
     "movement_pattern": "isolation"
   },

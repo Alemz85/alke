@@ -100,12 +100,20 @@ export function GymView(): ReactElement {
     return m
   }, [allGymSessions])
 
-  const bodyWeightKg = useMemo(() => {
-    const readings = (bodyWeightQuery.data ?? [])
-      .filter((metric): metric is typeof metric & { weight_kg: number } => typeof metric.weight_kg === 'number')
-      .sort((a, b) => b.date.localeCompare(a.date))
-    return readings[0]?.weight_kg ?? null
-  }, [bodyWeightQuery.data])
+  const bodyWeightReadings = useMemo(
+    () =>
+      (bodyWeightQuery.data ?? [])
+        .filter((metric): metric is typeof metric & { weight_kg: number } => typeof metric.weight_kg === 'number')
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [bodyWeightQuery.data]
+  )
+  const bodyWeightKg = bodyWeightReadings[0]?.weight_kg ?? null
+  // Dated series (kg) for the muscle-load model to resolve each session's
+  // effective bodyweight load as of the day it was performed.
+  const bodyWeightSeries = useMemo(
+    () => bodyWeightReadings.map((r) => ({ date: r.date, weightKg: r.weight_kg })),
+    [bodyWeightReadings]
+  )
 
   const strengthWorkouts = useMemo(
     () => allWorkouts.filter((w) => isStrengthWorkout(w.type)),
@@ -175,9 +183,10 @@ export function GymView(): ReactElement {
         exercisesById,
         aerobicBase: null, // TODO: wire the Zone-2 durable base for recovery modulation
         timezone: timezone ?? null,
-        asOf: new Date()
+        asOf: new Date(),
+        bodyWeightSeries
       }),
-    [gymSessions, allWorkouts, exercisesById, timezone]
+    [gymSessions, allWorkouts, exercisesById, timezone, bodyWeightSeries]
   )
 
   const strengthLevels = useMemo(

@@ -33,6 +33,12 @@ export interface MuscleFatigueInput {
   aerobicBase: number | null // Zone2 durable base 0-100 for recovery modulation; null = skip that term
   timezone: string | null
   asOf: Date
+  // Dated body-mass readings (kg), newest or oldest order irrelevant. Used to
+  // resolve the effective load of bodyweight-BEARING exercises per session date
+  // (body mass as of that day + any added weight). Omitted/empty → the model
+  // falls back to bodyWeightFallbackKg. Each session uses the most recent reading
+  // on or before its date, so past sessions use the weight the user actually was.
+  bodyWeightSeries?: { date: string; weightKg: number }[]
 }
 
 export type MuscleGroup = 'chest' | 'back' | 'shoulders' | 'arms' | 'legs' | 'core'
@@ -79,6 +85,7 @@ export const MUSCLES = [
   'hamstrings',
   'glutes',
   'calves',
+  'tibialis',
   'adductors',
   'abductors',
   'hip flexors',
@@ -103,6 +110,7 @@ export const GROUP_MEMBERSHIP: Record<MuscleGroup, Partial<Record<Muscle, number
     hamstrings: 1.0,
     glutes: 1.0,
     calves: 1.0,
+    tibialis: 1.0,
     adductors: 1.0,
     abductors: 1.0
   },
@@ -119,7 +127,18 @@ export const MUSCLE_FATIGUE_PARAMS = {
   // --- lifting stimulus ---
   primaryShare: 1.0, // grounded (existing app convention, matches muscleSetVolume)
   secondaryShare: 0.5, // grounded
-  bwProxy: 40, // BW_PROXY nominal load for bodyweight sets (kg-equivalent) — tuning
+  // BW_PROXY: nominal load (kg-equivalent) for a null-weight set on an
+  // EXTERNAL-load exercise (e.g. a machine set whose stack weight went
+  // unrecorded) — the load is genuinely unknown, so a neutral proxy stands in.
+  // Bodyweight-BEARING exercises (equipment='bodyweight') do NOT use this: their
+  // effective load is the user's own body mass + any added weight (see setLoad).
+  bwProxy: 40, // tuning
+  // Population fallback body mass (kg), used ONLY to resolve the effective load
+  // of a bodyweight-bearing set when the user has no dated body-mass reading at
+  // all. The user's own dated series is used per session date whenever present,
+  // so this rarely bites. MARKED PRIOR (neutral adult mass; magnitude cancels in
+  // the per-exercise self-normalization, only monotonicity in added weight matters).
+  bodyWeightFallbackKg: 70,
   kappaH: 0.5, // hardness slope above r0 — tuning
   r0: 1.0, // relIntensity threshold where hardness kicks in — tuning
   refPercentile: 0.9, // ref30 = 90th-pctile working weight over trailing 30 d
@@ -194,6 +213,7 @@ export const MUSCLE_FATIGUE_PARAMS = {
     adductors: 1.1,
     abductors: 1.0,
     calves: 1.0,
+    tibialis: 0.8, // small distal dorsiflexor — recovers fast, like forearms
     abs: 0.9,
     obliques: 0.9,
     'hip flexors': 0.9,
@@ -359,9 +379,55 @@ function percentile(values: number[], p: number): number | null {
   return sorted[lo] * (1 - frac) + sorted[hi] * frac
 }
 
-/** Effective load of a set: weight_kg, or BW_PROXY for a bodyweight (null-weight) set. */
-function setLoad(s: GymSet): number {
+/**
+ * True when an exercise is bodyweight-BEARING — the body itself is the primary
+ * resistance (pull-ups, dips, push-ups, air squats, lunges, calf raises, heel
+ * walks…). Signal: the catalog `equipment='bodyweight'` tag the exercises table
+ * already carries — NOT a hardcoded name list. For these, a logged weight_kg is
+ * ADDED external load (a weight belt / dumbbells) on top of the body, and null =
+ * pure bodyweight. Everything else treats weight_kg as the whole load.
+ */
+export function isBodyweightBearing(ex: Exercise | undefined): boolean {
+  return ex?.equipment?.trim().toLowerCase() === 'bodyweight'
+}
+
+/**
+ * Effective mechanical load of a set (kg-equivalent):
+ *  - Bodyweight-bearing exercise: bodyWeightKg + (weight_kg ?? 0). This is what
+ *    makes a weighted heel-walk / dip / calf-raise read as MORE load than the
+ *    same movement unloaded, and a pure-bodyweight set count its own body mass
+ *    rather than a flat proxy.
+ *  - Everything else: weight_kg, or BW_PROXY when null (unrecorded external load).
+ * The bodyweight "fraction loaded" is deliberately 1.0 (no per-exercise
+ * biomechanical guess): each exercise is self-normalized against its own recent
+ * norm downstream (ref30, intensity median), so only monotonicity in the added
+ * weight matters, not the absolute magnitude — inventing per-movement fractions
+ * would be unfounded hardcoding.
+ */
+function setLoad(s: GymSet, ex: Exercise | undefined, bodyWeightKg: number): number {
+  if (isBodyweightBearing(ex)) return bodyWeightKg + (s.weight_kg ?? 0)
   return s.weight_kg == null ? MUSCLE_FATIGUE_PARAMS.bwProxy : s.weight_kg
+}
+
+/**
+ * Body mass (kg) to use for a session on `dayKey` (a "YYYY-MM-DD" local date):
+ * the most recent valid reading on or before that day; failing that, the
+ * earliest reading available; failing that, the population fallback. Carrying
+ * the last known weight forward keeps each past session on the mass the user
+ * actually was then, so the retroactive recompute is date-correct rather than
+ * pinned to today's weight.
+ */
+function resolveBodyWeight(series: { date: string; weightKg: number }[] | undefined, dayKey: string): number {
+  const fallback = MUSCLE_FATIGUE_PARAMS.bodyWeightFallbackKg
+  if (!series || series.length === 0) return fallback
+  let onOrBefore: { date: string; weightKg: number } | null = null
+  let earliest: { date: string; weightKg: number } | null = null
+  for (const r of series) {
+    if (!Number.isFinite(r.weightKg) || r.weightKg <= 0) continue
+    if (!earliest || r.date < earliest.date) earliest = r
+    if (r.date <= dayKey && (!onOrBefore || r.date > onOrBefore.date)) onOrBefore = r
+  }
+  return (onOrBefore ?? earliest)?.weightKg ?? fallback
 }
 
 /** Median of a numeric array, or null when empty. */
@@ -439,7 +505,9 @@ export function relIntensityFactor(
  * refWindowDays before `dayKey`, given that exercise's dated loads. Excluding
  * the current day lets a genuinely heavier session register as harder instead
  * of letting its own top set redefine the reference. With no prior history the
- * caller falls back to the set's own load. Bodyweight sets contribute BW_PROXY.
+ * caller falls back to the set's own load. Loads are effective loads from
+ * setLoad (bodyweight-bearing sets already include body mass; unrecorded
+ * external-load sets use BW_PROXY).
  */
 function buildRef30(sets: { dayKey: string; load: number }[], dayKey: string): number | null {
   const cutoff = ymdKey(addDays(keyToYMD(dayKey), -MUSCLE_FATIGUE_PARAMS.refWindowDays))
@@ -484,17 +552,19 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
 
   // --- lifting stimulus ---
   // First, collect per-exercise working-set loads keyed by day, to compute ref30
-  // (hardness) and the relative-intensity median. `load` uses BW_PROXY for
-  // weightless sets (needed by ref30); `weightKg` keeps the raw logged weight so
-  // the intensity median only reflects genuinely-loaded sets.
+  // (hardness) and the relative-intensity median. `load` is the EFFECTIVE load
+  // from setLoad (body mass + added for bodyweight-bearing; BW_PROXY for
+  // unrecorded external load) — needed by ref30; `weightKg` keeps the raw logged
+  // added weight so the intensity median only reflects genuinely-loaded sets.
   const exerciseLoads = new Map<string, { dayKey: string; load: number }[]>()
   const exerciseWeights = new Map<string, { dayKey: string; weightKg: number }[]>()
   for (const sess of sessions) {
     const dayKey = localDateKey(sess.performed_at, timezone)
+    const bodyWeight = resolveBodyWeight(input.bodyWeightSeries, dayKey)
     for (const set of sess.sets) {
       if (set.is_warmup) continue
       const arr = exerciseLoads.get(set.exercise_id) ?? []
-      arr.push({ dayKey, load: setLoad(set) })
+      arr.push({ dayKey, load: setLoad(set, exercisesById.get(set.exercise_id), bodyWeight) })
       exerciseLoads.set(set.exercise_id, arr)
       if (set.weight_kg != null) {
         const warr = exerciseWeights.get(set.exercise_id) ?? []
@@ -506,13 +576,14 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
 
   for (const sess of sessions) {
     const dayKey = localDateKey(sess.performed_at, timezone)
+    const bodyWeight = resolveBodyWeight(input.bodyWeightSeries, dayKey)
     for (const set of sess.sets) {
       if (set.is_warmup) continue
       const ex = exercisesById.get(set.exercise_id)
       if (!ex) continue // custom without muscle metadata -> honest gap, no guess
       const reps = set.reps ?? 0
       if (reps <= 0) continue
-      const load = setLoad(set)
+      const load = setLoad(set, ex, bodyWeight)
 
       // relIntensity = load / ref30 (this set's weight vs the user's recent norm).
       const ref = buildRef30(exerciseLoads.get(set.exercise_id) ?? [], dayKey)
