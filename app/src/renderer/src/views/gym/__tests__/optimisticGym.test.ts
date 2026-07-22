@@ -86,4 +86,36 @@ describe('optimistic Gym records', () => {
     expect(result.sets).toHaveLength(2)
     expect(result.sets[1].session_id).toBe('optimistic:session')
   })
+
+  it('defaults an omitted optimistic eccentric flag to false', () => {
+    const input: NewGymSession = {
+      performed_at: '2026-07-13T12:00:00Z',
+      sets: [{ exercise_id: 'exercise-1', reps: 8, weight_kg: 60 }]
+    }
+
+    const result = makeOptimisticSession(
+      input,
+      exercises,
+      'optimistic:session',
+      input.performed_at as string
+    )
+
+    expect(result.sets[0].is_eccentric).toBe(false)
+  })
+
+  it('preserves a true eccentric flag in the optimistic mapping', () => {
+    const input: NewGymSession = {
+      performed_at: '2026-07-13T12:00:00Z',
+      sets: [{ exercise_id: 'exercise-1', reps: 8, weight_kg: 60, is_eccentric: true }]
+    }
+
+    const result = makeOptimisticSession(
+      input,
+      exercises,
+      'optimistic:session',
+      input.performed_at as string
+    )
+
+    expect(result.sets[0].is_eccentric).toBe(true)
+  })
 })

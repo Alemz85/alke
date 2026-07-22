@@ -942,7 +942,7 @@ const GYM_SESSION_COLUMNS =
   'id, workout_id, template_id, performed_at, title, notes, source, body_parts, created_at, updated_at'
 
 const GYM_SET_COLUMNS =
-  'id, session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup, note'
+  'id, session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup, is_eccentric, note'
 
 const GYM_SET_NUMERIC_KEYS: (keyof GymSet)[] = ['position', 'reps', 'weight_kg', 'rpe']
 
@@ -980,6 +980,9 @@ function assertGymSets(sets: unknown): asserts sets is NewGymSet[] {
     assertOptionalNumber(set.rpe, 'sets[].rpe', 1, 10)
     if (set.is_warmup !== undefined && typeof set.is_warmup !== 'boolean') {
       throw new Error('invalid sets[].is_warmup')
+    }
+    if (set.is_eccentric !== undefined && typeof set.is_eccentric !== 'boolean') {
+      throw new Error('invalid sets[].is_eccentric')
     }
     assertOptionalText(set.note, 'sets[].note', 500)
   }
@@ -1797,6 +1800,7 @@ async function insertGymSets(sessionId: string, sets: NewGymSet[]): Promise<void
     weight_kg: set.weight_kg,
     rpe: set.rpe ?? null,
     is_warmup: set.is_warmup ?? false,
+    is_eccentric: set.is_eccentric ?? false,
     note: set.note ?? null
   }))
   const { error } = await getClient().from('gym_sets').insert(rows)

@@ -385,7 +385,7 @@ export function weeklyAdherence(
     const weekStart = shiftYMD(currentWeekStart, -7 * i)
     const weekEnd = shiftYMD(weekStart, 6)
     const isCurrent = weekStart === currentWeekStart
-    let pct: number | null = targeted.length === 0 ? 0 : null
+    let pct: number | null = null
     if (targeted.length > 0) {
       let sum = 0
       let accountableCount = 0

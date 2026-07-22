@@ -1,19 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-describe('injury adherence column headers', () => {
-  it('puts concise phase timing below an uncropped task name', () => {
+describe('injury weekly scorecard and daily checklist', () => {
+  it('puts the recovery-plan section title directly before the plan access controls', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
-    const css = readFileSync(new URL('../InjuriesView.css', import.meta.url), 'utf8')
 
-    expect(source).toContain('injury-adh-th-meta')
-    expect(source).toContain('phaseStartYMD(item, planStartedAt)')
-    expect(source).not.toContain('starts wk')
-    expect(css).toMatch(/\.injury-adh-th-label\s*\{[^}]*white-space:\s*normal/s)
-    expect(css).toMatch(/\.injury-adh-th-meta\s*\{[^}]*display:\s*block/s)
+    expect(source).toMatch(
+      /<SectionTitle eyebrow="Plan" title="Recovery plan"\s*\/>\s*<div className="injury-plan-access-row">/
+    )
   })
 
-  it('shows the accountable exercise dose thresholds and labels activities as unscored', () => {
+  it('shows exercise thresholds and leaves activities or untargeted items unscored', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
     const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
 
@@ -24,25 +21,59 @@ describe('injury adherence column headers', () => {
     expect(thisWeek).toContain('Unscored')
   })
 
-  it('does not present future-phase items as owing current-week progress', () => {
+  it('shows future-phase start timing and records early completions without calling them due', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
     const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
-    const renderHeader =
-      thisWeek.match(/const renderHeader = \([\s\S]*?\n  const renderCell =/)?.[0] ?? ''
-    const futureBranch =
-      renderHeader.match(/if \(!summaryRow\.accountable\) \{([\s\S]*?)\} else if \(!summaryRow\.scored\)/)?.[1] ?? ''
 
-    expect(futureBranch).toContain("progressDetails.push('Unscored')")
-    expect(futureBranch).toContain('`${summaryRow.done} done early`')
-    expect(futureBranch).not.toContain('this week')
+    expect(thisWeek).toContain('Starts {formatDateShort(phaseStart)}')
+    expect(thisWeek).toContain('`${row.done} done early`')
+    expect(thisWeek).not.toContain('injury-adh-th-meta')
   })
 
-  it('renders a threshold-colored week-to-date score or an honest unavailable state', () => {
+  it('renders a threshold-colored pace chip or an honest unavailable state', () => {
     const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
     const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
 
-    expect(thisWeek).toContain('Week-to-date adherence')
-    expect(thisWeek).toContain('Not yet scored')
+    expect(thisWeek).toContain('Current week adherence')
+    expect(thisWeek).toContain('Not scored')
     expect(thisWeek).toContain('adherenceRating(summary.pct, 100)')
+  })
+
+  it('derives row status from the same acceptable and minimum thresholds it displays', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+    const renderStatus = thisWeek.match(/const renderStatus = \([\s\S]*?\n\s*const renderCell =/)?.[0] ?? ''
+
+    expect(renderStatus).toContain('row.done >= row.acceptable')
+    expect(renderStatus).toContain('row.done >= row.minimum')
+    expect(renderStatus).toContain('>Below minimum</span>')
+    expect(renderStatus).toContain('>In progress</span>')
+    expect(renderStatus).not.toContain('itemAdherenceRating')
+  })
+
+  it('separates the weekly scorecard from the simplified daily checklist', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+
+    expect(thisWeek).toContain('className="injury-current-week-scorecard"')
+    expect(thisWeek).toContain('<th>Completed</th>')
+    expect(thisWeek).toContain('<th>Prescribed</th>')
+    expect(thisWeek).toContain('<th>Acceptable</th>')
+    expect(thisWeek).toContain('<th>Minimum</th>')
+    expect(thisWeek).toContain('<th>Status</th>')
+    expect(thisWeek).toMatch(/injury-current-week-scorecard[\s\S]*injury-adh-wrap/)
+    expect(thisWeek).not.toContain('injury-adh-th-meta')
+    expect(thisWeek).not.toContain('injury-adh-th-progress')
+  })
+
+  it('makes the compact scorecard overflow region keyboard accessible', () => {
+    const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
+    const css = readFileSync(new URL('../InjuriesView.css', import.meta.url), 'utf8')
+    const thisWeek = source.match(/function ThisWeekTable\([\s\S]*?\n\/\/ ── /)?.[0] ?? ''
+
+    expect(thisWeek).toMatch(
+      /className="injury-current-week-scorecard-wrap"\s+tabIndex=\{0\}\s+aria-label="Current week adherence details"/
+    )
+    expect(css).toMatch(/\.injury-current-week-scorecard-wrap:focus-visible\s*\{/)
   })
 })

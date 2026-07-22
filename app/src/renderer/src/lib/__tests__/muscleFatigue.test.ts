@@ -29,6 +29,7 @@ function set(overrides: Partial<GymSet> = {}): GymSet {
     weight_kg: 100,
     rpe: null,
     is_warmup: false,
+    is_eccentric: false,
     note: null,
     ...overrides
   }
@@ -202,6 +203,10 @@ describe('fatigue status bands', () => {
 // ---------------------------------------------------------------------------
 
 describe('share weighting and volume rollup', () => {
+  it('pins the conservative eccentric stimulus multiplier at 1.25', () => {
+    expect(MUSCLE_FATIGUE_PARAMS.eccentricStimulusMultiplier).toBe(1.25)
+  })
+
   it('credits a bench working set 1.0 to chest and 0.5 to front delts (weekSets)', () => {
     const res = computeMuscleFatigue(
       baseInput({
@@ -232,6 +237,54 @@ describe('share weighting and volume rollup', () => {
       })
     )
     expect(muscleDetail(groupBy(res, 'chest'), 'chest').weekSets).toBeCloseTo(1.0, 10)
+  })
+
+  it('excludes an eccentric warmup from both fatigue and volume', () => {
+    const res = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          session('2026-07-12T09:00:00.000Z', [
+            set({ exercise_id: 'bench', is_warmup: true, is_eccentric: true })
+          ])
+        ],
+        exercisesById: mapOf(BENCH)
+      })
+    )
+    const chest = groupBy(res, 'chest')
+    expect(muscleDetail(chest, 'chest').fatigue).toBe(0)
+    expect(chest.volumeWeekSets).toBe(0)
+    expect(chest.volumeMonthSets).toBe(0)
+  })
+
+  it('increases only a working eccentric set\'s fatigue stimulus, not its set counts', () => {
+    const common = {
+      sessions: [session('2026-07-12T09:00:00.000Z', [set({ exercise_id: 'bench', reps: 10, weight_kg: 70 })])],
+      exercisesById: mapOf(BENCH),
+      asOf: new Date('2026-07-12T20:00:00.000Z')
+    }
+    const concentric = computeMuscleFatigue(baseInput(common))
+    const eccentric = computeMuscleFatigue(
+      baseInput({
+        ...common,
+        sessions: [
+          session('2026-07-12T09:00:00.000Z', [
+            set({ exercise_id: 'bench', reps: 10, weight_kg: 70, is_eccentric: true })
+          ])
+        ]
+      })
+    )
+
+    expect(muscleDetail(groupBy(eccentric, 'chest'), 'chest').fatigue).toBeGreaterThan(
+      muscleDetail(groupBy(concentric, 'chest'), 'chest').fatigue
+    )
+    expect(groupBy(eccentric, 'chest').volumeWeekSets).toBeCloseTo(
+      groupBy(concentric, 'chest').volumeWeekSets,
+      10
+    )
+    expect(groupBy(eccentric, 'chest').volumeMonthSets).toBeCloseTo(
+      groupBy(concentric, 'chest').volumeMonthSets,
+      10
+    )
   })
 
   it('sums group weekly volume across member muscles (three bench sets)', () => {

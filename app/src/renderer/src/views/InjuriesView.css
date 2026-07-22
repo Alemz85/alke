@@ -400,6 +400,133 @@
   margin-top: var(--space-md);
 }
 
+.injury-trend-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin: 0 0 var(--space-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.injury-trend-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.injury-trend-key i {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  border-radius: var(--radius-full);
+}
+
+.injury-trend-key-pain {
+  background: var(--color-flag);
+}
+
+.injury-trend-key-adherence {
+  background: var(--color-sessions);
+}
+
+.injury-weekly-adherence {
+  margin-top: var(--space-sm);
+}
+
+.injury-weekly-adherence-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xxs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.injury-weekly-adherence-head span:first-child {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.injury-weekly-adherence-scroll {
+  overflow-x: auto;
+  padding-bottom: var(--space-xxs);
+  border-radius: var(--radius-sm);
+}
+
+.injury-weekly-adherence-scroll:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.injury-weekly-adherence-strip {
+  position: relative;
+  height: 88px;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--color-divider-soft);
+  border-bottom: 1px solid var(--color-divider-soft);
+  list-style: none;
+}
+
+.injury-weekly-adherence-cell {
+  position: absolute;
+  top: var(--space-xxs);
+  bottom: var(--space-xxs);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: var(--space-xxs);
+  border-radius: var(--radius-sm);
+  background: var(--color-sessions-dim);
+  color: var(--color-sessions-text);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  line-height: var(--type-caption-line-height);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.injury-weekly-adherence-date {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  font-weight: 400;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.injury-weekly-adherence-cell strong {
+  font-size: var(--type-label-size);
+  line-height: var(--type-label-line-height);
+}
+
+.injury-weekly-adherence-cell small {
+  font-size: var(--type-caption-size);
+  font-weight: 400;
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+}
+
+.injury-weekly-adherence-cell--not-scored {
+  border: 1px solid var(--color-hairline);
+  background: transparent;
+  color: var(--color-text-tertiary);
+}
+
+.injury-weekly-adherence-cell--zero {
+  background: var(--color-sessions-dim);
+  color: var(--color-sessions-text);
+}
+
 .injury-flare-caption {
   margin: var(--space-xs) 0 0;
   font-family: var(--font-body);
@@ -628,7 +755,7 @@
   justify-content: space-between;
   gap: var(--space-sm);
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   color: var(--color-text-tertiary);
 }
 
@@ -954,10 +1081,19 @@
 }
 
 /* ── adherence tables (This week · Past weeks) ───────────────────────────── */
-.injury-current-week-summary {
+.injury-current-week-scorecard {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider-soft);
+  border-radius: var(--radius-md);
+}
+
+.injury-current-week-scorecard-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-xs);
   margin-bottom: var(--space-sm);
 }
@@ -978,6 +1114,76 @@
   color: var(--color-text-tertiary);
 }
 
+.injury-current-week-scorecard-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+}
+
+.injury-current-week-scorecard-wrap:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.injury-current-week-scorecard-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.injury-current-week-scorecard-table th,
+.injury-current-week-scorecard-table td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  border-bottom: 1px solid var(--color-divider-soft);
+  vertical-align: middle;
+}
+
+.injury-current-week-scorecard-table th {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.injury-current-week-scorecard-table td:first-child {
+  min-width: 144px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.injury-current-week-scorecard-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.injury-scorecard-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xxs);
+  color: var(--color-text-secondary);
+}
+
+.injury-scorecard-status--met {
+  color: var(--color-sessions-text);
+}
+
+.injury-scorecard-status--low,
+.injury-scorecard-status--none,
+.injury-scorecard-status--progress,
+.injury-scorecard-status--unscored,
+.injury-scorecard-status--future {
+  color: var(--color-text-tertiary);
+}
+
+.injury-scorecard-status--future span + span::before {
+  content: '·';
+  margin-right: var(--space-xxs);
+}
+
 .injury-adh-wrap {
   overflow-x: auto;
 }
@@ -985,6 +1191,7 @@
 .injury-adh-table {
   border-collapse: collapse;
   width: 100%;
+  min-width: 540px;
 }
 
 .injury-adh-table th,
@@ -1006,41 +1213,8 @@
   vertical-align: bottom;
 }
 
-.injury-adh-th-item {
-  text-align: center;
-  min-width: 116px;
-}
-
 .injury-adh-th--future,
 .injury-adh-cell--future { opacity: .55; }
-.injury-adh-th-phase {
-  color: var(--color-text-tertiary);
-}
-
-.injury-adh-th-label {
-  display: block;
-  max-width: 132px;
-  white-space: normal;
-  line-height: var(--type-label-line-height);
-}
-
-.injury-adh-th-meta {
-  display: block;
-  margin-top: var(--space-xxs);
-  color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
-  font-weight: 400;
-  line-height: var(--type-caption-line-height);
-  letter-spacing: var(--type-caption-letter-spacing);
-  text-transform: none;
-  white-space: normal;
-}
-
-/* Activity columns read as "allowed training", not scored: lighter + italicised. */
-.injury-adh-th-activity {
-  color: var(--color-text-disabled);
-  font-style: italic;
-}
 
 /* Subtle divider between exercise and activity blocks. */
 .injury-adh-th-divider,
@@ -1070,7 +1244,7 @@
   padding: 1px 7px;
   background: var(--color-surface-hover);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   font-weight: 600;
 }
 
@@ -1146,24 +1320,8 @@
   outline-offset: 1px;
 }
 
-/* Weekly-progress marker inside an item column header ("Heel walks · 2/3"). */
-.injury-adh-th-progress {
-  display: inline-block;
-  font-weight: 400;
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-
 /* "Done for the week": weekly target met → the whole column mutes for the
    rest of the week. Cells stay clickable; treatment is a quiet filled state. */
-.injury-adh-th--met {
-  color: var(--color-text-disabled);
-}
-
-.injury-adh-th--met .injury-adh-th-progress {
-  color: var(--color-text-disabled);
-}
-
 .injury-adh-cell--met {
   background: var(--color-surface);
 }
@@ -1195,7 +1353,7 @@
   border-radius: var(--radius-full);
   padding: 1px 8px;
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1345,7 +1503,7 @@
   padding: 1px 7px;
   background: var(--color-surface-hover);
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   font-weight: 600;
   color: var(--color-text-secondary);
 }
@@ -1367,8 +1525,8 @@
   background: var(--color-surface-hover);
   color: var(--color-text-secondary);
   font-family: var(--font-body);
-  font-size: 11px;
-  letter-spacing: 0.24px;
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
 }
 
 .injury-log-note {

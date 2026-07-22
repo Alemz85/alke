@@ -38,23 +38,23 @@ export interface BodyPartExerciseGroup {
   blocks: ExerciseBlock[]
 }
 
-/** Group logged exercise runs under the app's major body-part categories. */
+/**
+ * Group adjacent logged exercise runs under body-part headings without ever
+ * changing their position order. A body part may therefore appear more than
+ * once when the workout alternates between regions.
+ */
 export function groupExerciseBlocksByBodyPart(
   blocks: ExerciseBlock[],
   exercisesById: Map<string, Exercise>
 ): BodyPartExerciseGroup[] {
-  const byPart = new Map<string, ExerciseBlock[]>()
+  const groups: BodyPartExerciseGroup[] = []
   for (const block of blocks) {
     const part = exercisesById.get(block.exerciseId)?.body_part ?? 'other'
-    const group = byPart.get(part)
-    if (group) group.push(block)
-    else byPart.set(part, [block])
+    const last = groups[groups.length - 1]
+    if (last?.bodyPart === part) last.blocks.push(block)
+    else groups.push({ bodyPart: part, blocks: [block] })
   }
-  const orderedParts = [...GYM_BODY_PARTS, 'other']
-  return orderedParts.flatMap((bodyPart) => {
-    const groupedBlocks = byPart.get(bodyPart)
-    return groupedBlocks ? [{ bodyPart, blocks: groupedBlocks }] : []
-  })
+  return groups
 }
 
 /** Compact working-set prescription for a collapsed exercise disclosure. */

@@ -32,20 +32,39 @@ describe('DayDetailDrawer gym log wiring (source contract)', () => {
 
   it('has the Gym view suppress the read-only copy when it injects GymWorkoutPanel', () => {
     expect(source).toContain('showGymLog = true')
-    expect(gymViewSource).toMatch(/<DayDetailDrawer[\s\S]*?showGymLog=\{false\}[\s\S]*?<GymWorkoutPanel/)
+    expect(gymViewSource).toMatch(
+      /<DayDetailDrawer[\s\S]*?showGymLog=\{false\}[\s\S]*?<GymWorkoutPanel/
+    )
   })
 
-  it('has no "Edit log" affordance — the section is read-only outside the Gym tab', () => {
-    // Strip line comments first: the code deliberately explains the omission
-    // in prose ("No 'Edit log' button here...") — this asserts there is no
-    // actual button/handler, not that the phrase never appears in a comment.
-    const codeOnly = source
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
-      .join('\n')
-    expect(codeOnly).not.toContain('Edit log')
-    expect(codeOnly).not.toContain('gym-log-edit-button')
-    expect(codeOnly).not.toContain('onEdit')
+  it('offers the universal editor from every strength workout, preserving the read-only log section', () => {
+    expect(source).toMatch(
+      /gymSessionQuery\.data\s*\? \{ kind: 'edit', session: gymSessionQuery\.data \}\s*: \{ kind: 'new-linked', workout \}/
+    )
+    expect(source).toMatch(/gymSessionQuery\.data\s*\? 'Edit log' : 'Log workout'/)
+    expect(source).toContain('onEditorTarget')
+    expect(source).toContain('<GymSessionEditorHost')
+  })
+
+  it('suppresses the universal action when the Gym view supplies its embedded editor', () => {
+    expect(source).toMatch(/\{isStrength && showGymLog && \(\s*<button/)
+  })
+
+  it('suspends its Escape listener while the nested editor is active', () => {
+    expect(source).toContain('if (editorTarget) return')
+    expect(source).toContain('[onClose, editorTarget]')
+  })
+
+  it('makes the underlying drawer inert and hidden while the editor owns the active modal surface', () => {
+    expect(source).toContain('inert={editorTarget ? true : undefined}')
+    expect(source).toContain('aria-hidden={editorTarget ? true : undefined}')
+  })
+
+  it('captures and restores the nested editor trigger focus', () => {
+    expect(source).toContain('editorTriggerRef.current = document.activeElement as HTMLElement')
+    expect(source).toContain('editorTriggerRef.current?.focus()')
+    expect(source).toContain('onEditorTarget={openEditor}')
+    expect(source).toContain('onClose={closeEditor}')
   })
 
   it('shows a not-logged empty state instead of silently omitting the section', () => {
@@ -53,9 +72,7 @@ describe('DayDetailDrawer gym log wiring (source contract)', () => {
   })
 
   it('shows a loading state while the gym session lookup is in flight', () => {
-    const gymLogSectionMatch = source.match(
-      /function GymLogSection\(([\s\S]*?)\n\}\n/
-    )
+    const gymLogSectionMatch = source.match(/function GymLogSection\(([\s\S]*?)\n\}\n/)
     expect(gymLogSectionMatch).not.toBeNull()
     const [, body] = gymLogSectionMatch as RegExpMatchArray
     expect(body).toContain('isLoading')
@@ -67,5 +84,10 @@ describe('DayDetailDrawer gym log wiring (source contract)', () => {
     expect(source).toContain('groupExerciseBlocksByBodyPart')
     expect(source).toContain('sessionBodyParts')
     expect(source).toContain('formatExerciseSetSummary')
+  })
+
+  it('keeps repeated body-part runs and disclosure ids distinct in logged order', () => {
+    expect(source).toContain('exerciseGroups.map((group, groupIndex) =>')
+    expect(source).toContain('`${groupIndex}-${group.bodyPart}-${block.exerciseId}-${blockIndex}`')
   })
 })

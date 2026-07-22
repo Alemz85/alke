@@ -370,6 +370,7 @@ export interface GymSet {
   weight_kg: number | null // null = bodyweight
   rpe: number | null
   is_warmup: boolean
+  is_eccentric: boolean
   note: string | null
 }
 
@@ -403,6 +404,7 @@ export interface NewGymSet {
   weight_kg: number | null
   rpe?: number | null
   is_warmup?: boolean
+  is_eccentric?: boolean
   note?: string | null
 }
 

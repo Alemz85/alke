@@ -32,7 +32,8 @@ function set(partial: Partial<GymSet> & { exercise_id: string; position: number 
     rpe: null,
     is_warmup: false,
     note: null,
-    ...partial
+    ...partial,
+    is_eccentric: partial.is_eccentric ?? false
   }
 }
 
@@ -162,7 +163,7 @@ describe('formatExerciseSetSummary', () => {
 })
 
 describe('groupExerciseBlocksByBodyPart', () => {
-  it('groups exercise blocks in the app body-part order', () => {
+  it('keeps exact logged exercise order while grouping only contiguous body-part runs', () => {
     const blocks = groupSetsIntoBlocks([
       set({ exercise_id: 'curl', position: 0, reps: 10 }),
       set({ exercise_id: 'bench', position: 1, reps: 8 }),
@@ -178,8 +179,31 @@ describe('groupExerciseBlocksByBodyPart', () => {
 
     const groups = groupExerciseBlocksByBodyPart(blocks, exercises)
 
-    expect(groups.map((group) => group.bodyPart)).toEqual(['chest', 'back', 'arms'])
-    expect(groups[2].blocks.map((block) => block.exerciseId)).toEqual(['curl', 'triceps'])
+    expect(groups.map((group) => group.bodyPart)).toEqual(['arms', 'chest', 'back', 'arms'])
+    expect(groups.flatMap((group) => group.blocks.map((block) => block.exerciseId))).toEqual([
+      'curl',
+      'bench',
+      'row',
+      'triceps'
+    ])
+  })
+
+  it('keeps adjacent exercises from one body part under one heading', () => {
+    const blocks = groupSetsIntoBlocks([
+      set({ exercise_id: 'curl', position: 0 }),
+      set({ exercise_id: 'triceps', position: 1 }),
+      set({ exercise_id: 'bench', position: 2 })
+    ])
+    const exercises = new Map([
+      ['curl', exercise({ id: 'curl', body_part: 'arms' })],
+      ['triceps', exercise({ id: 'triceps', body_part: 'arms' })],
+      ['bench', exercise({ id: 'bench', body_part: 'chest' })]
+    ])
+
+    expect(groupExerciseBlocksByBodyPart(blocks, exercises)).toMatchObject([
+      { bodyPart: 'arms', blocks: [{ exerciseId: 'curl' }, { exerciseId: 'triceps' }] },
+      { bodyPart: 'chest', blocks: [{ exerciseId: 'bench' }] }
+    ])
   })
 
   it('puts exercises without body-part metadata in Other', () => {
