@@ -1,6 +1,9 @@
 """Pure unit tests for metrics/geo.py — no DB, no network beyond
 reverse_geocoder's own bundled offline dataset."""
 
+import sys
+from types import SimpleNamespace
+
 from metrics.geo import downsample_route, haversine_m, reverse_geocode
 
 
@@ -70,6 +73,33 @@ def test_downsample_route_preserves_a_sharp_turn():
 
 def test_reverse_geocode_empty_input():
     assert reverse_geocode([]) == []
+
+
+def test_reverse_geocode_closes_bundled_dataset_before_query(monkeypatch, tmp_path):
+    dataset = tmp_path / "rg.csv"
+    dataset.write_text("lat,lon,name,admin1,admin2,cc\n", encoding="utf-8")
+
+    class FakeGeocoder:
+        def __init__(self, *, mode, verbose, stream):
+            assert mode == 2
+            assert verbose is False
+            assert not stream.closed
+            self.stream = stream
+
+        def query(self, coords):
+            assert self.stream.closed
+            return [{"name": "Tokyo", "admin1": "", "cc": "JP"} for _ in coords]
+
+    fake_module = SimpleNamespace(
+        __file__=str(tmp_path / "__init__.py"),
+        RG_FILE=dataset.name,
+        RGeocoder=FakeGeocoder,
+    )
+    monkeypatch.setitem(sys.modules, "reverse_geocoder", fake_module)
+
+    assert reverse_geocode([(35.6762, 139.6503)]) == [
+        {"city": "Tokyo", "admin": None, "country": "Japan"}
+    ]
 
 
 def test_reverse_geocode_japan():

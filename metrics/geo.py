@@ -9,6 +9,7 @@ downsample_route) can import this module without pulling in DB plumbing.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 # ISO-3166-1 alpha2 -> human-readable name. A broad common set; unknown codes
 # fall back to the raw code rather than raising.
@@ -232,15 +233,17 @@ def downsample_route(points: list, cap: int = 300) -> list[dict]:
 def reverse_geocode(coords: list[tuple[float, float]]) -> list[dict]:
     """Offline reverse-geocode a batch of (lat, lon) coordinates to
     `{city, admin, country}` dicts (country is a human-readable name, not a
-    code). Calls reverse_geocoder.search() ONCE for the whole batch — it
-    forks/prints on first import, so per-point calls would be wasteful and
-    noisy. Empty input returns []."""
+    code). Builds reverse_geocoder's singleton from an explicitly managed
+    stream, then queries the whole batch once. Empty input returns []."""
     if not coords:
         return []
 
     import reverse_geocoder as rg
 
-    results = rg.search(list(coords))
+    dataset = Path(rg.__file__).resolve().with_name(rg.RG_FILE)
+    with dataset.open("r", encoding="utf-8", newline="") as stream:
+        geocoder = rg.RGeocoder(mode=2, verbose=False, stream=stream)
+    results = geocoder.query(list(coords))
     return [
         {
             "city": r.get("name") or None,
