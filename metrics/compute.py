@@ -397,6 +397,9 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
             "atl": [row["atl"] for row in daily_rows],
             "trimp_total": [row["trimp_total"] for row in daily_rows],
             "steps": [(dm_by_date.get(day) or {}).get("steps") for day in index],
+            "flights": [
+                (dm_by_date.get(day) or {}).get("flights_climbed") for day in index
+            ],
         },
         index=pd.DatetimeIndex([pd.Timestamp(day) for day in index]),
     ).apply(pd.to_numeric, errors="coerce")
@@ -405,6 +408,7 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
     # exposure/outcome; same-day ATL/CTL includes a later workout and leaks.
     frame["trimp_prior"] = frame["trimp_total"].shift(1)
     frame["steps_prior"] = frame["steps"].shift(1)
+    frame["flights_prior"] = frame["flights"].shift(1)
     frame["ctl_prior"] = frame["ctl"].shift(1)
     frame["atl_prior"] = frame["atl"].shift(1)
     frame["ctl_pre_exposure"] = frame["ctl"].shift(2)
@@ -618,7 +622,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=3)
+    prior_state = insight_prior_state(prior, expected_version=4)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]

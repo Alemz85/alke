@@ -63,15 +63,21 @@ Current sleep is not allowed to pull its own baseline toward itself.
 
 ### Prior-day behavior to next sleep/recovery
 
-Exposures are prior-day TRIMP and prior-day steps. Outcomes are sleep
-shortfall relative to the prior 28-day median, sleep awake fraction, and
-respiratory-rate deviation relative to its prior 28-day median. Finalized
-same-day RHR/HRV aggregates are excluded from this directed family because a
-workout later on the outcome date can contribute to their final value.
+Exposures are prior-day TRIMP, prior-day steps, and prior-day flights climbed.
+Flights add vertical activity that steps do not fully encode: in the current
+data their correlation is 0.66, while walking/running distance is effectively a
+duplicate of steps at 0.99. Outcomes are sleep shortfall relative to the prior
+28-day median, sleep awake fraction, and respiratory-rate deviation relative to
+its prior 28-day median. Finalized same-day RHR/HRV aggregates are excluded from
+this directed family because a workout later on the outcome date can contribute
+to their final value.
 
 Each outcome controls its previous value and the pre-exposure chronic load.
-The TRIMP and step exposures control one another so a long active workout does
-not masquerade as two independent effects.
+TRIMP and steps control one another. The flights candidate controls both, so a
+long active workout or high-step day cannot masquerade as an independent
+stair-climbing effect. Flights is not forced into the established TRIMP and
+steps candidates: it starts later, and complete-case deletion would silently
+redefine those analyses around the newer sensor era.
 
 ### Co-measured sleep and recovery
 
@@ -202,17 +208,21 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 3 and workout model version 5 enforce the
+workout. Daily model version 4 and workout model version 5 enforce the
 prior-day rule above.
 
 ## Current data implications (audit 2026-08-02)
 
-- 577 daily rows are present; steps and walking distance are complete.
+- 577 daily rows are present; steps and walking distance are complete, while
+  flights climbed has 442 days.
 - Sleep has 281 days, RHR 259, HRV 311, and respiratory rate 286. RHR/HRV are
   eligible as co-measured daily aggregates and prior-day predictors, not as
   same-day readiness measurements.
 - Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
   detailed gym sessions 5: these remain dormant.
+- Prior-day flights candidates have 149–173 complete cases after outcome and
+  control availability. None currently clears the multiplicity and stability
+  gates; adding the variable did not manufacture a result.
 - Workout temperature and humidity exist on 101 sessions across 70 dates, but
   most are indoor strength, rowing, cycling, or pool sessions and the historic
   running block lacks them. They are not treated as physiological ambient

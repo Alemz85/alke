@@ -24,6 +24,7 @@ MIN_ADJUSTED_N = 60
 DRIVERS = [
     "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
     "rhr_dev", "hrv_dev", "respiratory_rate_dev", "trimp_prior", "steps_prior",
+    "flights_prior",
 ]
 PERFS = ["decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 
@@ -77,6 +78,19 @@ DEFAULT_ADJUSTED_SPECS = [
             "label": f"Prior-day steps → {label}",
             "driver": "steps_prior", "outcome": outcome,
             "controls": [f"lag:{outcome}", "trimp_prior", "ctl_pre_exposure"],
+            "direction": "lagged",
+        }
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
+    ],
+    *[
+        {
+            "name": f"flights_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev').removesuffix('_shortfall')}",
+            "label": f"Prior-day flights climbed → {label}",
+            "driver": "flights_prior",
+            "outcome": outcome,
+            "controls": [
+                f"lag:{outcome}", "trimp_prior", "steps_prior", "ctl_pre_exposure",
+            ],
             "direction": "lagged",
         }
         for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
@@ -1008,7 +1022,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 3,
+            "model_version": 4,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),

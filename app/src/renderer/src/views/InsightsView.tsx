@@ -41,7 +41,8 @@ const DRIVERS = [
   { key: 'hrv_dev', label: 'HRV deviation' },
   { key: 'respiratory_rate_dev', label: 'Breathing-rate deviation' },
   { key: 'trimp_prior', label: 'Prior-day load' },
-  { key: 'steps_prior', label: 'Prior-day steps' }
+  { key: 'steps_prior', label: 'Prior-day steps' },
+  { key: 'flights_prior', label: 'Prior-day flights' }
 ]
 const PERFS = [
   { key: 'decoupling', label: 'Decoupling' },
@@ -193,6 +194,7 @@ function useAnalysisSeries(): {
       put('sleep_awake_fraction', m.date, sleepAwakeFraction(m.sleep_stages))
       put('respiratory_rate', m.date, m.respiratory_rate)
       put('steps', m.date, m.steps)
+      put('flights', m.date, m.flights_climbed)
       if (m.sleep_start && m.sleep_end) {
         put('sleep_midpoint', m.date, sleepMidpointHours(m.sleep_start, m.sleep_end, tz))
       }
@@ -207,6 +209,7 @@ function useAnalysisSeries(): {
       const prior = new Date(`${r.date}T00:00:00Z`)
       prior.setUTCDate(prior.getUTCDate() - 1)
       put('steps_prior', r.date, series.steps?.get(prior.toISOString().slice(0, 10)))
+      put('flights_prior', r.date, series.flights?.get(prior.toISOString().slice(0, 10)))
     })
     // Personal baselines use the prior 28 calendar days; current values cannot
     // pull their own baseline toward themselves.
@@ -296,7 +299,7 @@ export function InsightsView(): ReactElement {
       )
   )
   const correlationSchemaCurrent = storedCorrelations.some(
-    (correlation) => correlation.var_x === 'sleep_shortfall'
+    (correlation) => correlation.var_x === 'flights_prior'
   )
   const correlations = (correlationSchemaCurrent ? storedCorrelations : []).filter((correlation) => {
     if (correlation.var_y !== 'trimp_total') return true
@@ -343,7 +346,7 @@ export function InsightsView(): ReactElement {
       key: 'daily',
       title: 'Daily physiology',
       detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
-      expectedVersion: 3,
+      expectedVersion: 4,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {

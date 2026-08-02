@@ -164,7 +164,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 3
+    assert model["diagnostics"]["model_version"] == 4
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -885,6 +885,30 @@ def test_default_specs_include_steps_candidates():
     assert "steps_to_rhr" not in steps_specs
     assert "steps_to_hrv" not in steps_specs
     assert all("trimp_prior" in s["controls"] for s in steps_specs.values())
+    # Flights starts later than steps. It gets its own mutually-adjusted
+    # candidates, but must not redefine the established step population via
+    # complete-case deletion.
+    assert all("flights_prior" not in s["controls"] for s in steps_specs.values())
+
+
+def test_default_specs_include_independent_stair_activity_candidates():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, DRIVERS
+
+    flights_specs = {
+        spec["name"]: spec
+        for spec in DEFAULT_ADJUSTED_SPECS
+        if spec["driver"] == "flights_prior"
+    }
+    assert "flights_prior" in DRIVERS
+    assert set(flights_specs) == {
+        "flights_to_sleep",
+        "flights_to_sleep_continuity",
+        "flights_to_respiration",
+    }
+    assert all(
+        {"trimp_prior", "steps_prior", "ctl_pre_exposure"} <= set(spec["controls"])
+        for spec in flights_specs.values()
+    )
 
 
 def test_adjusted_specs_never_control_same_day_load_state():
@@ -1087,6 +1111,7 @@ def test_daily_insight_frame_uses_only_pre_outcome_load_controls():
             "sleep_stages": {"awake": 0.5, "core": 4.5, "deep": 1.0, "rem": 2.0},
             "respiratory_rate": 15.0 + i / 10,
             "steps": 5_000 + i,
+            "flights_climbed": 3 + i,
         }
         for i, d in enumerate(dates)
     ]
@@ -1098,6 +1123,7 @@ def test_daily_insight_frame_uses_only_pre_outcome_load_controls():
     assert row["atl_prior"] == pytest.approx(218.0)
     assert row["ctl_pre_exposure"] == pytest.approx(117.0)
     assert row["trimp_prior"] == pytest.approx(18.0)
+    assert row["flights_prior"] == pytest.approx(21.0)
     assert row["sleep_shortfall"] == pytest.approx(60.0)
     assert row["sleep_shortfall_3d"] == pytest.approx(20.0)
     assert row["sleep_awake_fraction"] == pytest.approx(0.5 / 8.0)
@@ -1390,7 +1416,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [3, 5]
+    assert expected_versions == [4, 5]
 
 
 def test_persistence_state_never_crosses_model_versions():
