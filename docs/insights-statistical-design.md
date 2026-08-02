@@ -77,7 +77,10 @@ previous outcome are controls.
 
 Workout analyses use one row per workout with positive HR-derived TRIMP and
 positive duration. Rest days and workouts without usable HR data are not
-members of this population.
+members of this population. Multiple sessions on one local date remain
+separate workout observations, but they share the same morning recovery
+exposure and parts of the same daily environment. They therefore count as one
+date for minimum-information gates and as one cluster for uncertainty.
 
 The outcomes deliberately separate different questions:
 
@@ -121,21 +124,29 @@ schedule such as “rowing happens in the evening, walking happens in the
 morning.” A result remains an association with recorded training behavior, not
 proof of a circadian mechanism or a recommendation to move every session.
 
+The secular trend is elapsed calendar time, not workout row number. Two
+sessions on one date receive the same trend value, and a week without training
+still advances the trend by seven days.
+
 ## Inference gates
 
 Daily and workout candidates are separate predeclared multiple-testing
 families. Every candidate passes the same policy:
 
-- at least 60 usable observations and at least 30 effective observations;
-- for cosinor fits, at least 10 complete workouts in each of morning,
-  afternoon, and evening/night so a peak is not extrapolated from one narrow
-  schedule window;
+- at least 60 usable observations and at least 30 effective observations; a
+  workout candidate additionally needs at least 60 distinct workout dates;
+- for cosinor fits, at least 10 distinct workout dates represented in each of
+  morning, afternoon, and evening/night so repeated sessions on a few dates
+  cannot create apparent clock-time coverage;
 - weekday, annual sine/cosine, and secular-trend adjustment;
 - deterministic collapse of highly collinear controls;
-- HAC/Newey-West uncertainty for ordered observations;
+- HAC/Newey-West uncertainty for ordered observations; workout fits also use
+  date-clustered uncertainty and take the less favorable p-value and the
+  confidence-interval envelope across the two estimators;
 - Benjamini-Hochberg false-discovery control within the declared family;
 - moving-block bootstrap stability (sign stability for scalar effects,
-  circular phase stability for timing effects);
+  circular phase stability for timing effects); workout blocks sample calendar
+  days and retain every session from a sampled date together;
 - Pearson/partial-Spearman agreement for scalar effects so one extreme day
   cannot promote an otherwise absent relationship;
 - circular-shift placebo calibration;
@@ -157,10 +168,12 @@ at every lag.
 - Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
   detailed gym sessions 5: these remain dormant.
 - 108 workouts in the daily-data era have positive HR-derived load and at
-  least five minutes of classified HR, with
-  morning, afternoon, and evening observations. This supports a pooled
-  modality-adjusted timing screen, but not reliable modality-specific timing
-  curves yet.
+  least five minutes of classified HR, but they come from 77 dates; 55 sessions
+  lie on one of 24 multi-workout dates. The common complete-case timing frame
+  currently has 82 sessions on 56 dates, so it remains dormant under the
+  60-date rule. HRV-context candidates have 100 sessions on 71 dates and can be
+  evaluated, while reliable modality-specific timing curves remain out of
+  reach.
 - Decoupling exists for only 14 recent workouts and HRR60 for none, so neither
   is a promotable workout-context outcome yet.
 

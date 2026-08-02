@@ -271,10 +271,11 @@ def _nw_maxlags(n: int) -> int:
 def _calendar_covariates(index: pd.Index) -> pd.DataFrame:
     """Secular trend, annual harmonic, and weekday controls for an index."""
     dates = pd.DatetimeIndex(index)
+    elapsed_days = (dates.normalize() - dates.normalize().min()) / pd.Timedelta(days=1)
     annual_angle = 2.0 * math.pi * dates.dayofyear.to_numpy(dtype=float) / 365.2425
     calendar = pd.DataFrame(
         {
-            "time_trend": np.arange(len(dates), dtype=float),
+            "time_trend": elapsed_days.to_numpy(dtype=float),
             "annual_sin": np.sin(annual_angle),
             "annual_cos": np.cos(annual_angle),
         },
@@ -287,6 +288,38 @@ def _calendar_covariates(index: pd.Index) -> pd.DataFrame:
     return pd.concat([calendar, weekdays], axis=1)
 
 
+def _calendar_block_bootstrap_sample(
+    data: pd.DataFrame,
+    rng: np.random.Generator,
+    block_len: int = BOOT_BLOCK_LEN,
+) -> pd.DataFrame:
+    """Sample contiguous calendar-day blocks while keeping date clusters whole."""
+    if data.empty:
+        return data.copy()
+    normalized = pd.DatetimeIndex(data.index).normalize()
+    calendar = pd.date_range(normalized.min(), normalized.max(), freq="D")
+    actual_block_len = min(block_len, len(calendar))
+    n_blocks = int(math.ceil(len(calendar) / actual_block_len))
+    starts = rng.integers(
+        0,
+        len(calendar) - actual_block_len + 1,
+        size=n_blocks,
+    )
+    sampled_days = np.concatenate(
+        [calendar[start : start + actual_block_len].to_numpy() for start in starts]
+    )[: len(calendar)]
+    positions_by_day = {
+        day: np.flatnonzero(normalized == day)
+        for day in pd.DatetimeIndex(normalized.unique())
+    }
+    pieces = [
+        data.iloc[positions_by_day[pd.Timestamp(day)]]
+        for day in sampled_days
+        if pd.Timestamp(day) in positions_by_day
+    ]
+    return pd.concat(pieces) if pieces else data.iloc[0:0].copy()
+
+
 def _block_bootstrap_stability(
     data: pd.DataFrame,
     controls: list[str],
@@ -295,6 +328,7 @@ def _block_bootstrap_stability(
     reps: int = BOOT_REPS,
     block_len: int = BOOT_BLOCK_LEN,
     agree_min: float = BOOT_SIGN_AGREE,
+    cluster_dates: bool = False,
 ) -> dict:
     """Sign-stability of a partial correlation under a MOVING-BLOCK bootstrap.
 
@@ -308,15 +342,24 @@ def _block_bootstrap_stability(
     is seeded from the candidate name (crc32), so nightly reruns on the same
     data reproduce identical verdicts."""
     n = len(data)
-    if n < 2 * block_len or point == 0 or not np.isfinite(point):
+    normalized = pd.DatetimeIndex(data.index).normalize()
+    span_days = (
+        int((normalized.max() - normalized.min()).days) + 1
+        if cluster_dates and n else n
+    )
+    if span_days < 2 * block_len or point == 0 or not np.isfinite(point):
         return {"stable": False, "agree": 0.0, "n_valid": 0}
     rng = np.random.default_rng(zlib.crc32(seed_name.encode("utf-8")))
-    n_blocks = int(math.ceil(n / block_len))
     values: list[float] = []
     for _ in range(reps):
-        starts = rng.integers(0, n - block_len + 1, size=n_blocks)
-        idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
-        sample = data.iloc[idx].reset_index(drop=True)
+        if cluster_dates:
+            sample = _calendar_block_bootstrap_sample(data, rng, block_len)
+        else:
+            n_blocks = int(math.ceil(n / block_len))
+            starts = rng.integers(0, n - block_len + 1, size=n_blocks)
+            idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
+            sample = data.iloc[idx]
+        sample = sample.reset_index(drop=True)
         if sample["x"].std(ddof=0) == 0 or sample["y"].std(ddof=0) == 0:
             continue
         try:
@@ -354,6 +397,7 @@ def _cyclic_bootstrap_stability(
     seed_name: str,
     reps: int = BOOT_REPS,
     block_len: int = BOOT_BLOCK_LEN,
+    cluster_dates: bool = False,
 ) -> dict:
     """Moving-block stability for a cosinor phase.
 
@@ -363,15 +407,24 @@ def _cyclic_bootstrap_stability(
     diagnostic of phase concentration.
     """
     n = len(data)
-    if n < 2 * block_len:
+    normalized = pd.DatetimeIndex(data.index).normalize()
+    span_days = (
+        int((normalized.max() - normalized.min()).days) + 1
+        if cluster_dates and n else n
+    )
+    if span_days < 2 * block_len:
         return {"stable": False, "within_6h": 0.0, "resultant": 0.0, "n_valid": 0}
     rng = np.random.default_rng(zlib.crc32(seed_name.encode("utf-8")))
-    n_blocks = int(math.ceil(n / block_len))
     peaks: list[float] = []
     for _ in range(reps):
-        starts = rng.integers(0, n - block_len + 1, size=n_blocks)
-        idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
-        sample = data.iloc[idx].reset_index(drop=True)
+        if cluster_dates:
+            sample = _calendar_block_bootstrap_sample(data, rng, block_len)
+        else:
+            n_blocks = int(math.ceil(n / block_len))
+            starts = rng.integers(0, n - block_len + 1, size=n_blocks)
+            idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
+            sample = data.iloc[idx]
+        sample = sample.reset_index(drop=True)
         if sample["y"].std(ddof=0) == 0:
             continue
         try:
@@ -401,6 +454,7 @@ def _evaluate_cyclic_spec(
     min_n: int,
     boot_reps: int = BOOT_REPS,
     name: str | None = None,
+    cluster_dates: bool = False,
 ) -> dict | None:
     """Joint 24-hour sine/cosine test for a workout-time candidate."""
     outcome = spec["outcome"]
@@ -422,6 +476,7 @@ def _evaluate_cyclic_spec(
             raw_controls.append(control)
     calendar = _calendar_covariates(data.index)
     data = pd.concat([data, calendar], axis=1).dropna()
+    n_days = int(pd.DatetimeIndex(data.index).normalize().nunique())
     base = {
         "name": name,
         "label": spec["label"],
@@ -431,14 +486,24 @@ def _evaluate_cyclic_spec(
         "kind": "cyclic",
         "n": int(len(data)),
     }
+    if cluster_dates:
+        base["n_days"] = n_days
     clock_hours = (
         np.arctan2(data["start_sin"].to_numpy(), data["start_cos"].to_numpy())
         % (2.0 * math.pi)
     ) * 24.0 / (2.0 * math.pi)
+    normalized_dates = pd.DatetimeIndex(data.index).normalize()
+    time_masks = {
+        "morning": (clock_hours >= 5) & (clock_hours < 12),
+        "afternoon": (clock_hours >= 12) & (clock_hours < 18),
+        "evening_night": (clock_hours >= 18) | (clock_hours < 5),
+    }
     time_bin_counts = {
-        "morning": int(np.sum((clock_hours >= 5) & (clock_hours < 12))),
-        "afternoon": int(np.sum((clock_hours >= 12) & (clock_hours < 18))),
-        "evening_night": int(np.sum((clock_hours >= 18) | (clock_hours < 5))),
+        label: int(np.sum(mask)) for label, mask in time_masks.items()
+    }
+    time_bin_date_counts = {
+        label: int(normalized_dates[mask].nunique())
+        for label, mask in time_masks.items()
     }
     if (
         len(data) < min_n
@@ -447,12 +512,21 @@ def _evaluate_cyclic_spec(
         or data["start_cos"].std(ddof=0) == 0
     ):
         return {**base, "raw_status": "insufficient", "reason": "raw_n", "required_n": min_n}
-    if min(time_bin_counts.values()) < MIN_CYCLIC_BIN_N:
+    if cluster_dates and n_days < min_n:
+        return {
+            **base,
+            "raw_status": "insufficient",
+            "reason": "independent_dates",
+            "required_n_days": min_n,
+        }
+    coverage_counts = time_bin_date_counts if cluster_dates else time_bin_counts
+    if min(coverage_counts.values()) < MIN_CYCLIC_BIN_N:
         return {
             **base,
             "raw_status": "insufficient",
             "reason": "time_coverage",
             "time_bin_counts": time_bin_counts,
+            "time_bin_date_counts": time_bin_date_counts,
             "required_per_time_bin": MIN_CYCLIC_BIN_N,
         }
 
@@ -466,6 +540,8 @@ def _evaluate_cyclic_spec(
         _effective_n(len(data), _lag1_autocorr(sin_resid), _lag1_autocorr(y_resid)),
         _effective_n(len(data), _lag1_autocorr(cos_resid), _lag1_autocorr(y_resid)),
     )
+    if cluster_dates:
+        n_eff = min(n_eff, float(n_days))
     if n_eff < MIN_ADJUSTED_N_EFF:
         return {
             **base,
@@ -492,8 +568,58 @@ def _evaluate_cyclic_spec(
     reduced = sm.OLS(_zscore(data["y"]), control_matrix).fit()
     partial_r2 = max(0.0, min(1.0, (reduced.ssr - ordinary.ssr) / reduced.ssr)) if reduced.ssr > 0 else 0.0
     effect_size = math.sqrt(partial_r2)
-    boot = _cyclic_bootstrap_stability(data, controls, peak_hour, name, reps=boot_reps)
+    boot = _cyclic_bootstrap_stability(
+        data,
+        controls,
+        peak_hour,
+        name,
+        reps=boot_reps,
+        cluster_dates=cluster_dates,
+    )
     robust_ci = dict(zip(names, robust.conf_int()))
+    uncertainty = {
+        "sin_ci_low": float(robust_ci["start_sin"][0]),
+        "sin_ci_high": float(robust_ci["start_sin"][1]),
+        "cos_ci_low": float(robust_ci["start_cos"][0]),
+        "cos_ci_high": float(robust_ci["start_cos"][1]),
+        "p_value": float(joint.pvalue),
+    }
+    if cluster_dates:
+        date_groups = pd.factorize(pd.DatetimeIndex(data.index).normalize())[0]
+        clustered = ordinary.get_robustcov_results(
+            cov_type="cluster", groups=date_groups, use_correction=True
+        )
+        clustered_joint = clustered.wald_test(restriction, scalar=True)
+        clustered_ci = dict(zip(names, clustered.conf_int()))
+        uncertainty = {
+            "sin_ci_low": min(
+                float(robust_ci["start_sin"][0]),
+                float(clustered_ci["start_sin"][0]),
+            ),
+            "sin_ci_high": max(
+                float(robust_ci["start_sin"][1]),
+                float(clustered_ci["start_sin"][1]),
+            ),
+            "cos_ci_low": min(
+                float(robust_ci["start_cos"][0]),
+                float(clustered_ci["start_cos"][0]),
+            ),
+            "cos_ci_high": max(
+                float(robust_ci["start_cos"][1]),
+                float(clustered_ci["start_cos"][1]),
+            ),
+            "p_value": max(float(joint.pvalue), float(clustered_joint.pvalue)),
+            "sin_ci_low_hac": float(robust_ci["start_sin"][0]),
+            "sin_ci_high_hac": float(robust_ci["start_sin"][1]),
+            "cos_ci_low_hac": float(robust_ci["start_cos"][0]),
+            "cos_ci_high_hac": float(robust_ci["start_cos"][1]),
+            "p_value_hac": float(joint.pvalue),
+            "sin_ci_low_date_cluster": float(clustered_ci["start_sin"][0]),
+            "sin_ci_high_date_cluster": float(clustered_ci["start_sin"][1]),
+            "cos_ci_low_date_cluster": float(clustered_ci["start_cos"][0]),
+            "cos_ci_high_date_cluster": float(clustered_ci["start_cos"][1]),
+            "p_value_date_cluster": float(clustered_joint.pvalue),
+        }
     return {
         **base,
         "n_eff": round(float(n_eff), 1),
@@ -503,16 +629,14 @@ def _evaluate_cyclic_spec(
         "peak_hour": peak_hour,
         "beta_sin": beta_sin,
         "beta_cos": beta_cos,
-        "sin_ci_low": float(robust_ci["start_sin"][0]),
-        "sin_ci_high": float(robust_ci["start_sin"][1]),
-        "cos_ci_low": float(robust_ci["start_cos"][0]),
-        "cos_ci_high": float(robust_ci["start_cos"][1]),
-        "p_value": float(joint.pvalue),
+        **uncertainty,
+        "bootstrap_unit": "calendar_date" if cluster_dates else "row",
         "stable": boot["stable"],
         "phase_within_6h": round(boot["within_6h"], 3),
         "phase_resultant": round(boot["resultant"], 3),
         "boot_n_valid": boot["n_valid"],
         "time_bin_counts": time_bin_counts,
+        "time_bin_date_counts": time_bin_date_counts,
         "dropped_controls": dropped,
     }
 
@@ -523,6 +647,7 @@ def _evaluate_spec(
     min_n: int,
     boot_reps: int = BOOT_REPS,
     name: str | None = None,
+    cluster_dates: bool = False,
 ) -> dict | None:
     """Run one predeclared candidate through the full gate chain and return its
     result row (without q-value/status, which need the whole pool). Returns None
@@ -550,12 +675,22 @@ def _evaluate_spec(
     if spec.get("outcome_positive_only"):
         data = data.loc[data["y"] > 0]
     data = data.dropna()
+    n_days = int(pd.DatetimeIndex(data.index).normalize().nunique())
     base = {
         "name": name, "label": spec["label"], "driver": driver, "outcome": outcome,
         "direction": spec.get("direction", "co-measured"), "n": int(len(data)),
     }
+    if cluster_dates:
+        base["n_days"] = n_days
     if len(data) < min_n or data["x"].std() == 0 or data["y"].std() == 0:
         return {**base, "raw_status": "insufficient", "reason": "raw_n", "required_n": min_n}
+    if cluster_dates and n_days < min_n:
+        return {
+            **base,
+            "raw_status": "insufficient",
+            "reason": "independent_dates",
+            "required_n_days": min_n,
+        }
 
     kept, dropped = _drop_collinear_controls(data, raw_controls)
     controls = kept + calendar.columns.tolist()
@@ -564,6 +699,8 @@ def _evaluate_spec(
     # residuals are near-iid and n_eff ≈ n; without one, smooth series can carry
     # far fewer independent days than rows, and the candidate must wait for data.
     n_eff = _effective_n(len(data), _lag1_autocorr(x_resid), _lag1_autocorr(y_resid))
+    if cluster_dates:
+        n_eff = min(n_eff, float(n_days))
     if n_eff < MIN_ADJUSTED_N_EFF:
         return {
             **base, "raw_status": "insufficient", "reason": "effective_n",
@@ -581,15 +718,46 @@ def _evaluate_spec(
         or (partial * partial_spearman < 0 and abs(partial) >= 0.1)
     )
     X = sm.add_constant(pd.concat([_zscore(data["x"]).rename("x"), data[controls]], axis=1), has_constant="add")
-    fit = sm.OLS(_zscore(data["y"]), X).fit(cov_type="HAC", cov_kwds={"maxlags": _nw_maxlags(len(data))})
+    model = sm.OLS(_zscore(data["y"]), X)
+    fit = model.fit(cov_type="HAC", cov_kwds={"maxlags": _nw_maxlags(len(data))})
     ci = fit.conf_int().loc["x"]
-    boot = _block_bootstrap_stability(data, controls, partial, name, reps=boot_reps)
+    uncertainty = {
+        "ci_low": float(ci.iloc[0]),
+        "ci_high": float(ci.iloc[1]),
+        "p_value": float(fit.pvalues["x"]),
+    }
+    if cluster_dates:
+        date_groups = pd.factorize(pd.DatetimeIndex(data.index).normalize())[0]
+        clustered = model.fit(
+            cov_type="cluster",
+            cov_kwds={"groups": date_groups, "use_correction": True},
+        )
+        clustered_ci = clustered.conf_int().loc["x"]
+        uncertainty = {
+            "ci_low": min(float(ci.iloc[0]), float(clustered_ci.iloc[0])),
+            "ci_high": max(float(ci.iloc[1]), float(clustered_ci.iloc[1])),
+            "p_value": max(float(fit.pvalues["x"]), float(clustered.pvalues["x"])),
+            "ci_low_hac": float(ci.iloc[0]),
+            "ci_high_hac": float(ci.iloc[1]),
+            "p_value_hac": float(fit.pvalues["x"]),
+            "ci_low_date_cluster": float(clustered_ci.iloc[0]),
+            "ci_high_date_cluster": float(clustered_ci.iloc[1]),
+            "p_value_date_cluster": float(clustered.pvalues["x"]),
+        }
+    boot = _block_bootstrap_stability(
+        data,
+        controls,
+        partial,
+        name,
+        reps=boot_reps,
+        cluster_dates=cluster_dates,
+    )
     return {
         **base, "n_eff": round(float(n_eff), 1),
         "partial_r": partial, "partial_spearman": partial_spearman,
         "rank_disagree": rank_disagree, "beta": float(fit.params["x"]),
-        "ci_low": float(ci.iloc[0]), "ci_high": float(ci.iloc[1]),
-        "p_value": float(fit.pvalues["x"]), "stable": boot["stable"],
+        **uncertainty, "stable": boot["stable"],
+        "bootstrap_unit": "calendar_date" if cluster_dates else "row",
         "boot_sign_agree": round(boot["agree"], 3), "boot_n_valid": boot["n_valid"],
         "dropped_controls": dropped,
     }
@@ -840,7 +1008,12 @@ def _run_workout_placebo_suite(
                 placebo["start_sin"] = np.roll(frame["start_sin"].to_numpy(), shift)
                 placebo["start_cos"] = np.roll(frame["start_cos"].to_numpy(), shift)
                 result = _evaluate_cyclic_spec(
-                    placebo, spec, min_n, boot_reps, name=f"{spec['name']}__placebo{shift}"
+                    placebo,
+                    spec,
+                    min_n,
+                    boot_reps,
+                    name=f"{spec['name']}__placebo{shift}",
+                    cluster_dates=True,
                 )
             else:
                 driver = spec["driver"]
@@ -848,7 +1021,12 @@ def _run_workout_placebo_suite(
                     continue
                 placebo[driver] = np.roll(frame[driver].to_numpy(), shift)
                 result = _evaluate_spec(
-                    placebo, spec, min_n, boot_reps, name=f"{spec['name']}__placebo{shift}"
+                    placebo,
+                    spec,
+                    min_n,
+                    boot_reps,
+                    name=f"{spec['name']}__placebo{shift}",
+                    cluster_dates=True,
                 )
             if result is not None:
                 result["shift"] = shift
@@ -871,8 +1049,12 @@ def discover_workout_context_insights(
     candidate_specs = specs if specs is not None else DEFAULT_WORKOUT_SPECS
     results: list[dict] = []
     for spec in candidate_specs:
-        evaluator = _evaluate_cyclic_spec if spec.get("kind") == "cyclic" else _evaluate_spec
-        result = evaluator(frame, spec, min_n, boot_reps)
+        if spec.get("kind") == "cyclic":
+            result = _evaluate_cyclic_spec(
+                frame, spec, min_n, boot_reps, cluster_dates=True
+            )
+        else:
+            result = _evaluate_spec(frame, spec, min_n, boot_reps, cluster_dates=True)
         if result is not None:
             results.append(result)
     tested = [result for result in results if "p_value" in result]
@@ -934,15 +1116,17 @@ def discover_workout_context_insights(
         "name": "workout_context_finder",
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "spec": (
-            "Predeclared workout-only associations; modality + weekday + annual season + time trend + prior-load "
-            "controls; joint 24-hour sine/cosine timing tests; HAC uncertainty; effective-n floor; "
-            "BH FDR; moving-block sign/phase stability; collinearity collapse; "
+            f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
+            "annual season + elapsed-day trend + prior-load controls; joint 24-hour sine/cosine timing tests; "
+            "conservative maximum of HAC and date-clustered uncertainty; effective-n floor; "
+            "BH FDR; calendar-date block sign/phase stability; collinearity collapse; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 1,
+            "model_version": 2,
             "n": max((result.get("n", 0) for result in results), default=0),
+            "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
             "watch_count": sum(result.get("status") == "watch" for result in results),

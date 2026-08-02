@@ -578,7 +578,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=1)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=2)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

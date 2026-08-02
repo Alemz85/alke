@@ -81,6 +81,7 @@ interface FinderCandidate {
     | 'suppressed_placebo'
   direction?: string
   n: number
+  n_days?: number
   required_n?: number
   partial_r?: number
   effect_size?: number
@@ -335,7 +336,7 @@ export function InsightsView(): ReactElement {
       key: 'workout',
       title: 'Workout context',
       detail: 'Readiness, waking-day position, and circular workout time',
-      expectedVersion: 1,
+      expectedVersion: 2,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {
@@ -446,6 +447,8 @@ export function InsightsView(): ReactElement {
                 <p className="insights-finder-empty">
                   This family will populate on the next nightly metrics run. Candidates remain
                   dormant until they have at least 60 usable observations.
+                  {family.key === 'workout' &&
+                    ' Workout inference specifically needs 60 distinct workout dates; same-day sessions share recovery context.'}
                 </p>
               ) : family.surfaced.length === 0 ? (
                 <div className="insights-finder-empty">
@@ -487,8 +490,11 @@ export function InsightsView(): ReactElement {
                           </dd>
                         </div>
                         <div>
-                          <dt>n</dt>
-                          <dd className="tabular-nums">{candidate.n}</dd>
+                          <dt>{candidate.n_days === undefined ? 'n' : 'sessions / dates'}</dt>
+                          <dd className="tabular-nums">
+                            {candidate.n}
+                            {candidate.n_days !== undefined && ` / ${candidate.n_days}`}
+                          </dd>
                         </div>
                       </dl>
                     </article>

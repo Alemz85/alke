@@ -7,6 +7,7 @@ import pytest
 from metrics.insights import (
     _bh_qvalues,
     _block_bootstrap_stability,
+    _calendar_covariates,
     _evaluate_cyclic_spec,
     _effective_n,
     _evaluate_spec,
@@ -36,6 +37,16 @@ def make_frame(n=200):
         },
         index=dates,
     )
+
+
+def test_calendar_trend_uses_elapsed_days_not_workout_row_order():
+    index = pd.to_datetime(
+        ["2026-01-01 08:00", "2026-01-01 18:00", "2026-01-04 09:00"]
+    )
+
+    calendar = _calendar_covariates(index)
+
+    assert calendar["time_trend"].tolist() == [0.0, 0.0, 3.0]
 
 
 def test_zscore_trailing_zero_mean_unit_sd():
@@ -268,10 +279,213 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 1
+    assert model["diagnostics"]["model_version"] == 2
+    assert "date-clustered" in model["spec"]
+    assert "calendar-date block" in model["spec"]
     candidate = model["diagnostics"]["candidates"][0]
     assert candidate["status"] == "signal"
     assert candidate["q_value"] == pytest.approx(candidate["p_value"])
+
+
+def test_workout_context_requires_distinct_dates_not_duplicated_sessions():
+    rng = np.random.default_rng(921)
+    days = pd.date_range("2025-01-01", periods=40, freq="D")
+    index = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=hour) for day in days for hour in (8, 18)]
+    )
+    driver_by_day = rng.normal(size=len(days))
+    driver = np.repeat(driver_by_day, 2)
+    frame = pd.DataFrame(
+        {
+            "readiness": driver,
+            "workout_duration": 0.7 * driver + rng.normal(0, 0.5, len(index)),
+        },
+        index=index,
+    )
+    specs = [{
+        "name": "readiness_to_duration",
+        "label": "Readiness → duration",
+        "driver": "readiness",
+        "outcome": "workout_duration",
+        "controls": [],
+        "direction": "morning-to-workout",
+        "kind": "scalar",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=60, boot_reps=10, run_placebos=False
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["n"] == 80
+    assert candidate["n_days"] == 40
+    assert candidate["raw_status"] == "insufficient"
+    assert candidate["reason"] == "independent_dates"
+    assert candidate["required_n_days"] == 60
+
+
+def test_workout_timing_requires_distinct_dates_not_three_sessions_per_day():
+    rng = np.random.default_rng(922)
+    days = pd.date_range("2025-01-01", periods=30, freq="D")
+    hours = np.tile([8.0, 14.0, 20.0], len(days))
+    theta = 2 * np.pi * hours / 24
+    index = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=hour) for day in days for hour in (8, 14, 20)]
+    )
+    frame = pd.DataFrame(
+        {
+            "start_sin": np.sin(theta),
+            "start_cos": np.cos(theta),
+            "workout_intensity": np.cos(theta) + rng.normal(0, 0.3, len(index)),
+        },
+        index=index,
+    )
+    specs = [{
+        "name": "time_to_intensity",
+        "label": "Workout time → recorded intensity",
+        "outcome": "workout_intensity",
+        "controls": [],
+        "direction": "circadian",
+        "kind": "cyclic",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=60, boot_reps=10, run_placebos=False
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["n"] == 90
+    assert candidate["n_days"] == 30
+    assert candidate["raw_status"] == "insufficient"
+    assert candidate["reason"] == "independent_dates"
+
+
+def test_workout_timing_coverage_counts_distinct_dates_per_clock_window():
+    rng = np.random.default_rng(9221)
+    days = pd.date_range("2025-01-01", periods=20, freq="D")
+    timestamps = []
+    for position, day in enumerate(days):
+        morning_hours = (8, 10) if position < 5 else ()
+        timestamps.extend(day + pd.Timedelta(hours=hour) for hour in (*morning_hours, 14, 20))
+    index = pd.DatetimeIndex(timestamps)
+    hours = index.hour.to_numpy(dtype=float)
+    theta = 2 * np.pi * hours / 24
+    frame = pd.DataFrame(
+        {
+            "start_sin": np.sin(theta),
+            "start_cos": np.cos(theta),
+            "workout_intensity": rng.normal(size=len(index)),
+        },
+        index=index,
+    )
+    specs = [{
+        "name": "time_to_intensity",
+        "label": "Workout time → recorded intensity",
+        "outcome": "workout_intensity",
+        "controls": [],
+        "direction": "circadian",
+        "kind": "cyclic",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=20, boot_reps=10, run_placebos=False
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["raw_status"] == "insufficient"
+    assert candidate["reason"] == "time_coverage"
+    assert candidate["time_bin_counts"]["morning"] == 10
+    assert candidate["time_bin_date_counts"]["morning"] == 5
+
+
+def test_workout_scalar_inference_is_conservative_across_hac_and_date_clusters():
+    rng = np.random.default_rng(923)
+    days = pd.date_range("2025-01-01", periods=80, freq="D")
+    index = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=hour) for day in days for hour in (8, 18)]
+    )
+    driver_by_day = rng.normal(size=len(days))
+    driver = np.repeat(driver_by_day, 2)
+    day_error = np.repeat(rng.normal(0, 1.0, len(days)), 2)
+    frame = pd.DataFrame(
+        {
+            "readiness": driver,
+            "workout_duration": 0.35 * driver + day_error + rng.normal(0, 0.15, len(index)),
+        },
+        index=index,
+    )
+    specs = [{
+        "name": "readiness_to_duration",
+        "label": "Readiness → duration",
+        "driver": "readiness",
+        "outcome": "workout_duration",
+        "controls": [],
+        "direction": "morning-to-workout",
+        "kind": "scalar",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=60, boot_reps=10, run_placebos=False
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["n_days"] == 80
+    assert candidate["n_eff"] <= candidate["n_days"]
+    assert candidate["bootstrap_unit"] == "calendar_date"
+    assert candidate["p_value"] == pytest.approx(
+        max(candidate["p_value_hac"], candidate["p_value_date_cluster"])
+    )
+    assert candidate["ci_low"] == pytest.approx(
+        min(candidate["ci_low_hac"], candidate["ci_low_date_cluster"])
+    )
+    assert candidate["ci_high"] == pytest.approx(
+        max(candidate["ci_high_hac"], candidate["ci_high_date_cluster"])
+    )
+
+
+def test_workout_cosinor_inference_is_conservative_across_hac_and_date_clusters():
+    rng = np.random.default_rng(924)
+    days = pd.date_range("2025-01-01", periods=80, freq="D")
+    hours = np.tile([8.0, 14.0, 20.0], len(days))
+    theta = 2 * np.pi * hours / 24
+    index = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=hour) for day in days for hour in (8, 14, 20)]
+    )
+    day_error = np.repeat(rng.normal(0, 0.8, len(days)), 3)
+    frame = pd.DataFrame(
+        {
+            "start_sin": np.sin(theta),
+            "start_cos": np.cos(theta),
+            "workout_intensity": np.cos(theta) + day_error + rng.normal(0, 0.2, len(index)),
+        },
+        index=index,
+    )
+    specs = [{
+        "name": "time_to_intensity",
+        "label": "Workout time → recorded intensity",
+        "outcome": "workout_intensity",
+        "controls": [],
+        "direction": "circadian",
+        "kind": "cyclic",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=60, boot_reps=10, run_placebos=False
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["n_days"] == 80
+    assert candidate["n_eff"] <= candidate["n_days"]
+    assert candidate["bootstrap_unit"] == "calendar_date"
+    assert candidate["p_value"] == pytest.approx(
+        max(candidate["p_value_hac"], candidate["p_value_date_cluster"])
+    )
+    assert candidate["sin_ci_low"] == pytest.approx(
+        min(candidate["sin_ci_low_hac"], candidate["sin_ci_low_date_cluster"])
+    )
+    assert candidate["sin_ci_high"] == pytest.approx(
+        max(candidate["sin_ci_high_hac"], candidate["sin_ci_high_date_cluster"])
+    )
 
 
 def test_adjusted_finder_rejects_outlier_only_rank_disagreement():
@@ -433,6 +647,32 @@ def test_block_bootstrap_stability_strong_vs_noise_and_deterministic():
     assert w["stable"] is False
     # crc32(name)-seeded rng: same data + name → identical verdict every run
     assert _block_bootstrap_stability(strong, [], 0.8, "strong", reps=100) == s
+
+
+def test_calendar_block_bootstrap_keeps_every_session_from_a_sampled_date_together():
+    from metrics import insights
+
+    sampler = getattr(insights, "_calendar_block_bootstrap_sample", None)
+    assert callable(sampler)
+
+    days = pd.date_range("2026-01-01", periods=6, freq="D")
+    index = pd.DatetimeIndex(
+        [day + pd.Timedelta(hours=hour) for day in days for hour in (8, 18)]
+    )
+    data = pd.DataFrame(
+        {
+            "slot": np.tile(["morning", "evening"], len(days)),
+            "x": np.arange(len(index), dtype=float),
+            "y": np.arange(len(index), dtype=float),
+        },
+        index=index,
+    )
+
+    sample = sampler(data, np.random.default_rng(925), block_len=2)
+
+    for _, group in sample.groupby(pd.DatetimeIndex(sample.index).normalize()):
+        counts = group["slot"].value_counts()
+        assert counts.get("morning", 0) == counts.get("evening", 0)
 
 
 def test_weight_series_linear_decline_gives_constant_negative_slope():
@@ -891,11 +1131,17 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
 
     written_models = []
     deleted_models = []
+    expected_versions = []
     monkeypatch.setattr(compute.db, "fetch_computed_workouts", lambda _sb: [])
     monkeypatch.setattr(compute.db, "replace_insight_correlations", lambda _sb, _rows: None)
     monkeypatch.setattr(compute.db, "fetch_insight_model", lambda _sb, _name: None)
     monkeypatch.setattr(compute.db, "upsert_insight_model", lambda _sb, row: written_models.append(row))
     monkeypatch.setattr(compute.db, "delete_insight_model", lambda _sb, name: deleted_models.append(name))
+    monkeypatch.setattr(
+        compute,
+        "insight_prior_state",
+        lambda _prior, expected_version: expected_versions.append(expected_version),
+    )
 
     compute.run_insights(
         object(),
@@ -919,6 +1165,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
+    assert expected_versions == [2, 2]
 
 
 def test_persistence_state_never_crosses_model_versions():
