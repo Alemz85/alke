@@ -131,6 +131,28 @@ describe('isoWeekWindowFor', () => {
     expect(window.startKey).toBe('2025-12-29')
     expect(window.endKey).toBe('2026-01-05')
   })
+
+  it('converts Berlin week boundaries from local midnight to the correct UTC instant', () => {
+    const winter = isoWeekWindowFor({ year: 2026, month: 1, day: 14 }, 'Europe/Berlin')
+    expect(winter.startIso).toBe('2026-01-11T23:00:00.000Z')
+    expect(winter.endIso).toBe('2026-01-18T23:00:00.000Z')
+
+    const summer = isoWeekWindowFor({ year: 2026, month: 7, day: 15 }, 'Europe/Berlin')
+    expect(summer.startIso).toBe('2026-07-12T22:00:00.000Z')
+    expect(summer.endIso).toBe('2026-07-19T22:00:00.000Z')
+  })
+
+  it('lets the UTC span change across daylight-saving transitions', () => {
+    const springForward = isoWeekWindowFor(
+      { year: 2026, month: 3, day: 25 },
+      'Europe/Berlin'
+    )
+    expect(springForward.startIso).toBe('2026-03-22T23:00:00.000Z')
+    expect(springForward.endIso).toBe('2026-03-29T22:00:00.000Z')
+    expect(Date.parse(springForward.endIso) - Date.parse(springForward.startIso)).toBe(
+      167 * 60 * 60 * 1000
+    )
+  })
 })
 
 describe('fmtNum', () => {

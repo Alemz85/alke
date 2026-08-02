@@ -116,7 +116,7 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
 
   // The ISO week window anchored to "today" in the USER's configured timezone.
   const todayYmd = todayYMD(timezone)
-  const weekWindow = isoWeekWindowFor(todayYmd)
+  const weekWindow = isoWeekWindowFor(todayYmd, timezone)
   const workoutsThisWeekQuery = useWorkoutsInRange(weekWindow.startIso, weekWindow.endIso)
 
   // --- Month calendar + period summaries ---

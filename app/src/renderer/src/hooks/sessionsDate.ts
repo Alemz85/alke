@@ -97,6 +97,48 @@ export function ymdToIsoStart(ymd: YMD): string {
   return utcDate(ymd.year, ymd.month, ymd.day).toISOString()
 }
 
+/** Convert local midnight for a YMD in an IANA timezone to its UTC instant. */
+export function ymdToZonedIsoStart(
+  ymd: YMD,
+  timezone: string | null | undefined
+): string {
+  const tz = timezone || FALLBACK_TZ
+  if (tz === 'UTC') return ymdToIsoStart(ymd)
+
+  const targetLocalMs = Date.UTC(ymd.year, ymd.month - 1, ymd.day)
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  })
+
+  // Start from UTC midnight and iteratively remove the zone offset. Repeating
+  // handles dates whose offset differs from the initial UTC guess around DST.
+  let instantMs = targetLocalMs
+  for (let i = 0; i < 4; i++) {
+    const parts = formatter.formatToParts(new Date(instantMs))
+    const part = (type: Intl.DateTimeFormatPartTypes): number =>
+      Number(parts.find((p) => p.type === type)?.value)
+    const representedLocalMs = Date.UTC(
+      part('year'),
+      part('month') - 1,
+      part('day'),
+      part('hour'),
+      part('minute'),
+      part('second')
+    )
+    const correction = targetLocalMs - representedLocalMs
+    instantMs += correction
+    if (correction === 0) break
+  }
+  return new Date(instantMs).toISOString()
+}
+
 export const MONTH_NAMES = [
   'January',
   'February',

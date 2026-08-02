@@ -4,7 +4,7 @@
 import type { DailyMetric, UserConfig, Workout } from '@shared/types'
 import { EM_DASH, fmtDelta, fmtNum } from '../lib/format'
 import { workoutMatchesGoal } from '../lib/modality'
-import { addDays, isoWeekStart, ymdKey, ymdToIsoStart, type YMD } from '../hooks/sessionsDate'
+import { addDays, isoWeekStart, ymdKey, ymdToZonedIsoStart, type YMD } from '../hooks/sessionsDate'
 
 /**
  * The [start, end) ISO-week window containing `todayYmd`, as "YYYY-MM-DD"
@@ -22,20 +22,23 @@ export interface IsoWeekWindow {
   startKey: string
   /** Monday of the FOLLOWING week, "YYYY-MM-DD" — exclusive upper bound. */
   endKey: string
-  /** startKey as a UTC-midnight ISO instant, for range-querying workouts. */
+  /** Local midnight at startKey, expressed as a UTC ISO instant for queries. */
   startIso: string
-  /** endKey as a UTC-midnight ISO instant, for range-querying workouts. */
+  /** Local midnight at endKey, expressed as a UTC ISO instant for queries. */
   endIso: string
 }
 
-export function isoWeekWindowFor(todayYmd: YMD): IsoWeekWindow {
+export function isoWeekWindowFor(
+  todayYmd: YMD,
+  timezone?: string | null
+): IsoWeekWindow {
   const start = isoWeekStart(todayYmd)
   const end = addDays(start, 7)
   return {
     startKey: ymdKey(start),
     endKey: ymdKey(end),
-    startIso: ymdToIsoStart(start),
-    endIso: ymdToIsoStart(end)
+    startIso: ymdToZonedIsoStart(start, timezone),
+    endIso: ymdToZonedIsoStart(end, timezone)
   }
 }
 
