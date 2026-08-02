@@ -332,13 +332,211 @@ def sleep_midpoint_hours(row: dict, tz) -> float | None:
     return day_offset * 24 + clock_hours
 
 
+def sleep_awake_fraction(row: dict) -> float | None:
+    """Apple sleep-stage awake time divided by total staged time."""
+    stages = row.get("sleep_stages") or {}
+    try:
+        values = [float(stages[name]) for name in ("awake", "core", "deep", "rem")]
+    except (KeyError, TypeError, ValueError):
+        return None
+    total = sum(values)
+    return values[0] / total if total > 0 else None
+
+
+def wake_clock_hours(row: dict, tz) -> float | None:
+    if not row.get("sleep_end"):
+        return None
+    wake = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).astimezone(tz)
+    return wake.hour + wake.minute / 60 + wake.second / 3600
+
+
+def build_daily_insight_frame(daily_metrics, daily_rows, tz):
+    """Build the temporal-contract daily frame without database writes."""
+    import pandas as pd
+
+    from metrics.insights import prior_rolling_deviation, weight_series
+
+    dm_by_date = {date.fromisoformat(row["date"]): row for row in daily_metrics}
+    index = [date.fromisoformat(row["date"]) for row in daily_rows]
+    frame = pd.DataFrame(
+        {
+            "sleep_duration": [
+                (dm_by_date.get(day) or {}).get("sleep_duration_min") for day in index
+            ],
+            "sleep_midpoint": [
+                sleep_midpoint_hours(dm_by_date[day], tz) if day in dm_by_date else None
+                for day in index
+            ],
+            "sleep_awake_fraction": [
+                sleep_awake_fraction(dm_by_date[day]) if day in dm_by_date else None
+                for day in index
+            ],
+            "wake_hour": [
+                wake_clock_hours(dm_by_date[day], tz) if day in dm_by_date else None
+                for day in index
+            ],
+            "respiratory_rate": [
+                (dm_by_date.get(day) or {}).get("respiratory_rate") for day in index
+            ],
+            # computed_daily carries rolling deviations across missing sensor
+            # days. A carried value is useful for display/flags but is not a new
+            # inferential observation, so require the underlying measurement.
+            "rhr_dev": [
+                row["rhr_dev"]
+                if (dm_by_date.get(day) or {}).get("resting_hr") is not None else None
+                for day, row in zip(index, daily_rows)
+            ],
+            "hrv_dev": [
+                row["hrv_dev"]
+                if (dm_by_date.get(day) or {}).get("hrv_sdnn_ms") is not None else None
+                for day, row in zip(index, daily_rows)
+            ],
+            "ctl": [row["ctl"] for row in daily_rows],
+            "atl": [row["atl"] for row in daily_rows],
+            "trimp_total": [row["trimp_total"] for row in daily_rows],
+            "steps": [(dm_by_date.get(day) or {}).get("steps") for day in index],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp(day) for day in index]),
+    ).apply(pd.to_numeric, errors="coerce")
+
+    # These controls contain only load state available before the modeled
+    # exposure/outcome; same-day ATL/CTL includes a later workout and leaks.
+    frame["trimp_prior"] = frame["trimp_total"].shift(1)
+    frame["steps_prior"] = frame["steps"].shift(1)
+    frame["ctl_prior"] = frame["ctl"].shift(1)
+    frame["atl_prior"] = frame["atl"].shift(1)
+    frame["ctl_pre_exposure"] = frame["ctl"].shift(2)
+
+    frame["sleep_shortfall"] = -prior_rolling_deviation(frame["sleep_duration"])
+    frame["sleep_midpoint_dev"] = prior_rolling_deviation(frame["sleep_midpoint"]).abs()
+    frame["respiratory_rate_dev"] = prior_rolling_deviation(frame["respiratory_rate"])
+
+    if any("weight_kg" in (row or {}) for row in daily_metrics):
+        raw_weight = pd.Series(
+            [(dm_by_date.get(day) or {}).get("weight_kg") for day in index],
+            index=frame.index,
+        )
+        weight, weight_7d_slope = weight_series(raw_weight)
+        frame["weight"] = weight
+        frame["weight_7d_slope"] = weight_7d_slope
+    return frame
+
+
+def workout_modality(workout_type: str | None) -> str:
+    value = (workout_type or "").lower()
+    if "strength" in value or "weight" in value or "core" in value:
+        return "strength"
+    if "swim" in value:
+        return "swim"
+    if "row" in value:
+        return "rowing"
+    if "cycl" in value or "bik" in value:
+        return "cycling"
+    if "run" in value:
+        return "running"
+    if "walk" in value or "hik" in value:
+        return "walking"
+    if "surf" in value:
+        return "surfing"
+    return "other"
+
+
+def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
+    """One row per workout with measured HR load and pre-workout context."""
+    import numpy as np
+    import pandas as pd
+
+    rows: list[dict] = []
+    context_columns = (
+        "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
+        "rhr_dev", "hrv_dev", "respiratory_rate_dev",
+        "ctl_prior", "atl_prior", "trimp_prior",
+    )
+    for workout in all_workouts:
+        computed = perf_by_id.get(workout["id"]) or {}
+        try:
+            trimp = float(computed.get("trimp"))
+            duration_s = float(workout.get("duration_s"))
+            zones = computed.get("time_in_zones") or {}
+            zone_seconds = sum(float(zones.get(f"z{zone}") or 0.0) for zone in range(1, 6))
+        except (TypeError, ValueError):
+            continue
+        # Tiny/zero-HR sessions make ratios unstable. Positive TRIMP also
+        # excludes legacy workouts whose duration exists without measured HR.
+        if trimp <= 0 or duration_s <= 0 or zone_seconds < 300:
+            continue
+        start = datetime.fromisoformat(workout["start_at"].replace("Z", "+00:00")).astimezone(tz)
+        day_key = pd.Timestamp(start.date())
+        context = daily_frame.loc[day_key] if day_key in daily_frame.index else None
+        hour = start.hour + start.minute / 60 + start.second / 3600
+        theta = 2.0 * math.pi * hour / 24.0
+        duration_min = duration_s / 60.0
+        row = {
+            "start_at": pd.Timestamp(start),
+            "start_hour": hour,
+            "start_sin": math.sin(theta),
+            "start_cos": math.cos(theta),
+            "modality": workout_modality(workout.get("type")),
+            "workout_load": trimp,
+            "workout_duration": duration_min,
+            "log_duration": math.log(duration_min),
+            "workout_intensity": trimp / duration_min,
+            "high_zone_fraction": (
+                float(zones.get("z4") or 0.0) + float(zones.get("z5") or 0.0)
+            ) / zone_seconds,
+        }
+        for column in context_columns:
+            row[column] = context.get(column) if context is not None else np.nan
+        wake_hour = context.get("wake_hour") if context is not None else np.nan
+        hours_since_wake = hour - wake_hour if pd.notna(wake_hour) else np.nan
+        row["hours_since_wake"] = (
+            hours_since_wake if pd.notna(hours_since_wake) and 0 <= hours_since_wake <= 20
+            else np.nan
+        )
+        rows.append(row)
+    if not rows:
+        return pd.DataFrame()
+
+    frame = pd.DataFrame(rows).sort_values("start_at").set_index("start_at")
+    timestamps = pd.Series(frame.index, index=frame.index)
+    frame["hours_since_prev_workout"] = timestamps.diff().dt.total_seconds() / 3600.0
+    frame["days_since_prev_modality"] = (
+        timestamps.groupby(frame["modality"], sort=False).diff().dt.total_seconds() / 86_400.0
+    )
+    frame["log_hours_since_prev_workout"] = np.log1p(frame["hours_since_prev_workout"])
+    frame["log_days_since_prev_modality"] = np.log1p(frame["days_since_prev_modality"])
+    local_days = pd.Series([stamp.date() for stamp in frame.index], index=frame.index)
+    frame["same_day_prior_load"] = (
+        frame.groupby(local_days, sort=False)["workout_load"].cumsum() - frame["workout_load"]
+    )
+    for outcome, prior_name in (
+        ("workout_load", "load_prev_modality"),
+        ("workout_duration", "duration_prev_modality"),
+        ("workout_intensity", "intensity_prev_modality"),
+        ("high_zone_fraction", "high_zone_prev_modality"),
+    ):
+        frame[prior_name] = frame.groupby("modality", sort=False)[outcome].shift(1)
+    modality_dummies = pd.get_dummies(
+        frame["modality"], prefix="modality", drop_first=True, dtype=float
+    )
+    return pd.concat([frame, modality_dummies], axis=1)
+
+
+def insight_prior_state(prior: dict | None, expected_version: int) -> dict | None:
+    """Reuse persistence only within the exact same statistical contract."""
+    diagnostics = (prior or {}).get("diagnostics") or {}
+    if diagnostics.get("model_version") != expected_version:
+        return None
+    return ((diagnostics.get("persistence") or {}).get("state"))
+
+
 def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     import pandas as pd
 
     from metrics.insights import (
         compute_correlations,
         discover_adjusted_insights,
-        weight_series,
+        discover_workout_context_insights,
         zscore_trailing,
     )
 
@@ -347,52 +545,18 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     perf_by_date = perf_series_by_date(all_workouts, perf_by_id, tz)
 
-    dm_by_date = {date.fromisoformat(r["date"]): r for r in daily_metrics}
-    index = [date.fromisoformat(r["date"]) for r in daily_rows]
-    frame = pd.DataFrame(
-        {
-            "sleep_duration": [
-                (dm_by_date.get(d) or {}).get("sleep_duration_min") for d in index
-            ],
-            "sleep_midpoint": [
-                sleep_midpoint_hours(dm_by_date[d], tz) if d in dm_by_date else None for d in index
-            ],
-            "rhr_dev": [r["rhr_dev"] for r in daily_rows],
-            "hrv_dev": [r["hrv_dev"] for r in daily_rows],
-            "ctl": [r["ctl"] for r in daily_rows],
-            "atl": [r["atl"] for r in daily_rows],
-            "trimp_total": [r["trimp_total"] for r in daily_rows],
-            "decoupling": [
-                pd.Series(perf_by_date[d]["decoupling"]).mean() if perf_by_date[d]["decoupling"] else None
-                for d in index
-            ],
-            "hrr60": [
-                pd.Series(perf_by_date[d]["hrr60"]).mean() if perf_by_date[d]["hrr60"] else None for d in index
-            ],
-            "steps": [(dm_by_date.get(d) or {}).get("steps") for d in index],
-        },
-        index=pd.DatetimeIndex([pd.Timestamp(d) for d in index]),
-    ).astype(float)
-    frame["trimp_prior"] = frame["trimp_total"].shift(1)
-    # F9: yesterday's ambient activity as a driver, analogous to trimp_prior.
-    # daily_metrics already carries steps; steps_prior joins the DRIVERS sweep.
-    frame["steps_prior"] = frame["steps"].shift(1)
-    # consistency: absolute deviation from the 14-day rolling median midpoint
-    frame["sleep_midpoint_dev"] = (
-        frame["sleep_midpoint"] - frame["sleep_midpoint"].rolling(14, min_periods=5).median()
-    ).abs()
-
-    # weight is a slow OUTCOME, not a daily driver: raw (ffilled) weight is kept
-    # for reference/plotting, and weight_7d_slope (kg/week trend) is the PERF
-    # variable correlations test against sleep/rhr/hrv/training-load drivers.
-    if any("weight_kg" in (r or {}) for r in daily_metrics):
-        raw_weight = pd.Series(
-            [(dm_by_date.get(d) or {}).get("weight_kg") for d in index],
-            index=frame.index,
-        )
-        weight, weight_7d_slope = weight_series(raw_weight)
-        frame["weight"] = weight
-        frame["weight_7d_slope"] = weight_7d_slope
+    index = [date.fromisoformat(row["date"]) for row in daily_rows]
+    frame = build_daily_insight_frame(daily_metrics, daily_rows, tz)
+    frame["decoupling"] = [
+        pd.Series(perf_by_date[day]["decoupling"]).mean()
+        if perf_by_date[day]["decoupling"] else None
+        for day in index
+    ]
+    frame["hrr60"] = [
+        pd.Series(perf_by_date[day]["hrr60"]).mean()
+        if perf_by_date[day]["hrr60"] else None
+        for day in index
+    ]
 
     correlations = compute_correlations(zscore_trailing(frame))
     db.replace_insight_correlations(sb, correlations)
@@ -401,7 +565,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = ((((prior or {}).get("diagnostics") or {}).get("persistence")) or {}).get("state")
+    prior_state = insight_prior_state(prior, expected_version=2)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -410,6 +574,22 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
         f"({diag['signal_count']} signals, {diag['watch_count']} watch, "
         f"{diag['raw_signal_count']} raw-signal; "
         f"placebo fired {diag['placebo']['signal_count']}/{diag['placebo']['tested']})"
+    )
+
+    workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
+    workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=1)
+    workout_finder = discover_workout_context_insights(
+        workout_frame, prior_state=workout_prior_state
+    )
+    db.upsert_insight_model(sb, workout_finder)
+    workout_diag = workout_finder["diagnostics"]
+    print(
+        "insight_models: workout_context_finder "
+        f"({workout_diag['signal_count']} signals, {workout_diag['watch_count']} watch, "
+        f"{workout_diag['raw_signal_count']} raw-signal; "
+        f"placebo fired {workout_diag['placebo']['signal_count']}/"
+        f"{workout_diag['placebo']['tested']})"
     )
 
     # Retire the old EF-on-sleep row as well as stopping future computation;

@@ -90,7 +90,9 @@ def fetch_swim_sets(sb: Client, workout_ids: list[str]) -> dict[str, list[dict]]
 def fetch_daily_metrics(sb: Client) -> list[dict]:
     def q():
         return sb.table("daily_metrics").select(
-            "date, resting_hr, hrv_sdnn_ms, sleep_start, sleep_end, sleep_duration_min, weight_kg, vo2max, steps"
+            "date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, "
+            "sleep_duration_min, sleep_stages, weight_kg, vo2max, steps, active_energy_kcal, "
+            "wrist_temp_deviation_c, walking_running_distance_m, flights_climbed"
         ).order("date")
 
     return _fetch_all(q)
@@ -113,7 +115,7 @@ def upsert_computed_daily(sb: Client, rows: list[dict]) -> None:
 def fetch_computed_workouts(sb: Client) -> list[dict]:
     def q():
         return sb.table("computed_workout").select(
-            "workout_id, trimp, ef, decoupling_pct, hrr60"
+            "workout_id, trimp, ef, decoupling_pct, hrr60, time_in_zones"
         ).order("workout_id")
 
     return _fetch_all(q)

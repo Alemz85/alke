@@ -1,0 +1,188 @@
+# Insights statistical design
+
+This document is the contract for the personal Insights engine. The engine is
+an N-of-1 observational screen: it can identify repeatable within-person
+associations worth acting on or testing deliberately, but it cannot turn
+wearable data into causal claims.
+
+## Questions, not a correlation grab bag
+
+Every candidate must declare four things before it is evaluated:
+
+1. the exposure time and outcome time;
+2. the population of days or workouts to which the estimate applies;
+3. the variables available before the exposure/outcome that must be adjusted;
+4. the minimum information and stability gates required to surface it.
+
+Variables are not added merely because a database column exists. In
+particular, active energy, wrist temperature, weight, protein, gym-set RPE,
+HRR60, and modality-specific decoupling currently lack enough observations.
+Walking/running distance is almost a duplicate of steps and is not an
+independent hypothesis. REM/deep/core shares are compositional and consumer
+sleep-stage classification is too uncertain for three separate inferential
+claims; the engine uses only the less ambitious awake fraction as a sleep
+continuity proxy.
+
+## Temporal ordering
+
+The row labelled date `t` contains the sleep ending on `t` and the morning
+recovery measurements associated with `t`. A workout later on `t` is in the
+future relative to those measurements.
+
+This creates the following legal ordering:
+
+```
+load / ambient activity on t-1
+        ↓
+sleep and morning recovery on t
+        ↓
+workout choice and recorded intensity later on t
+```
+
+ATL and CTL computed for `t` already include the workout on `t`. They must
+never control an analysis of sleep or morning recovery on `t`, and they must
+not control an analysis in which the workout on `t` is the outcome. The daily
+frame therefore exposes:
+
+- `atl_prior` and `ctl_prior`: load state through `t-1`, available before a
+  workout on `t`;
+- `ctl_pre_exposure`: load state through `t-2`, available before a prior-day
+  load exposure on `t-1`.
+
+Personal baselines also use history strictly before the current observation.
+Current sleep is not allowed to pull its own baseline toward itself.
+
+## Daily recovery families
+
+### Prior-day behavior to next sleep/recovery
+
+Exposures are prior-day TRIMP and prior-day steps. Outcomes are sleep
+shortfall relative to the prior 28-day median, sleep awake fraction, RHR
+deviation, HRV deviation, and respiratory-rate deviation relative to its
+prior 28-day median.
+
+Each outcome controls its previous value and the pre-exposure chronic load.
+The TRIMP and step exposures control one another so a long active workout does
+not masquerade as two independent effects.
+
+### Co-measured sleep and recovery
+
+Sleep shortfall, sleep-midpoint drift, and sleep awake fraction are screened
+against RHR, HRV, and respiratory-rate deviation. These are explicitly
+labelled co-measured associations: the Apple Health daily aggregates do not
+support a causal direction within the night/morning block. Prior ATL and the
+previous outcome are controls.
+
+## Workout-context families
+
+Workout analyses use one row per workout with positive HR-derived TRIMP and
+positive duration. Rest days and workouts without usable HR data are not
+members of this population.
+
+The outcomes deliberately separate different questions:
+
+- total TRIMP: the scheduled dose chosen for the session;
+- duration: how long the session was;
+- TRIMP per minute: recorded cardiovascular intensity, with duration still
+  adjusted because intensity and sustainable duration trade off;
+- high-zone fraction: the fraction of measured HR time in zones 4-5.
+
+TRIMP per minute and high-zone fraction are not labelled “capacity.” Capacity
+would require a standardized task, pace/power, and preferably perceived
+exertion. They answer how hard the recorded session was, conditional on doing
+a workout.
+
+Workout readiness candidates relate sleep shortfall, sleep timing drift, RHR,
+HRV, and respiratory-rate deviation to duration and TRIMP per minute. Hours
+since waking is screened separately because clock time and biological-day
+position are not the same exposure. They control prior load state, modality,
+time since the previous workout, time since the previous workout of that
+modality, and any load already accumulated earlier that day. The last control
+is essential: an evening session is more likely than a morning session to be a
+second session, and otherwise “time of day” could merely rediscover accumulated
+same-day fatigue. Missing recovery measurements reduce a candidate's own
+sample; they do not cause imputation.
+
+### Workout time of day
+
+Clock time is circular: 23:30 is close to 00:30, not 23 hours away. Timing is
+therefore modelled with a 24-hour cosinor (sine and cosine jointly), never as a
+raw linear hour or arbitrary morning/evening split. The joint two-degree-of-
+freedom test reports:
+
+- partial effect size after controls;
+- the fitted peak clock time when a stable curve exists;
+- bootstrap phase concentration, so a statistically non-zero but wandering
+  peak does not surface.
+
+Modality fixed effects, weekday, secular trend, prior load state, and relevant
+duration are controls. This reduces—but cannot eliminate—confounding from a
+schedule such as “rowing happens in the evening, walking happens in the
+morning.” A result remains an association with recorded training behavior, not
+proof of a circadian mechanism or a recommendation to move every session.
+
+## Inference gates
+
+Daily and workout candidates are separate predeclared multiple-testing
+families. Every candidate passes the same policy:
+
+- at least 60 usable observations and at least 30 effective observations;
+- for cosinor fits, at least 10 complete workouts in each of morning,
+  afternoon, and evening/night so a peak is not extrapolated from one narrow
+  schedule window;
+- weekday, annual sine/cosine, and secular-trend adjustment;
+- deterministic collapse of highly collinear controls;
+- HAC/Newey-West uncertainty for ordered observations;
+- Benjamini-Hochberg false-discovery control within the declared family;
+- moving-block bootstrap stability (sign stability for scalar effects,
+  circular phase stability for timing effects);
+- Pearson/partial-Spearman agreement for scalar effects so one extreme day
+  cannot promote an otherwise absent relationship;
+- circular-shift placebo calibration;
+- candidate-specific placebo suppression: a real candidate cannot promote when
+  its own shifted null also clears the gates;
+- seven consecutive qualifying nightly runs before promotion, plus symmetric
+  demotion hysteresis.
+
+Exploratory correlations remain a hypothesis-discovery surface. They use a
+trailing 180-day window, effective-sample correction, rank-correlation
+robustness, and FDR q-values. Workout-load outcomes include workout days only
+at every lag.
+
+## Current data implications (audit 2026-08-02)
+
+- 577 daily rows are present; steps and walking distance are complete.
+- Sleep has 281 days, RHR 259, HRV 311, and respiratory rate 286: these are
+  eligible for guarded daily inference.
+- Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
+  detailed gym sessions 5: these remain dormant.
+- 108 workouts in the daily-data era have positive HR-derived load and at
+  least five minutes of classified HR, with
+  morning, afternoon, and evening observations. This supports a pooled
+  modality-adjusted timing screen, but not reliable modality-specific timing
+  curves yet.
+- Decoupling exists for only 14 recent workouts and HRR60 for none, so neither
+  is a promotable workout-context outcome yet.
+
+These are eligibility facts, not tuned thresholds. The thresholds above stay
+fixed as data accrues.
+
+## Scientific anchors
+
+- Rae, Stephenson & Roden (2015), randomized morning/evening swim time trials:
+  chronotype and habitual training time altered the aggregate time-of-day
+  result ([PubMed 25631930](https://pubmed.ncbi.nlm.nih.gov/25631930/)). This is
+  why the app reports an adjusted schedule association and does not call the
+  fitted clock peak an innate circadian optimum.
+- Walsh et al. (2019), counterbalanced sleep extension/restriction in endurance
+  cyclists: cumulative sleep changed time-trial performance
+  ([PubMed 31246714](https://pubmed.ncbi.nlm.nih.gov/31246714/)). This supports
+  screening relative sleep while preserving the capacity-vs-behavior caveat.
+- Nuuttila et al. (2025), longitudinal overload monitoring: wearable HR, HRV,
+  breathing rate and sleep responses showed substantial individual variation
+  ([PubMed 39860902](https://pubmed.ncbi.nlm.nih.gov/39860902/)). This supports
+  an N-of-1 model and respiratory-rate inclusion, not population effect sizes.
+- Óskarsdóttir et al. (2022), six-month self-tracker study: stable individual
+  summaries needed materially longer than common short observation windows
+  ([PubMed 35191850](https://pubmed.ncbi.nlm.nih.gov/35191850/)). This supports
+  the fixed minimum-n and persistence gates.

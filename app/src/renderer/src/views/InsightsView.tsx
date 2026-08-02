@@ -15,8 +15,12 @@ import { TabHeader } from './TabHeader'
 import { ChartCard, EmptyState } from '../components'
 import {
   buildInsightScatter,
+  insightAxis,
   insightWindowStart,
   rollingCalendarMedianDeviation,
+  rollingCalendarMedianDelta,
+  rollingWeightTrend,
+  sleepAwakeFraction,
   sleepMidpointHours
 } from '../lib/insightSeries'
 import {
@@ -30,16 +34,20 @@ import {
 import './InsightsView.css'
 
 const DRIVERS = [
-  { key: 'sleep_duration', label: 'Sleep duration' },
+  { key: 'sleep_shortfall', label: 'Sleep shortfall' },
   { key: 'sleep_midpoint_dev', label: 'Sleep timing drift' },
+  { key: 'sleep_awake_fraction', label: 'Sleep awake fraction' },
   { key: 'rhr_dev', label: 'RHR deviation' },
   { key: 'hrv_dev', label: 'HRV deviation' },
-  { key: 'trimp_prior', label: 'Prior-day load' }
+  { key: 'respiratory_rate_dev', label: 'Breathing-rate deviation' },
+  { key: 'trimp_prior', label: 'Prior-day load' },
+  { key: 'steps_prior', label: 'Prior-day steps' }
 ]
 const PERFS = [
   { key: 'decoupling', label: 'Decoupling' },
   { key: 'hrr60', label: 'HRR60' },
-  { key: 'trimp_total', label: 'Workout-day load' }
+  { key: 'trimp_total', label: 'Workout-day load' },
+  { key: 'weight_7d_slope', label: '7-day weight trend' }
 ]
 const LAGS = [0, 1, 2, 3]
 const RETIRED_FINDER_CANDIDATES = new Set(['rhr_to_load', 'hrv_to_load'])
@@ -64,14 +72,61 @@ interface FinderCandidate {
   name: string
   label: string
   outcome?: string
-  status: 'signal' | 'watch' | 'no_clear_signal' | 'insufficient' | 'suppressed_collinear'
+  status:
+    | 'signal'
+    | 'watch'
+    | 'no_clear_signal'
+    | 'insufficient'
+    | 'suppressed_collinear'
+    | 'suppressed_placebo'
   direction?: string
   n: number
   required_n?: number
   partial_r?: number
+  effect_size?: number
+  peak_hour?: number
+  kind?: 'scalar' | 'cyclic'
   q_value?: number
   stable?: boolean
   suppressed_by?: string
+}
+
+interface FinderDiagnostics {
+  model_version?: number
+  signal_count?: number
+  watch_count?: number
+  candidates?: FinderCandidate[]
+  caveat?: string
+  placebo?: {
+    tested?: number
+    signal_count?: number
+    watch_count?: number
+  }
+}
+
+function formatClockHour(hour: number | undefined): string {
+  if (hour === undefined || !Number.isFinite(hour)) return '—'
+  const totalMinutes = Math.round(hour * 60) % (24 * 60)
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`
+}
+
+function candidateInterpretation(candidate: FinderCandidate): string {
+  if (candidate.direction === 'co-measured') {
+    return 'Same night/morning association; causal direction is unresolved.'
+  }
+  if (candidate.direction === 'circadian') {
+    return `24-hour adjusted curve${candidate.peak_hour === undefined ? '' : `; fitted peak ${formatClockHour(candidate.peak_hour)}`}. Scheduling can still confound it.`
+  }
+  if (candidate.direction === 'morning-to-workout') {
+    return 'Morning context precedes the workout; this is recorded behavior, not a capacity test.'
+  }
+  if (candidate.direction === 'same-day-context') {
+    return 'Position in the waking day precedes the workout; still observational.'
+  }
+  if (candidate.direction === 'workout-day-dose') {
+    return 'Workout days only; estimates dose conditional on training.'
+  }
+  return 'Temporally ordered candidate; still observational.'
 }
 
 /** Rebuild the daily analysis series in the renderer so a clicked cell can
@@ -79,6 +134,7 @@ interface FinderCandidate {
 function useAnalysisSeries(): {
   series: Record<string, Map<string, number>>
   timezone: string | null
+  workoutContextCount: number
 } {
   const config = useQuery({
     queryKey: ['insights', 'config'],
@@ -119,34 +175,71 @@ function useAnalysisSeries(): {
       if (value === null || value === undefined || Number.isNaN(value)) return
       ;(series[name] ??= new Map()).set(date, value)
     }
-    for (const m of daily.data ?? []) {
+    const dailyRows = [...(daily.data ?? [])].sort((a, b) => a.date.localeCompare(b.date))
+    const dailyByDate = new Map(dailyRows.map((row) => [row.date, row]))
+    for (const m of dailyRows) {
       put('sleep_duration', m.date, m.sleep_duration_min)
+      put('sleep_awake_fraction', m.date, sleepAwakeFraction(m.sleep_stages))
+      put('respiratory_rate', m.date, m.respiratory_rate)
+      put('steps', m.date, m.steps)
       if (m.sleep_start && m.sleep_end) {
         put('sleep_midpoint', m.date, sleepMidpointHours(m.sleep_start, m.sleep_end, tz))
       }
     }
     const computedRows = [...(computed.data ?? [])].sort((a, b) => a.date.localeCompare(b.date))
     computedRows.forEach((r, i) => {
-      put('rhr_dev', r.date, r.rhr_dev)
-      put('hrv_dev', r.date, r.hrv_dev)
+      const measured = dailyByDate.get(r.date)
+      if (measured?.resting_hr != null) put('rhr_dev', r.date, r.rhr_dev)
+      if (measured?.hrv_sdnn_ms != null) put('hrv_dev', r.date, r.hrv_dev)
       put('trimp_total', r.date, r.trimp_total)
       if (i > 0) put('trimp_prior', r.date, computedRows[i - 1].trimp_total)
+      const prior = new Date(`${r.date}T00:00:00Z`)
+      prior.setUTCDate(prior.getUTCDate() - 1)
+      put('steps_prior', r.date, series.steps?.get(prior.toISOString().slice(0, 10)))
     })
-    // sleep_midpoint_dev: |midpoint − rolling 14d median| in hours
+    // Personal baselines use the prior 28 calendar days; current values cannot
+    // pull their own baseline toward themselves.
+    for (const [date, delta] of rollingCalendarMedianDelta(
+      series.sleep_duration ?? new Map(),
+      28,
+      14
+    )) {
+      put('sleep_shortfall', date, -delta)
+    }
     for (const [date, deviation] of rollingCalendarMedianDeviation(
       series.sleep_midpoint ?? new Map(),
-      14,
-      5
+      28,
+      14
     )) {
       put('sleep_midpoint_dev', date, deviation)
+    }
+    for (const [date, delta] of rollingCalendarMedianDelta(
+      series.respiratory_rate ?? new Map(),
+      28,
+      14
+    )) {
+      put('respiratory_rate_dev', date, delta)
+    }
+    for (const [date, slope] of rollingWeightTrend(
+      dailyRows.map((row) => ({ date: row.date, value: row.weight_kg }))
+    )) {
+      put('weight_7d_slope', date, slope)
     }
     // per-day workout performance means
     const perfAcc: Record<string, Map<string, number[]>> = {
       decoupling: new Map(),
       hrr60: new Map()
     }
+    let workoutContextCount = 0
     for (const w of workouts.data ?? []) {
       if (!w.computed) continue
+      const zoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce(
+        (sum, zone) => sum + Number(w.computed?.time_in_zones?.[zone] ?? 0),
+        0
+      )
+      if ((w.computed.trimp ?? 0) > 0 && (w.duration_s ?? 0) > 0 && zoneSeconds >= 300) {
+        workoutContextCount++
+      }
       const day = localDateKey(w.start_at, tz)
       const pairs: [string, number | null][] = [
         ['decoupling', w.computed.decoupling_pct],
@@ -164,7 +257,7 @@ function useAnalysisSeries(): {
         put(name, day, values.reduce((a, b) => a + b, 0) / values.length)
       }
     }
-    return { series, timezone: tz }
+    return { series, timezone: tz, workoutContextCount }
   }, [daily.data, computed.data, workouts.data, config.data])
 }
 
@@ -182,12 +275,15 @@ export function InsightsView(): ReactElement {
     queryFn: () => window.api.getInsightModels(),
     staleTime: 60_000
   })
-  const { series, timezone } = useAnalysisSeries()
+  const { series, timezone, workoutContextCount } = useAnalysisSeries()
 
   const storedCorrelations = (correlationsQuery.data ?? []).filter(
     (correlation) => correlation.var_y !== 'ef'
   )
-  const correlations = storedCorrelations.filter((correlation) => {
+  const correlationSchemaCurrent = storedCorrelations.some(
+    (correlation) => correlation.var_x === 'sleep_shortfall'
+  )
+  const correlations = (correlationSchemaCurrent ? storedCorrelations : []).filter((correlation) => {
     if (correlation.var_y !== 'trimp_total') return true
     const xs = series[correlation.var_x]
     const ys = series[correlation.var_y]
@@ -198,8 +294,10 @@ export function InsightsView(): ReactElement {
     )
   })
   const waitingForLoadRecompute =
+    correlationSchemaCurrent &&
     storedCorrelations.some((correlation) => correlation.var_y === 'trimp_total') &&
     !correlations.some((correlation) => correlation.var_y === 'trimp_total')
+  const waitingForExpandedRecompute = storedCorrelations.length > 0 && !correlationSchemaCurrent
   const byKey = new Map(correlations.map((c) => [`${c.var_x}|${c.var_y}|${c.lag_days}`, c]))
 
   const scatterPoints = useMemo(() => {
@@ -216,27 +314,51 @@ export function InsightsView(): ReactElement {
       selected.var_y === 'trimp_total'
     )
   }, [selected, series, timezone])
+  const scatterAxes = useMemo(
+    () => ({
+      x: insightAxis(scatterPoints.map((point) => point.x)),
+      y: insightAxis(scatterPoints.map((point) => point.y))
+    }),
+    [scatterPoints]
+  )
 
   const models = (modelsQuery.data ?? []).filter((m) => m.coefficients)
-  const finderModel = (modelsQuery.data ?? []).find(
-    (model) => model.name === 'daily_adjusted_finder'
-  )
-  const finderDiagnostics = finderModel?.diagnostics as unknown as {
-    signal_count?: number
-    watch_count?: number
-    candidates?: FinderCandidate[]
-    caveat?: string
-  } | null
-  const finderCandidates = (finderDiagnostics?.candidates ?? []).filter(
-    (candidate) =>
-      candidate.outcome !== 'ef' && !RETIRED_FINDER_CANDIDATES.has(candidate.name)
-  )
-  const surfacedCandidates = finderCandidates.filter(
-    (candidate) => candidate.status === 'signal' || candidate.status === 'watch'
-  )
-  const collectingCount = finderCandidates.filter(
-    (candidate) => candidate.status === 'insufficient'
-  ).length
+  const finderFamilies = [
+    {
+      key: 'daily',
+      title: 'Daily recovery',
+      detail: 'Prior-day behavior, sleep, and morning recovery',
+      expectedVersion: 2,
+      model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
+    },
+    {
+      key: 'workout',
+      title: 'Workout context',
+      detail: 'Readiness, waking-day position, and circular workout time',
+      expectedVersion: 1,
+      model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
+    }
+  ].map((family) => {
+    const diagnostics = family.model?.diagnostics as unknown as FinderDiagnostics | null
+    const currentModel = diagnostics?.model_version === family.expectedVersion ? family.model : undefined
+    const currentDiagnostics = currentModel ? diagnostics : null
+    const candidates = (currentDiagnostics?.candidates ?? []).filter(
+      (candidate) =>
+        candidate.outcome !== 'ef' && !RETIRED_FINDER_CANDIDATES.has(candidate.name)
+    )
+    return {
+      ...family,
+      model: currentModel,
+      diagnostics: currentDiagnostics,
+      candidates,
+      surfaced: candidates.filter(
+        (candidate) => candidate.status === 'signal' || candidate.status === 'watch'
+      ),
+      collectingCount: candidates.filter((candidate) => candidate.status === 'insufficient').length
+    }
+  })
+  const screenedCount = finderFamilies.reduce((sum, family) => sum + family.candidates.length, 0)
+  const hasFinderModel = finderFamilies.some((family) => family.model)
   const readiness = [
     {
       label: 'Sleep context',
@@ -249,13 +371,16 @@ export function InsightsView(): ReactElement {
       detail: 'RHR or HRV days'
     },
     {
-      label: 'Workout performance',
-      value: Math.max(series.decoupling?.size ?? 0, series.hrr60?.size ?? 0),
-      detail: 'days with a computed outcome'
+      label: 'Workout context',
+      value: workoutContextCount,
+      detail: 'sessions with ≥5 min measured HR'
     }
   ]
   const genericModels = models.filter(
-    (model) => model.name !== 'daily_adjusted_finder' && model.name !== 'ef_on_sleep_dlm'
+    (model) =>
+      model.name !== 'daily_adjusted_finder' &&
+      model.name !== 'workout_context_finder' &&
+      model.name !== 'ef_on_sleep_dlm'
   )
 
   return (
@@ -289,76 +414,104 @@ export function InsightsView(): ReactElement {
             <span className="insights-kicker">Automated finder</span>
             <h2 id="insights-finder-title">Relationships that survive the checks</h2>
           </div>
-          {finderDiagnostics && (
+          {hasFinderModel && (
             <span className="insights-finder-count tabular-nums">
-              {finderCandidates.length} screened
+              {screenedCount} screened
             </span>
           )}
         </div>
 
         <div className="insights-gates" aria-label="Insight screening stages">
-          <span>Predeclared timing</span>
-          <span>Confound adjustment</span>
+          <span>Temporal ordering</span>
+          <span>Context controls</span>
+          <span>HAC + effective n</span>
           <span>False-discovery control</span>
-          <span>Split-half stability</span>
-          <span>Collinearity collapse</span>
+          <span>Block-bootstrap stability</span>
+          <span>Seven-night persistence</span>
         </div>
 
-        {!finderModel ? (
-          <p className="insights-finder-empty">
-            The adjusted finder is ready and will populate on the next nightly metrics run.
-            Candidates remain dormant until they have at least 60 usable observations.
-          </p>
-        ) : surfacedCandidates.length === 0 ? (
-          <div className="insights-finder-empty">
-            <strong>No relationship has cleared every gate yet.</strong>
-            <span>
-              {collectingCount > 0
-                ? `${collectingCount} future-facing candidates are still collecting data. `
-                : ''}
-              A quiet result is evidence too; the app will surface a candidate automatically when
-              its effect, uncertainty, and stability are strong enough.
-            </span>
-          </div>
-        ) : (
-          <div className="insights-finder-results">
-            {surfacedCandidates.map((candidate) => (
-              <article key={candidate.name} className="insights-finder-result">
-                <div>
-                  <span
-                    className={`insights-finder-status insights-finder-status--${candidate.status}`}
-                  >
-                    {candidate.status === 'signal' ? 'Cleared' : 'Watch'}
+        <div className="insights-finder-families">
+          {finderFamilies.map((family) => (
+            <section className="insights-finder-family" key={family.key}>
+              <div className="insights-finder-family-head">
+                <span>
+                  <strong>{family.title}</strong>
+                  <small>{family.detail}</small>
+                </span>
+                {family.model && (
+                  <span className="tabular-nums">{family.candidates.length} candidates</span>
+                )}
+              </div>
+              {!family.model ? (
+                <p className="insights-finder-empty">
+                  This family will populate on the next nightly metrics run. Candidates remain
+                  dormant until they have at least 60 usable observations.
+                </p>
+              ) : family.surfaced.length === 0 ? (
+                <div className="insights-finder-empty">
+                  <strong>No relationship has cleared every gate yet.</strong>
+                  <span>
+                    {family.collectingCount > 0
+                      ? `${family.collectingCount} candidates are still collecting data. `
+                      : ''}
+                    A quiet result is evidence too; this family surfaces only repeatable effects.
                   </span>
-                  <h3>{candidate.label}</h3>
-                  <p>
-                    {candidate.direction === 'co-measured'
-                      ? 'Co-measured association; direction is unresolved.'
-                      : 'Temporally ordered candidate; still observational.'}
-                  </p>
                 </div>
-                <dl>
-                  <div>
-                    <dt>Adjusted r</dt>
-                    <dd className="tabular-nums">{candidate.partial_r?.toFixed(2) ?? '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>FDR q</dt>
-                    <dd className="tabular-nums">{candidate.q_value?.toFixed(3) ?? '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>n</dt>
-                    <dd className="tabular-nums">{candidate.n}</dd>
-                  </div>
-                </dl>
-              </article>
-            ))}
-          </div>
-        )}
-        <p className="insights-caption">
-          {finderDiagnostics?.caveat ??
-            'Single-person observational data. The finder reduces common false positives; it cannot establish causality.'}
-        </p>
+              ) : (
+                <div className="insights-finder-results">
+                  {family.surfaced.map((candidate) => (
+                    <article key={candidate.name} className="insights-finder-result">
+                      <div>
+                        <span
+                          className={`insights-finder-status insights-finder-status--${candidate.status}`}
+                        >
+                          {candidate.status === 'signal' ? 'Cleared' : 'Watch'}
+                        </span>
+                        <h3>{candidate.label}</h3>
+                        <p>{candidateInterpretation(candidate)}</p>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>{candidate.kind === 'cyclic' ? 'Timing effect' : 'Adjusted r'}</dt>
+                          <dd className="tabular-nums">
+                            {(candidate.kind === 'cyclic'
+                              ? candidate.effect_size
+                              : candidate.partial_r
+                            )?.toFixed(2) ?? '—'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>FDR q</dt>
+                          <dd className="tabular-nums">
+                            {candidate.q_value?.toFixed(3) ?? '—'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>n</dt>
+                          <dd className="tabular-nums">{candidate.n}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              )}
+              <p className="insights-caption">
+                {family.diagnostics?.caveat ??
+                  'Single-person observational data. Screening reduces common false positives; it cannot establish causality.'}
+              </p>
+              {(family.diagnostics?.placebo?.tested ?? 0) > 0 && (
+                <p className="insights-calibration">
+                  Null calibration:{' '}
+                  <strong>
+                    {family.diagnostics?.placebo?.signal_count ?? 0}/
+                    {family.diagnostics?.placebo?.tested ?? 0}
+                  </strong>{' '}
+                  shifted candidates fired. Any matching real candidate is suppressed.
+                </p>
+              )}
+            </section>
+          ))}
+        </div>
       </section>
 
       {correlations.length === 0 ? (
@@ -366,6 +519,8 @@ export function InsightsView(): ReactElement {
           message={
             waitingForLoadRecompute
               ? 'Load relationships are waiting for the next metrics recompute so rest-day zeroes can be excluded.'
+              : waitingForExpandedRecompute
+                ? 'Expanded recovery and workout-context relationships are waiting for the next nightly metrics recompute.'
               : 'Keep training — this tab switches on at ~20 observations (~5–6 weeks) and gets honest at ~3 months.'
           }
         />
@@ -428,12 +583,24 @@ export function InsightsView(): ReactElement {
                     <button
                       key={p.key}
                       className={
-                        isSelected ? 'insights-cell insights-cell--selected' : 'insights-cell'
+                        [
+                          'insights-cell',
+                          isSelected ? 'insights-cell--selected' : '',
+                          cell.rank_disagree ? 'insights-cell--rank-disagree' : ''
+                        ]
+                          .filter(Boolean)
+                          .join(' ')
                       }
                       style={{ background: cellColor(cell.r) }}
+                      title={
+                        cell.rank_disagree
+                          ? 'Pearson and rank correlation disagree; inspect for outliers or nonlinearity.'
+                          : `Pearson r ${cell.r.toFixed(2)}`
+                      }
                       onClick={() => setSelected(cell)}
                     >
                       {cell.r.toFixed(2)}
+                      {cell.rank_disagree && <span aria-label="rank robustness warning">†</span>}
                     </button>
                   )
                 })}
@@ -445,8 +612,9 @@ export function InsightsView(): ReactElement {
             data — read as hypotheses, not conclusions. p is autocorrelation-corrected (these are
             smoothed daily series — the effective sample is far smaller than the day count); q is
             the false-discovery rate across the whole grid, the number to trust before believing
-            any single cell. Workout-day load excludes rest-day zeroes; lag moves the driver back
-            from each measured workout day.
+            any single cell. A † marks Pearson/rank disagreement, often an outlier or nonlinear
+            relationship. Workout-day load excludes rest-day zeroes; lag moves the driver back from
+            each measured workout day.
           </p>
 
           {selected && (
@@ -460,6 +628,7 @@ export function InsightsView(): ReactElement {
                   {selected.p_value < 0.001 ? '<0.001' : selected.p_value.toFixed(3)}
                   {selected.q_value != null &&
                     ` · q ${selected.q_value < 0.001 ? '<0.001' : selected.q_value.toFixed(3)}`}
+                  {selected.spearman_r != null && ` · ρ ${selected.spearman_r.toFixed(2)}`}
                 </span>
               }
             >
@@ -469,7 +638,8 @@ export function InsightsView(): ReactElement {
                   <XAxis
                     dataKey="x"
                     type="number"
-                    domain={['auto', 'auto']}
+                    domain={scatterAxes.x.domain}
+                    ticks={scatterAxes.x.ticks}
                     tick={{ fill: 'var(--color-text-tertiary)', fontSize: 12 }}
                     axisLine={false}
                     tickLine={false}
@@ -477,7 +647,8 @@ export function InsightsView(): ReactElement {
                   <YAxis
                     dataKey="y"
                     type="number"
-                    domain={['auto', 'auto']}
+                    domain={scatterAxes.y.domain}
+                    ticks={scatterAxes.y.ticks}
                     tick={{ fill: 'var(--color-text-tertiary)', fontSize: 12 }}
                     axisLine={false}
                     tickLine={false}

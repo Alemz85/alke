@@ -7,13 +7,17 @@ import pytest
 from metrics.insights import (
     _bh_qvalues,
     _block_bootstrap_stability,
+    _evaluate_cyclic_spec,
     _effective_n,
     _evaluate_spec,
     _lag1_autocorr,
     _nw_maxlags,
+    _suppress_placebo_sensitive,
     apply_persistence,
     compute_correlations,
     discover_adjusted_insights,
+    discover_workout_context_insights,
+    prior_rolling_deviation,
     weight_series,
     zscore_trailing,
 )
@@ -41,6 +45,24 @@ def test_zscore_trailing_zero_mean_unit_sd():
     for col in z.columns:
         assert z[col].mean() == pytest.approx(0.0, abs=1e-9)
         assert z[col].std(ddof=0) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_prior_rolling_deviation_excludes_current_observation_and_uses_calendar_days():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04",
+            "2026-01-10", "2026-01-11",
+        ]
+    )
+    values = pd.Series([8.0, 8.0, 8.0, 8.0, 20.0, 7.0], index=dates)
+
+    deviation = prior_rolling_deviation(values, days=7, min_periods=2)
+
+    # Jan 10 only sees Jan 3-4 in the prior 7 calendar days. Its extreme current
+    # value cannot pull its own baseline upward.
+    assert deviation.loc["2026-01-10"] == pytest.approx(12.0)
+    # Jan 11 sees Jan 4 and Jan 10; it is not the "last two observations" rule.
+    assert deviation.loc["2026-01-11"] == pytest.approx(7.0 - 14.0)
 
 
 def test_correlations_detect_lagged_relationship():
@@ -131,8 +153,150 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
+    assert model["diagnostics"]["model_version"] == 2
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
+
+
+def test_adjusted_finder_removes_shared_annual_seasonality():
+    rng = np.random.default_rng(171)
+    n = 730
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    annual = np.sin(2 * np.pi * np.arange(n) / 365.2425)
+    frame = pd.DataFrame(
+        {
+            "driver": annual + rng.normal(0, 0.2, n),
+            "outcome": annual + rng.normal(0, 0.2, n),
+        },
+        index=dates,
+    )
+    specs = [{
+        "name": "seasonal", "label": "Seasonal", "driver": "driver",
+        "outcome": "outcome", "controls": [], "direction": "co-measured",
+    }]
+
+    model = discover_adjusted_insights(
+        frame, specs=specs, min_n=60, boot_reps=30, run_placebos=False,
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert abs(candidate["partial_r"]) < 0.15
+    assert candidate["raw_status"] == "no_clear_signal"
+
+
+def test_cyclic_workout_candidate_recovers_peak_across_midnight_safe_clock():
+    rng = np.random.default_rng(91)
+    n = 240
+    hours = rng.uniform(0, 24, n)
+    theta = 2 * np.pi * hours / 24
+    # A planted peak at 18:00. The relationship is circular rather than a
+    # discontinuous 0..24 linear slope.
+    outcome = 1.1 * np.cos(2 * np.pi * (hours - 18) / 24) + rng.normal(0, 0.35, n)
+    frame = pd.DataFrame(
+        {
+            "start_sin": np.sin(theta),
+            "start_cos": np.cos(theta),
+            "outcome": outcome,
+        },
+        index=pd.date_range("2025-01-01", periods=n, freq="2D"),
+    )
+    spec = {
+        "name": "time_to_outcome",
+        "label": "Workout time → outcome",
+        "outcome": "outcome",
+        "controls": [],
+        "direction": "circadian",
+    }
+
+    result = _evaluate_cyclic_spec(frame, spec, min_n=60, boot_reps=80)
+
+    assert result is not None
+    assert result["p_value"] < 1e-6
+    assert result["effect_size"] > 0.7
+    assert result["stable"] is True
+    assert result["phase_within_6h"] >= 0.8
+    assert result["peak_hour"] == pytest.approx(18.0, abs=1.0)
+
+
+def test_cyclic_workout_candidate_refuses_to_extrapolate_from_one_time_window():
+    rng = np.random.default_rng(911)
+    n = 100
+    hours = rng.uniform(17, 19, n)
+    theta = 2 * np.pi * hours / 24
+    frame = pd.DataFrame(
+        {"start_sin": np.sin(theta), "start_cos": np.cos(theta), "outcome": rng.normal(size=n)},
+        index=pd.date_range("2025-01-01", periods=n, freq="D"),
+    )
+    spec = {
+        "name": "narrow_time", "label": "Narrow time", "outcome": "outcome",
+        "controls": [], "kind": "cyclic",
+    }
+
+    result = _evaluate_cyclic_spec(frame, spec, min_n=60, boot_reps=20)
+
+    assert result is not None
+    assert result["raw_status"] == "insufficient"
+    assert result["reason"] == "time_coverage"
+    assert result["time_bin_counts"]["morning"] == 0
+
+
+def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
+    rng = np.random.default_rng(92)
+    n = 180
+    hours = rng.uniform(0, 24, n)
+    theta = 2 * np.pi * hours / 24
+    frame = pd.DataFrame(
+        {
+            "start_sin": np.sin(theta),
+            "start_cos": np.cos(theta),
+            "workout_intensity": np.cos(theta) + rng.normal(0, 0.3, n),
+        },
+        index=pd.date_range("2025-01-01", periods=n, freq="D"),
+    )
+    specs = [{
+        "name": "time_to_intensity",
+        "label": "Workout time → recorded intensity",
+        "outcome": "workout_intensity",
+        "controls": [],
+        "direction": "circadian",
+        "kind": "cyclic",
+    }]
+
+    model = discover_workout_context_insights(
+        frame, specs=specs, min_n=60, boot_reps=50, promote_after=1,
+        run_placebos=False,
+    )
+
+    assert model["name"] == "workout_context_finder"
+    assert model["diagnostics"]["model_version"] == 1
+    candidate = model["diagnostics"]["candidates"][0]
+    assert candidate["status"] == "signal"
+    assert candidate["q_value"] == pytest.approx(candidate["p_value"])
+
+
+def test_adjusted_finder_rejects_outlier_only_rank_disagreement():
+    rng = np.random.default_rng(93)
+    n = 100
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    x[0] = 50.0
+    y[0] = 50.0
+    frame = pd.DataFrame({"x": x, "y": y}, index=pd.date_range("2025-01-01", periods=n))
+    specs = [{
+        "name": "outlier", "label": "Outlier", "driver": "x", "outcome": "y",
+        "controls": [], "direction": "co-measured",
+    }]
+
+    model = discover_adjusted_insights(
+        frame, specs=specs, min_n=60, boot_reps=40, promote_after=1,
+        run_placebos=False,
+    )
+    candidate = model["diagnostics"]["candidates"][0]
+
+    assert candidate["partial_r"] > 0.8
+    assert abs(candidate["partial_spearman"]) < 0.4
+    assert candidate["rank_disagree"] is True
+    assert candidate["raw_status"] == "no_clear_signal"
 
 
 def test_finder_persistence_promotes_signal_after_seven_nights():
@@ -180,6 +344,26 @@ def test_apply_persistence_promotes_after_streak_and_demotes_after_misses():
     cand = _cand("a", "no_clear_signal")
     state = apply_persistence([cand], state, promote_after=3, demote_after=2)
     assert cand["status"] == "no_clear_signal"
+
+
+def test_candidate_is_suppressed_only_by_its_own_firing_placebo():
+    candidates = [
+        {"name": "a", "raw_status": "signal"},
+        {"name": "b", "raw_status": "signal"},
+        {"name": "c", "raw_status": "no_clear_signal"},
+    ]
+    placebos = [
+        {"name": "a__placebo61", "shift": 61, "raw_status": "watch"},
+        {"name": "b__placebo61", "shift": 61, "raw_status": "no_clear_signal"},
+        {"name": "c__placebo61", "shift": 61, "raw_status": "signal"},
+    ]
+
+    _suppress_placebo_sensitive(candidates, placebos)
+
+    assert candidates[0]["raw_status"] == "suppressed_placebo"
+    assert candidates[0]["placebo_sensitivity"]["shifts"] == [61]
+    assert candidates[1]["raw_status"] == "signal"
+    assert candidates[2]["raw_status"] == "no_clear_signal"
 
 
 def test_apply_persistence_carries_absent_candidates_unchanged():
@@ -455,6 +639,45 @@ def test_default_specs_include_steps_candidates():
     assert all("trimp_prior" in s["controls"] for s in steps_specs.values())
 
 
+def test_adjusted_specs_never_control_same_day_load_state():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS
+
+    controls = {control for spec in DEFAULT_ADJUSTED_SPECS for control in spec["controls"]}
+    assert "ctl" not in controls
+    assert "atl" not in controls
+    assert "ctl_prior" in controls
+    assert "ctl_pre_exposure" in controls
+
+
+def test_default_specs_cover_respiration_continuity_and_relative_sleep():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS
+
+    names = {spec["name"] for spec in DEFAULT_ADJUSTED_SPECS}
+    assert {
+        "prior_load_to_respiration",
+        "prior_load_to_sleep_continuity",
+        "sleep_shortfall_to_hrv",
+        "timing_to_respiration",
+        "steps_to_sleep_continuity",
+    } <= names
+
+
+def test_workout_specs_control_session_sequence_and_include_wake_alignment():
+    from metrics.insights import DEFAULT_WORKOUT_SPECS
+
+    names = {spec["name"] for spec in DEFAULT_WORKOUT_SPECS}
+    assert {
+        "hours_awake_to_workout_duration",
+        "hours_awake_to_workout_intensity",
+        "workout_time_to_load",
+        "workout_time_to_high_zones",
+    } <= names
+    for spec in DEFAULT_WORKOUT_SPECS:
+        assert "same_day_prior_load" in spec["controls"]
+        assert "log_hours_since_prev_workout" in spec["controls"]
+        assert "log_days_since_prev_modality" in spec["controls"]
+
+
 def test_correlations_spearman_flags_outlier_driven_pair():
     n = 60
     rng = np.random.default_rng(42)
@@ -519,6 +742,148 @@ def test_perf_series_by_date_keeps_ef_out_of_inference():
     assert date(2026, 7, 2) not in out
 
 
+def test_daily_insight_frame_uses_only_pre_outcome_load_controls():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_daily_insight_frame
+
+    dates = pd.date_range("2026-01-01", periods=20, freq="D")
+    daily_rows = [
+        {
+            "date": d.date().isoformat(),
+            "rhr_dev": float(i), "hrv_dev": float(-i),
+            "ctl": float(100 + i), "atl": float(200 + i),
+            "trimp_total": float(i),
+        }
+        for i, d in enumerate(dates)
+    ]
+    daily_metrics = [
+        {
+            "date": d.date().isoformat(),
+            "sleep_duration_min": 480.0 if i < 19 else 420.0,
+            "sleep_start": f"{d.date().isoformat()}T00:00:00+00:00",
+            "sleep_end": f"{d.date().isoformat()}T08:00:00+00:00",
+            "sleep_stages": {"awake": 0.5, "core": 4.5, "deep": 1.0, "rem": 2.0},
+            "respiratory_rate": 15.0 + i / 10,
+            "steps": 5_000 + i,
+        }
+        for i, d in enumerate(dates)
+    ]
+
+    frame = build_daily_insight_frame(daily_metrics, daily_rows, ZoneInfo("UTC"))
+    row = frame.iloc[-1]
+
+    assert row["ctl_prior"] == pytest.approx(118.0)
+    assert row["atl_prior"] == pytest.approx(218.0)
+    assert row["ctl_pre_exposure"] == pytest.approx(117.0)
+    assert row["trimp_prior"] == pytest.approx(18.0)
+    assert row["sleep_shortfall"] == pytest.approx(60.0)
+    assert row["sleep_awake_fraction"] == pytest.approx(0.5 / 8.0)
+    assert row["wake_hour"] == pytest.approx(8.0)
+
+
+def test_daily_insight_frame_masks_rolling_recovery_on_unmeasured_days():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_daily_insight_frame
+
+    daily_rows = [
+        {"date": "2026-01-01", "rhr_dev": 1.0, "hrv_dev": -2.0, "ctl": 5.0, "atl": 6.0, "trimp_total": 0.0},
+        {"date": "2026-01-02", "rhr_dev": 1.0, "hrv_dev": -2.0, "ctl": 5.0, "atl": 6.0, "trimp_total": 0.0},
+    ]
+    daily_metrics = [
+        {"date": "2026-01-01", "resting_hr": 52.0, "hrv_sdnn_ms": 65.0},
+        {"date": "2026-01-02", "resting_hr": None, "hrv_sdnn_ms": None},
+    ]
+
+    frame = build_daily_insight_frame(daily_metrics, daily_rows, ZoneInfo("UTC"))
+
+    assert frame.loc["2026-01-01", "rhr_dev"] == pytest.approx(1.0)
+    assert frame.loc["2026-01-01", "hrv_dev"] == pytest.approx(-2.0)
+    assert pd.isna(frame.loc["2026-01-02", "rhr_dev"])
+    assert pd.isna(frame.loc["2026-01-02", "hrv_dev"])
+
+
+def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    index = pd.date_range("2026-01-01", periods=3, freq="D")
+    daily = pd.DataFrame(
+        {
+            "ctl_prior": [10.0, 11.0, 12.0],
+            "trimp_prior": [1.0, 2.0, 3.0],
+            "sleep_shortfall": [0.0, 30.0, -20.0],
+        },
+        index=index,
+    )
+    workouts = [
+        {
+            "id": "valid", "type": "indoor_cycling",
+            "start_at": "2026-01-02T23:30:00Z", "duration_s": 1200,
+        },
+        {
+            "id": "no-load", "type": "rowing",
+            "start_at": "2026-01-03T08:00:00Z", "duration_s": 1800,
+        },
+    ]
+    computed = {
+        "valid": {
+            "trimp": 30.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        },
+        "no-load": {
+            "trimp": 0.0,
+            "time_in_zones": {"z1": 1800, "z2": 0, "z3": 0, "z4": 0, "z5": 0},
+        },
+    }
+
+    frame = build_workout_insight_frame(workouts, computed, daily, ZoneInfo("UTC"))
+
+    assert len(frame) == 1
+    row = frame.iloc[0]
+    assert row["start_hour"] == pytest.approx(23.5)
+    assert row["workout_load"] == pytest.approx(30.0)
+    assert row["workout_intensity"] == pytest.approx(1.5)
+    assert row["high_zone_fraction"] == pytest.approx(0.25)
+    assert row["sleep_shortfall"] == pytest.approx(30.0)
+    assert row["modality"] == "cycling"
+
+
+def test_workout_insight_frame_controls_prior_session_and_hours_awake():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    daily = pd.DataFrame(
+        {
+            "wake_hour": [8.0], "ctl_prior": [10.0], "trimp_prior": [5.0],
+        },
+        index=pd.to_datetime(["2026-01-02"]),
+    )
+    workouts = [
+        {"id": "first", "type": "rowing", "start_at": "2026-01-02T10:00:00Z", "duration_s": 1200},
+        {"id": "second", "type": "rowing", "start_at": "2026-01-02T18:00:00Z", "duration_s": 1800},
+    ]
+    computed = {
+        workout_id: {
+            "trimp": trimp,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        }
+        for workout_id, trimp in (("first", 20.0), ("second", 30.0))
+    }
+
+    frame = build_workout_insight_frame(workouts, computed, daily, ZoneInfo("UTC"))
+    second = frame.iloc[1]
+
+    assert second["hours_since_wake"] == pytest.approx(10.0)
+    assert second["hours_since_prev_workout"] == pytest.approx(8.0)
+    assert second["days_since_prev_modality"] == pytest.approx(8.0 / 24.0)
+    assert second["same_day_prior_load"] == pytest.approx(20.0)
+    assert second["load_prev_modality"] == pytest.approx(20.0)
+
+
 def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
     from zoneinfo import ZoneInfo
 
@@ -549,8 +914,26 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         tz=ZoneInfo("UTC"),
     )
 
-    assert [model["name"] for model in written_models] == ["daily_adjusted_finder"]
+    assert [model["name"] for model in written_models] == [
+        "daily_adjusted_finder",
+        "workout_context_finder",
+    ]
     assert deleted_models == ["ef_on_sleep_dlm"]
+
+
+def test_persistence_state_never_crosses_model_versions():
+    from metrics.compute import insight_prior_state
+
+    prior = {
+        "diagnostics": {
+            "model_version": 1,
+            "persistence": {"state": {"candidate": {"streak": 7}}},
+        }
+    }
+
+    assert insight_prior_state(prior, expected_version=1) == {"candidate": {"streak": 7}}
+    assert insight_prior_state(prior, expected_version=2) is None
+    assert insight_prior_state(None, expected_version=1) is None
 
 
 def test_sleep_midpoint_uses_actual_instant_on_local_clock_across_dst():

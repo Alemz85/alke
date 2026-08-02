@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildInsightScatter,
+  insightAxis,
   insightWindowStart,
   rollingCalendarMedianDeviation,
+  rollingCalendarMedianDelta,
+  rollingWeightTrend,
+  sleepAwakeFraction,
   sleepMidpointHours
 } from '../insightSeries'
 
@@ -80,7 +84,7 @@ describe('insightWindowStart', () => {
 })
 
 describe('rollingCalendarMedianDeviation', () => {
-  it('uses calendar days rather than the last available observations across gaps', () => {
+  it('uses prior calendar days and excludes the current observation', () => {
     const midpoints = new Map([
       ['2026-01-01', 1],
       ['2026-01-02', 2],
@@ -91,12 +95,59 @@ describe('rollingCalendarMedianDeviation', () => {
       ['2026-01-21', 11],
       ['2026-01-22', 12],
       ['2026-01-23', 13],
-      ['2026-01-24', 14]
+      ['2026-01-24', 14],
+      ['2026-01-25', 15]
     ])
 
     const deviations = rollingCalendarMedianDeviation(midpoints, 14, 5)
 
     expect(deviations.has('2026-01-20')).toBe(false)
-    expect(deviations.get('2026-01-24')).toBe(2)
+    expect(deviations.has('2026-01-24')).toBe(false)
+    expect(deviations.get('2026-01-25')).toBe(3)
+  })
+
+  it('keeps a current extreme out of its own signed baseline', () => {
+    const values = new Map([
+      ['2026-01-01', 8], ['2026-01-02', 8], ['2026-01-03', 8],
+      ['2026-01-04', 8], ['2026-01-10', 20], ['2026-01-11', 7]
+    ])
+
+    const deltas = rollingCalendarMedianDelta(values, 7, 2)
+
+    expect(deltas.get('2026-01-10')).toBe(12)
+    expect(deltas.get('2026-01-11')).toBe(-7)
+  })
+})
+
+describe('sleepAwakeFraction', () => {
+  it('uses the internally consistent stage units and rejects malformed stages', () => {
+    expect(sleepAwakeFraction({ awake: 0.5, core: 4.5, deep: 1, rem: 2 })).toBeCloseTo(
+      0.5 / 8
+    )
+    expect(sleepAwakeFraction({ awake: 0.5, core: 4.5 })).toBeNull()
+  })
+})
+
+describe('rollingWeightTrend', () => {
+  it('mirrors the three-day fill and seven-day mean delta used by metrics', () => {
+    const rows = Array.from({ length: 15 }, (_, index) => ({
+      date: `2026-01-${String(index + 1).padStart(2, '0')}`,
+      value: index === 0 ? 80 : index === 7 ? 79 : null
+    }))
+
+    const trend = rollingWeightTrend(rows)
+
+    expect(trend.get('2026-01-11')).toBeCloseTo(-1)
+    expect(trend.has('2026-01-15')).toBe(false)
+  })
+})
+
+describe('insightAxis', () => {
+  it('uses a nice D3 domain and remains valid for a constant series', () => {
+    expect(insightAxis([1.2, 4.8], 5).domain).toEqual([1, 5])
+    const constant = insightAxis([3, 3, 3], 5)
+    expect(constant.domain[0]).toBeLessThan(3)
+    expect(constant.domain[1]).toBeGreaterThan(3)
+    expect(constant.ticks.length).toBeGreaterThan(1)
   })
 })

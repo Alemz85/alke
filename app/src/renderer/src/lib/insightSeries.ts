@@ -1,3 +1,5 @@
+import { extent } from 'd3-array'
+import { scaleLinear } from 'd3-scale'
 import { addDays, todayYMD, toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 
 const CORRELATION_WINDOW_DAYS = 180
@@ -80,6 +82,20 @@ export function rollingCalendarMedianDeviation(
   windowDays: number,
   minPeriods: number
 ): Map<string, number> {
+  return new Map(
+    [...rollingCalendarMedianDelta(values, windowDays, minPeriods)].map(([date, value]) => [
+      date,
+      Math.abs(value)
+    ])
+  )
+}
+
+/** Current value minus the median of prior values in a calendar-day window. */
+export function rollingCalendarMedianDelta(
+  values: Map<string, number>,
+  windowDays: number,
+  minPeriods: number
+): Map<string, number> {
   const entries = [...values.entries()].sort(([left], [right]) => left.localeCompare(right))
   const deviations = new Map<string, number>()
   let left = 0
@@ -88,19 +104,86 @@ export function rollingCalendarMedianDeviation(
     while (
       left < i &&
       currentMs - Date.parse(`${entries[left][0]}T00:00:00Z`) >
-        (windowDays - 1) * 86_400_000
+        windowDays * 86_400_000
     ) {
       left++
     }
     const window = entries
-      .slice(left, i + 1)
+      .slice(left, i)
       .map(([, value]) => value)
       .sort((a, b) => a - b)
     if (window.length < minPeriods) continue
     const middle = Math.floor(window.length / 2)
     const median =
       window.length % 2 ? window[middle] : (window[middle - 1] + window[middle]) / 2
-    deviations.set(entries[i][0], Math.abs(entries[i][1] - median))
+    deviations.set(entries[i][0], entries[i][1] - median)
   }
   return deviations
+}
+
+/** Conservative sleep-continuity proxy from the stage aggregate. */
+export function sleepAwakeFraction(stages: Record<string, unknown> | null): number | null {
+  if (!stages) return null
+  const values = ['awake', 'core', 'deep', 'rem'].map((name) => Number(stages[name]))
+  if (values.some((value) => !Number.isFinite(value))) return null
+  const total = values.reduce((sum, value) => sum + value, 0)
+  return total > 0 ? values[0] / total : null
+}
+
+export interface DatedNullableValue {
+  date: string
+  value: number | null
+}
+
+/** Mirrors metrics.insights.weight_series over a complete daily calendar. */
+export function rollingWeightTrend(rows: DatedNullableValue[]): Map<string, number> {
+  const sorted = [...rows].sort((left, right) => left.date.localeCompare(right.date))
+  const filled: Array<number | null> = []
+  let last: number | null = null
+  let missingDays = 0
+  for (const row of sorted) {
+    if (row.value !== null && Number.isFinite(row.value)) {
+      last = row.value
+      missingDays = 0
+      filled.push(row.value)
+    } else {
+      missingDays++
+      filled.push(last !== null && missingDays <= 3 ? last : null)
+    }
+  }
+  const means: Array<number | null> = filled.map((_, index) => {
+    const window = filled
+      .slice(Math.max(0, index - 6), index + 1)
+      .filter((value): value is number => value !== null)
+    return window.length >= 4 ? window.reduce((sum, value) => sum + value, 0) / window.length : null
+  })
+  const trend = new Map<string, number>()
+  for (let index = 7; index < sorted.length; index++) {
+    const current = means[index]
+    const prior = means[index - 7]
+    if (current !== null && prior !== null) {
+      trend.set(sorted[index].date, current - prior)
+    }
+  }
+  return trend
+}
+
+export interface InsightAxis {
+  domain: [number, number]
+  ticks: number[]
+}
+
+/** D3-owned numeric domain/ticks for the Recharts scatter axes. */
+export function insightAxis(values: number[], tickCount = 5): InsightAxis {
+  const [minimum, maximum] = extent(values.filter(Number.isFinite))
+  let lower = minimum ?? 0
+  let upper = maximum ?? 1
+  if (lower === upper) {
+    const padding = Math.max(Math.abs(lower) * 0.05, 1)
+    lower -= padding
+    upper += padding
+  }
+  const scale = scaleLinear().domain([lower, upper]).nice(tickCount)
+  const domain = scale.domain() as [number, number]
+  return { domain, ticks: scale.ticks(tickCount) }
 }

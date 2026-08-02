@@ -21,7 +21,10 @@ from scipy.stats import pearsonr, spearmanr, t as student_t
 MIN_CORR_N = 20
 MIN_ADJUSTED_N = 60
 
-DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior", "steps_prior"]
+DRIVERS = [
+    "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
+    "rhr_dev", "hrv_dev", "respiratory_rate_dev", "trimp_prior", "steps_prior",
+]
 PERFS = ["decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 
 # Pairs the exploratory sweep must skip: trimp_prior IS trimp_total shifted one
@@ -34,6 +37,9 @@ MIN_ADJUSTED_N_EFF = 30.0  # min EFFECTIVE n of the control-residualized pair
 BOOT_REPS = 200            # moving-block bootstrap replicates per candidate
 BOOT_BLOCK_LEN = 14        # days per block — preserves within-block autocorrelation
 BOOT_SIGN_AGREE = 0.80     # replicate sign-agreement required for "stable"
+BOOT_PHASE_WITHIN_HOURS = 6.0
+BOOT_PHASE_AGREE = 0.80
+MIN_CYCLIC_BIN_N = 10
 PROMOTE_AFTER = 7          # consecutive raw-signal nights before surfacing "signal"
 DEMOTE_AFTER = 7           # consecutive raw-miss nights before a surfaced signal drops
 PLACEBO_SHIFTS = (61, 91, 122)  # circular driver shifts for the null-calibration suite
@@ -42,24 +48,187 @@ WEIGHT_FFILL_LIMIT_DAYS = 3
 WEIGHT_ROLLING_WINDOW_DAYS = 7
 WEIGHT_ROLLING_MIN_PERIODS = 4
 
+_RECOVERY_OUTCOMES = (
+    ("sleep_shortfall", "sleep shortfall"),
+    ("sleep_awake_fraction", "sleep awake fraction"),
+    ("rhr_dev", "RHR deviation"),
+    ("hrv_dev", "HRV deviation"),
+    ("respiratory_rate_dev", "respiratory-rate deviation"),
+)
+
 DEFAULT_ADJUSTED_SPECS = [
-    {"name": "prior_load_to_sleep", "label": "Prior-day load → sleep duration", "driver": "trimp_prior", "outcome": "sleep_duration", "controls": ["lag:sleep_duration", "ctl"], "direction": "lagged"},
-    {"name": "prior_load_to_rhr", "label": "Prior-day load → RHR deviation", "driver": "trimp_prior", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "ctl"], "direction": "lagged"},
-    {"name": "prior_load_to_hrv", "label": "Prior-day load → HRV deviation", "driver": "trimp_prior", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "ctl"], "direction": "lagged"},
-    {"name": "sleep_to_rhr", "label": "Sleep duration ↔ RHR deviation", "driver": "sleep_duration", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "atl"], "direction": "co-measured"},
-    {"name": "sleep_to_hrv", "label": "Sleep duration ↔ HRV deviation", "driver": "sleep_duration", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
-    {"name": "timing_to_sleep", "label": "Sleep timing drift ↔ duration", "driver": "sleep_midpoint_dev", "outcome": "sleep_duration", "controls": ["lag:sleep_duration"], "direction": "co-measured"},
-    {"name": "timing_to_rhr", "label": "Sleep timing drift ↔ RHR deviation", "driver": "sleep_midpoint_dev", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "atl"], "direction": "co-measured"},
-    {"name": "timing_to_hrv", "label": "Sleep timing drift ↔ HRV deviation", "driver": "sleep_midpoint_dev", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
-    {"name": "rhr_to_workout_load", "label": "RHR deviation → workout-day load", "driver": "rhr_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "workout-day-dose", "outcome_positive_only": True},
-    {"name": "hrv_to_workout_load", "label": "HRV deviation → workout-day load", "driver": "hrv_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "workout-day-dose", "outcome_positive_only": True},
-    # NEAT / ambient activity: does yesterday's movement predict recovery and
-    # sleep BEYOND training load? trimp_prior is a control so big-step days
-    # don't merely proxy long workouts; lag:outcome absorbs autocorrelation.
-    {"name": "steps_to_rhr", "label": "Prior-day steps → RHR deviation", "driver": "steps_prior", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "trimp_prior", "ctl"], "direction": "lagged"},
-    {"name": "steps_to_hrv", "label": "Prior-day steps → HRV deviation", "driver": "steps_prior", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "trimp_prior", "ctl"], "direction": "lagged"},
-    {"name": "steps_to_sleep", "label": "Prior-day steps → sleep duration", "driver": "steps_prior", "outcome": "sleep_duration", "controls": ["lag:sleep_duration", "trimp_prior"], "direction": "lagged"},
+    *[
+        {
+            "name": f"prior_load_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev').removesuffix('_shortfall')}",
+            "label": f"Prior-day load → {label}",
+            "driver": "trimp_prior", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "ctl_pre_exposure", "steps_prior"],
+            "direction": "lagged",
+        }
+        for outcome, label in _RECOVERY_OUTCOMES
+    ],
+    *[
+        {
+            "name": f"steps_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev').removesuffix('_shortfall')}",
+            "label": f"Prior-day steps → {label}",
+            "driver": "steps_prior", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "trimp_prior", "ctl_pre_exposure"],
+            "direction": "lagged",
+        }
+        for outcome, label in _RECOVERY_OUTCOMES
+    ],
+    *[
+        {
+            "name": f"sleep_shortfall_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
+            "label": f"Sleep shortfall ↔ {label}",
+            "driver": "sleep_shortfall", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "atl_prior"],
+            "direction": "co-measured",
+        }
+        for outcome, label in _RECOVERY_OUTCOMES[2:]
+    ],
+    {
+        "name": "timing_to_sleep_shortfall", "label": "Sleep timing drift ↔ shortfall",
+        "driver": "sleep_midpoint_dev", "outcome": "sleep_shortfall",
+        "controls": ["lag:sleep_shortfall", "atl_prior"], "direction": "co-measured",
+    },
+    *[
+        {
+            "name": f"timing_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
+            "label": f"Sleep timing drift ↔ {label}",
+            "driver": "sleep_midpoint_dev", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "atl_prior"],
+            "direction": "co-measured",
+        }
+        for outcome, label in _RECOVERY_OUTCOMES[2:]
+    ],
+    *[
+        {
+            "name": f"sleep_continuity_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
+            "label": f"Sleep awake fraction ↔ {label}",
+            "driver": "sleep_awake_fraction", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "atl_prior"],
+            "direction": "co-measured",
+        }
+        for outcome, label in _RECOVERY_OUTCOMES[2:]
+    ],
+    {
+        "name": "rhr_to_workout_load", "label": "RHR deviation → workout-day load",
+        "driver": "rhr_dev", "outcome": "trimp_total",
+        "controls": ["lag:trimp_total", "ctl_prior"],
+        "direction": "workout-day-dose", "outcome_positive_only": True,
+    },
+    {
+        "name": "hrv_to_workout_load", "label": "HRV deviation → workout-day load",
+        "driver": "hrv_dev", "outcome": "trimp_total",
+        "controls": ["lag:trimp_total", "ctl_prior"],
+        "direction": "workout-day-dose", "outcome_positive_only": True,
+    },
 ]
+
+WORKOUT_MODALITY_CONTROLS = [
+    "modality_cycling", "modality_other", "modality_rowing",
+    "modality_running", "modality_strength", "modality_surfing",
+    "modality_swim", "modality_walking",
+]
+_WORKOUT_BASE_CONTROLS = [
+    "ctl_prior", "trimp_prior", "same_day_prior_load",
+    "log_hours_since_prev_workout", "log_days_since_prev_modality",
+    *WORKOUT_MODALITY_CONTROLS,
+]
+_WORKOUT_READINESS = (
+    ("sleep_shortfall", "Sleep shortfall"),
+    ("sleep_midpoint_dev", "Sleep timing drift"),
+    ("rhr_dev", "RHR deviation"),
+    ("hrv_dev", "HRV deviation"),
+    ("respiratory_rate_dev", "Respiratory-rate deviation"),
+)
+
+DEFAULT_WORKOUT_SPECS = [
+    *[
+        {
+            "name": f"{driver}_to_workout_duration",
+            "label": f"{label} → workout duration",
+            "driver": driver, "outcome": "workout_duration",
+            "controls": [*_WORKOUT_BASE_CONTROLS, "duration_prev_modality"],
+            "direction": "morning-to-workout", "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_READINESS
+    ],
+    {
+        "name": "hours_awake_to_workout_duration",
+        "label": "Hours awake before workout → duration",
+        "driver": "hours_since_wake", "outcome": "workout_duration",
+        "controls": [*_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "duration_prev_modality"],
+        "direction": "same-day-context", "kind": "scalar",
+    },
+    {
+        "name": "hours_awake_to_workout_intensity",
+        "label": "Hours awake before workout → recorded intensity",
+        "driver": "hours_since_wake", "outcome": "workout_intensity",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            "intensity_prev_modality",
+        ],
+        "direction": "same-day-context", "kind": "scalar",
+    },
+    *[
+        {
+            "name": f"{driver}_to_workout_intensity",
+            "label": f"{label} → recorded intensity",
+            "driver": driver, "outcome": "workout_intensity",
+            "controls": [*_WORKOUT_BASE_CONTROLS, "log_duration", "intensity_prev_modality"],
+            "direction": "morning-to-workout", "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_READINESS
+    ],
+    {
+        "name": "workout_time_to_load", "label": "Workout time → scheduled load",
+        "outcome": "workout_load",
+        "controls": [*_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "load_prev_modality"],
+        "direction": "circadian", "kind": "cyclic",
+    },
+    {
+        "name": "workout_time_to_duration", "label": "Workout time → duration",
+        "outcome": "workout_duration",
+        "controls": [*_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "duration_prev_modality"],
+        "direction": "circadian", "kind": "cyclic",
+    },
+    {
+        "name": "workout_time_to_intensity", "label": "Workout time → recorded intensity",
+        "outcome": "workout_intensity",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            "intensity_prev_modality",
+        ],
+        "direction": "circadian", "kind": "cyclic",
+    },
+    {
+        "name": "workout_time_to_high_zones", "label": "Workout time → high-zone fraction",
+        "outcome": "high_zone_fraction",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            "high_zone_prev_modality",
+        ],
+        "direction": "circadian", "kind": "cyclic",
+    },
+]
+
+
+def prior_rolling_deviation(
+    series: pd.Series,
+    days: int = 28,
+    min_periods: int = 14,
+) -> pd.Series:
+    """Current value minus a calendar-day rolling median of PRIOR values.
+
+    ``closed='left'`` is the important semantic: today's measurement cannot
+    pull its own baseline toward itself, and gaps do not turn "28 days" into
+    "the last 28 observations".
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    baseline = numeric.rolling(f"{days}D", min_periods=min_periods, closed="left").median()
+    return numeric - baseline
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -97,6 +266,25 @@ def _partial_r(df: pd.DataFrame, controls: list[str]) -> float:
 def _nw_maxlags(n: int) -> int:
     """Newey-West rule-of-thumb truncation lag ⌊4·(n/100)^(2/9)⌋ for HAC errors."""
     return max(1, int(4.0 * (n / 100.0) ** (2.0 / 9.0)))
+
+
+def _calendar_covariates(index: pd.Index) -> pd.DataFrame:
+    """Secular trend, annual harmonic, and weekday controls for an index."""
+    dates = pd.DatetimeIndex(index)
+    annual_angle = 2.0 * math.pi * dates.dayofyear.to_numpy(dtype=float) / 365.2425
+    calendar = pd.DataFrame(
+        {
+            "time_trend": np.arange(len(dates), dtype=float),
+            "annual_sin": np.sin(annual_angle),
+            "annual_cos": np.cos(annual_angle),
+        },
+        index=index,
+    )
+    weekdays = pd.get_dummies(
+        dates.dayofweek, prefix="dow", drop_first=True, dtype=float
+    )
+    weekdays.index = index
+    return pd.concat([calendar, weekdays], axis=1)
 
 
 def _block_bootstrap_stability(
@@ -143,6 +331,192 @@ def _block_bootstrap_stability(
     return {"stable": bool(agree >= agree_min), "agree": agree, "n_valid": len(values)}
 
 
+def _circular_distance_hours(left: float, right: float) -> float:
+    difference = abs(left - right) % 24.0
+    return min(difference, 24.0 - difference)
+
+
+def _cyclic_peak_hour(beta_sin: float, beta_cos: float) -> float:
+    """Peak of beta_sin*sin(theta) + beta_cos*cos(theta), as local hour."""
+    theta = math.atan2(beta_sin, beta_cos) % (2.0 * math.pi)
+    return theta * 24.0 / (2.0 * math.pi)
+
+
+def _fit_cyclic(data: pd.DataFrame, controls: list[str]):
+    X = sm.add_constant(data[["start_sin", "start_cos", *controls]].astype(float), has_constant="add")
+    return sm.OLS(_zscore(data["y"]), X).fit()
+
+
+def _cyclic_bootstrap_stability(
+    data: pd.DataFrame,
+    controls: list[str],
+    peak_hour: float,
+    seed_name: str,
+    reps: int = BOOT_REPS,
+    block_len: int = BOOT_BLOCK_LEN,
+) -> dict:
+    """Moving-block stability for a cosinor phase.
+
+    A cyclic effect has no meaningful sign. Stability therefore means that at
+    least 80% of valid bootstrap peaks remain within six clock hours of the
+    fitted peak. Circular resultant length is retained as a second, continuous
+    diagnostic of phase concentration.
+    """
+    n = len(data)
+    if n < 2 * block_len:
+        return {"stable": False, "within_6h": 0.0, "resultant": 0.0, "n_valid": 0}
+    rng = np.random.default_rng(zlib.crc32(seed_name.encode("utf-8")))
+    n_blocks = int(math.ceil(n / block_len))
+    peaks: list[float] = []
+    for _ in range(reps):
+        starts = rng.integers(0, n - block_len + 1, size=n_blocks)
+        idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
+        sample = data.iloc[idx].reset_index(drop=True)
+        if sample["y"].std(ddof=0) == 0:
+            continue
+        try:
+            fit = _fit_cyclic(sample, controls)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        beta_sin = float(fit.params.get("start_sin", np.nan))
+        beta_cos = float(fit.params.get("start_cos", np.nan))
+        if np.isfinite(beta_sin) and np.isfinite(beta_cos) and math.hypot(beta_sin, beta_cos) > 1e-9:
+            peaks.append(_cyclic_peak_hour(beta_sin, beta_cos))
+    if len(peaks) < reps // 2:
+        return {"stable": False, "within_6h": 0.0, "resultant": 0.0, "n_valid": len(peaks)}
+    within = float(np.mean([_circular_distance_hours(peak, peak_hour) <= BOOT_PHASE_WITHIN_HOURS for peak in peaks]))
+    angles = np.asarray(peaks) * 2.0 * math.pi / 24.0
+    resultant = float(math.hypot(np.mean(np.sin(angles)), np.mean(np.cos(angles))))
+    return {
+        "stable": bool(within >= BOOT_PHASE_AGREE),
+        "within_6h": within,
+        "resultant": resultant,
+        "n_valid": len(peaks),
+    }
+
+
+def _evaluate_cyclic_spec(
+    frame: pd.DataFrame,
+    spec: dict,
+    min_n: int,
+    boot_reps: int = BOOT_REPS,
+    name: str | None = None,
+) -> dict | None:
+    """Joint 24-hour sine/cosine test for a workout-time candidate."""
+    outcome = spec["outcome"]
+    if outcome not in frame or "start_sin" not in frame or "start_cos" not in frame:
+        return None
+    name = name or spec["name"]
+    data = pd.DataFrame(
+        {
+            "start_sin": frame["start_sin"],
+            "start_cos": frame["start_cos"],
+            "y": frame[outcome],
+        },
+        index=frame.index,
+    )
+    raw_controls: list[str] = []
+    for control in spec.get("controls", []):
+        if control in frame:
+            data[control] = frame[control]
+            raw_controls.append(control)
+    calendar = _calendar_covariates(data.index)
+    data = pd.concat([data, calendar], axis=1).dropna()
+    base = {
+        "name": name,
+        "label": spec["label"],
+        "driver": "workout_start_time",
+        "outcome": outcome,
+        "direction": spec.get("direction", "circadian"),
+        "kind": "cyclic",
+        "n": int(len(data)),
+    }
+    clock_hours = (
+        np.arctan2(data["start_sin"].to_numpy(), data["start_cos"].to_numpy())
+        % (2.0 * math.pi)
+    ) * 24.0 / (2.0 * math.pi)
+    time_bin_counts = {
+        "morning": int(np.sum((clock_hours >= 5) & (clock_hours < 12))),
+        "afternoon": int(np.sum((clock_hours >= 12) & (clock_hours < 18))),
+        "evening_night": int(np.sum((clock_hours >= 18) | (clock_hours < 5))),
+    }
+    if (
+        len(data) < min_n
+        or data["y"].std(ddof=0) == 0
+        or data["start_sin"].std(ddof=0) == 0
+        or data["start_cos"].std(ddof=0) == 0
+    ):
+        return {**base, "raw_status": "insufficient", "reason": "raw_n", "required_n": min_n}
+    if min(time_bin_counts.values()) < MIN_CYCLIC_BIN_N:
+        return {
+            **base,
+            "raw_status": "insufficient",
+            "reason": "time_coverage",
+            "time_bin_counts": time_bin_counts,
+            "required_per_time_bin": MIN_CYCLIC_BIN_N,
+        }
+
+    kept, dropped = _drop_collinear_controls(data, raw_controls)
+    controls = kept + calendar.columns.tolist()
+    control_matrix = sm.add_constant(data[controls].astype(float), has_constant="add")
+    y_resid = sm.OLS(data["y"], control_matrix).fit().resid
+    sin_resid = sm.OLS(data["start_sin"], control_matrix).fit().resid
+    cos_resid = sm.OLS(data["start_cos"], control_matrix).fit().resid
+    n_eff = min(
+        _effective_n(len(data), _lag1_autocorr(sin_resid), _lag1_autocorr(y_resid)),
+        _effective_n(len(data), _lag1_autocorr(cos_resid), _lag1_autocorr(y_resid)),
+    )
+    if n_eff < MIN_ADJUSTED_N_EFF:
+        return {
+            **base,
+            "raw_status": "insufficient",
+            "reason": "effective_n",
+            "n_eff": round(float(n_eff), 1),
+            "required_n_eff": MIN_ADJUSTED_N_EFF,
+            "dropped_controls": dropped,
+        }
+
+    ordinary = _fit_cyclic(data, controls)
+    robust = ordinary.get_robustcov_results(
+        cov_type="HAC", maxlags=_nw_maxlags(len(data)), use_correction=True
+    )
+    names = ordinary.model.exog_names
+    sin_idx, cos_idx = names.index("start_sin"), names.index("start_cos")
+    restriction = np.zeros((2, len(names)))
+    restriction[0, sin_idx] = 1.0
+    restriction[1, cos_idx] = 1.0
+    joint = robust.wald_test(restriction, scalar=True)
+    beta_sin = float(ordinary.params["start_sin"])
+    beta_cos = float(ordinary.params["start_cos"])
+    peak_hour = _cyclic_peak_hour(beta_sin, beta_cos)
+    reduced = sm.OLS(_zscore(data["y"]), control_matrix).fit()
+    partial_r2 = max(0.0, min(1.0, (reduced.ssr - ordinary.ssr) / reduced.ssr)) if reduced.ssr > 0 else 0.0
+    effect_size = math.sqrt(partial_r2)
+    boot = _cyclic_bootstrap_stability(data, controls, peak_hour, name, reps=boot_reps)
+    robust_ci = dict(zip(names, robust.conf_int()))
+    return {
+        **base,
+        "n_eff": round(float(n_eff), 1),
+        "effect_size": effect_size,
+        "partial_r2": partial_r2,
+        "amplitude_sd": math.hypot(beta_sin, beta_cos),
+        "peak_hour": peak_hour,
+        "beta_sin": beta_sin,
+        "beta_cos": beta_cos,
+        "sin_ci_low": float(robust_ci["start_sin"][0]),
+        "sin_ci_high": float(robust_ci["start_sin"][1]),
+        "cos_ci_low": float(robust_ci["start_cos"][0]),
+        "cos_ci_high": float(robust_ci["start_cos"][1]),
+        "p_value": float(joint.pvalue),
+        "stable": boot["stable"],
+        "phase_within_6h": round(boot["within_6h"], 3),
+        "phase_resultant": round(boot["resultant"], 3),
+        "boot_n_valid": boot["n_valid"],
+        "time_bin_counts": time_bin_counts,
+        "dropped_controls": dropped,
+    }
+
+
 def _evaluate_spec(
     frame: pd.DataFrame,
     spec: dict,
@@ -171,10 +545,8 @@ def _evaluate_spec(
             data[control] = frame[control]
             raw_controls.append(control)
 
-    data["time_trend"] = np.arange(len(data), dtype=float)
-    weekdays = pd.get_dummies(pd.DatetimeIndex(data.index).dayofweek, prefix="dow", drop_first=True, dtype=float)
-    weekdays.index = data.index
-    data = pd.concat([data, weekdays], axis=1)
+    calendar = _calendar_covariates(data.index)
+    data = pd.concat([data, calendar], axis=1)
     if spec.get("outcome_positive_only"):
         data = data.loc[data["y"] > 0]
     data = data.dropna()
@@ -186,7 +558,7 @@ def _evaluate_spec(
         return {**base, "raw_status": "insufficient", "reason": "raw_n", "required_n": min_n}
 
     kept, dropped = _drop_collinear_controls(data, raw_controls)
-    controls = kept + ["time_trend", *weekdays.columns.tolist()]
+    controls = kept + calendar.columns.tolist()
     x_resid, y_resid = _residualize(data, controls)
     # Effective information AFTER the controls: with a lagged-outcome control the
     # residuals are near-iid and n_eff ≈ n; without one, smooth series can carry
@@ -200,13 +572,22 @@ def _evaluate_spec(
         }
 
     partial = float(pearsonr(x_resid, y_resid)[0])
+    ranked = data.copy()
+    ranked["x"] = data["x"].rank(method="average")
+    ranked["y"] = data["y"].rank(method="average")
+    partial_spearman = _partial_r(ranked, controls)
+    rank_disagree = bool(
+        abs(partial - partial_spearman) > 0.15
+        or (partial * partial_spearman < 0 and abs(partial) >= 0.1)
+    )
     X = sm.add_constant(pd.concat([_zscore(data["x"]).rename("x"), data[controls]], axis=1), has_constant="add")
     fit = sm.OLS(_zscore(data["y"]), X).fit(cov_type="HAC", cov_kwds={"maxlags": _nw_maxlags(len(data))})
     ci = fit.conf_int().loc["x"]
     boot = _block_bootstrap_stability(data, controls, partial, name, reps=boot_reps)
     return {
         **base, "n_eff": round(float(n_eff), 1),
-        "partial_r": partial, "beta": float(fit.params["x"]),
+        "partial_r": partial, "partial_spearman": partial_spearman,
+        "rank_disagree": rank_disagree, "beta": float(fit.params["x"]),
         "ci_low": float(ci.iloc[0]), "ci_high": float(ci.iloc[1]),
         "p_value": float(fit.pvalues["x"]), "stable": boot["stable"],
         "boot_sign_agree": round(boot["agree"], 3), "boot_n_valid": boot["n_valid"],
@@ -220,15 +601,39 @@ def _assign_statuses(tested: list[dict]) -> None:
     for result, q in zip(tested, _bh_qvalues([r["p_value"] for r in tested])):
         result["q_value"] = float(q)
     for result in tested:
-        effect = abs(result["partial_r"])
+        effect = abs(result.get("partial_r", result.get("effect_size", 0.0)))
+        robust = not result.get("rank_disagree", False)
         result["raw_status"] = (
-            "signal" if result["q_value"] <= 0.10 and effect >= 0.15 and result["stable"]
-            else "watch" if result["q_value"] <= 0.20 and effect >= 0.15 and result["stable"]
+            "signal" if result["q_value"] <= 0.10 and effect >= 0.15 and result["stable"] and robust
+            else "watch" if result["q_value"] <= 0.20 and effect >= 0.15 and result["stable"] and robust
             else "no_clear_signal"
         )
 
 
-_MISS_STATUSES = ("no_clear_signal", "insufficient", "suppressed_collinear")
+_MISS_STATUSES = (
+    "no_clear_signal", "insufficient", "suppressed_collinear", "suppressed_placebo",
+)
+
+
+def _suppress_placebo_sensitive(candidates: list[dict], placebo_rows: list[dict]) -> None:
+    """Suppress a real candidate when its own shifted null also clears gates."""
+    for candidate in candidates:
+        if candidate.get("raw_status") not in ("signal", "watch"):
+            continue
+        prefix = f"{candidate['name']}__placebo"
+        fired = [
+            row for row in placebo_rows
+            if row.get("name", "").startswith(prefix)
+            and row.get("raw_status") in ("signal", "watch")
+        ]
+        if not fired:
+            continue
+        candidate["raw_status"] = "suppressed_placebo"
+        candidate["placebo_sensitivity"] = {
+            "fired": len(fired),
+            "shifts": [row.get("shift") for row in fired],
+            "note": "This candidate's gates also fired after its driver alignment was destroyed.",
+        }
 
 
 def apply_persistence(
@@ -357,10 +762,10 @@ def discover_adjusted_insights(
                 suppress["raw_status"] = "suppressed_collinear"
                 suppress["suppressed_by"] = keep["name"]
 
-    persistence_state = apply_persistence(results, prior_state, promote_after, demote_after)
-
     placebo_rows = _run_placebo_suite(frame, candidate_specs, min_n, boot_reps) if run_placebos else []
     placebo_tested = [r for r in placebo_rows if "p_value" in r]
+    _suppress_placebo_sensitive(results, placebo_rows)
+    persistence_state = apply_persistence(results, prior_state, promote_after, demote_after)
 
     coefficients = {
         result["name"]: {
@@ -373,13 +778,14 @@ def discover_adjusted_insights(
         "name": "daily_adjusted_finder",
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "spec": (
-            "Predeclared partial associations; weekday + time trend + candidate-specific "
+            "Predeclared partial associations; weekday + annual season + time trend + candidate-specific "
             "prior-state/load controls; HAC (Newey-West) CI; effective-n floor; BH FDR; "
             "moving-block bootstrap sign stability; collinear-driver suppression; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
+            "model_version": 2,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -408,12 +814,178 @@ def discover_adjusted_insights(
     }
 
 
+def _run_workout_placebo_suite(
+    frame: pd.DataFrame,
+    specs: list[dict],
+    min_n: int,
+    boot_reps: int = BOOT_REPS,
+    shifts: tuple[int, ...] = PLACEBO_SHIFTS,
+) -> list[dict]:
+    """Event-order circular-shift null calibration for workout candidates."""
+    if len(frame) == 0:
+        return []
+    rows: list[dict] = []
+    for spec in specs:
+        outcome = spec["outcome"]
+        if outcome not in frame:
+            continue
+        for shift in shifts:
+            effective = shift % len(frame)
+            if effective < 14 or effective > len(frame) - 14:
+                continue
+            placebo = frame.copy()
+            if spec.get("kind") == "cyclic":
+                if "start_sin" not in frame or "start_cos" not in frame:
+                    continue
+                placebo["start_sin"] = np.roll(frame["start_sin"].to_numpy(), shift)
+                placebo["start_cos"] = np.roll(frame["start_cos"].to_numpy(), shift)
+                result = _evaluate_cyclic_spec(
+                    placebo, spec, min_n, boot_reps, name=f"{spec['name']}__placebo{shift}"
+                )
+            else:
+                driver = spec["driver"]
+                if driver not in frame:
+                    continue
+                placebo[driver] = np.roll(frame[driver].to_numpy(), shift)
+                result = _evaluate_spec(
+                    placebo, spec, min_n, boot_reps, name=f"{spec['name']}__placebo{shift}"
+                )
+            if result is not None:
+                result["shift"] = shift
+                rows.append(result)
+    _assign_statuses([row for row in rows if "p_value" in row])
+    return rows
+
+
+def discover_workout_context_insights(
+    frame: pd.DataFrame,
+    specs: list[dict] | None = None,
+    min_n: int = MIN_ADJUSTED_N,
+    prior_state: dict | None = None,
+    promote_after: int = PROMOTE_AFTER,
+    demote_after: int = DEMOTE_AFTER,
+    boot_reps: int = BOOT_REPS,
+    run_placebos: bool = True,
+) -> dict:
+    """Predeclared workout-level readiness and circular timing finder."""
+    candidate_specs = specs if specs is not None else DEFAULT_WORKOUT_SPECS
+    results: list[dict] = []
+    for spec in candidate_specs:
+        evaluator = _evaluate_cyclic_spec if spec.get("kind") == "cyclic" else _evaluate_spec
+        result = evaluator(frame, spec, min_n, boot_reps)
+        if result is not None:
+            results.append(result)
+    tested = [result for result in results if "p_value" in result]
+    _assign_statuses(tested)
+
+    # Readiness variables can be near-duplicates (notably RHR and HRV). As in
+    # the daily family, do not surface two versions of the same outcome when
+    # their drivers carry essentially the same information.
+    promoted = [
+        result for result in tested
+        if result["raw_status"] in ("signal", "watch") and result.get("kind") != "cyclic"
+    ]
+    for i, left in enumerate(promoted):
+        for right in promoted[i + 1:]:
+            if (
+                left["outcome"] != right["outcome"]
+                or left["driver"] not in frame
+                or right["driver"] not in frame
+            ):
+                continue
+            corr = frame[[left["driver"], right["driver"]]].corr().iloc[0, 1]
+            if np.isfinite(corr) and abs(corr) >= 0.75:
+                keep, suppress = sorted((left, right), key=lambda item: item["q_value"])
+                suppress["raw_status"] = "suppressed_collinear"
+                suppress["suppressed_by"] = keep["name"]
+
+    placebo_rows = (
+        _run_workout_placebo_suite(frame, candidate_specs, min_n, boot_reps)
+        if run_placebos else []
+    )
+    placebo_tested = [row for row in placebo_rows if "p_value" in row]
+    _suppress_placebo_sensitive(results, placebo_rows)
+    persistence_state = apply_persistence(results, prior_state, promote_after, demote_after)
+
+    coefficients: dict[str, dict] = {}
+    for result in tested:
+        if result.get("kind") == "cyclic":
+            coefficients[f"{result['name']}:sin"] = {
+                "coef": result["beta_sin"],
+                "ci_low": result["sin_ci_low"],
+                "ci_high": result["sin_ci_high"],
+                "p_value": result["p_value"],
+            }
+            coefficients[f"{result['name']}:cos"] = {
+                "coef": result["beta_cos"],
+                "ci_low": result["cos_ci_low"],
+                "ci_high": result["cos_ci_high"],
+                "p_value": result["p_value"],
+            }
+        else:
+            coefficients[result["name"]] = {
+                "coef": result["beta"],
+                "ci_low": result["ci_low"],
+                "ci_high": result["ci_high"],
+                "p_value": result["p_value"],
+            }
+
+    return {
+        "name": "workout_context_finder",
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "spec": (
+            "Predeclared workout-only associations; modality + weekday + annual season + time trend + prior-load "
+            "controls; joint 24-hour sine/cosine timing tests; HAC uncertainty; effective-n floor; "
+            "BH FDR; moving-block sign/phase stability; collinearity collapse; "
+            f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
+        ),
+        "coefficients": coefficients,
+        "diagnostics": {
+            "model_version": 1,
+            "n": max((result.get("n", 0) for result in results), default=0),
+            "candidate_count": len(results),
+            "signal_count": sum(result.get("status") == "signal" for result in results),
+            "watch_count": sum(result.get("status") == "watch" for result in results),
+            "raw_signal_count": sum(result.get("raw_status") == "signal" for result in results),
+            "raw_watch_count": sum(result.get("raw_status") == "watch" for result in results),
+            "candidates": results,
+            "persistence": {
+                "state": persistence_state,
+                "promote_after": promote_after,
+                "demote_after": demote_after,
+            },
+            "placebo": {
+                "shifts": list(PLACEBO_SHIFTS),
+                "tested": len(placebo_tested),
+                "signal_count": sum(row["raw_status"] == "signal" for row in placebo_tested),
+                "watch_count": sum(row["raw_status"] == "watch" for row in placebo_tested),
+                "candidates": [
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "name", "shift", "n", "n_eff", "partial_r", "effect_size",
+                            "q_value", "stable", "raw_status",
+                        )
+                    }
+                    for row in placebo_rows
+                ],
+                "note": "Event-order circular shifts run the identical workout gates.",
+            },
+            "caveat": (
+                "Workout-only single-person associations, not capacity tests or causal effects. "
+                "Recorded intensity is TRIMP per minute; timing is adjusted for modality but may "
+                "still reflect scheduling and unmeasured workout intent."
+            ),
+        },
+    }
+
+
 def zscore_trailing(frame: pd.DataFrame, days: int = 180) -> pd.DataFrame:
     """Restrict to the trailing `days` rows by date and z-score each column
     within-person over that window. Zero-variance columns become NaN."""
     window = frame.loc[frame.index >= frame.index.max() - pd.Timedelta(days=days - 1)]
     sd = window.std(ddof=0)
-    return (window - window.mean()) / sd.replace(0, np.nan)
+    return (window - window.mean()) / sd.mask(sd.eq(0), np.nan)
 
 
 def weight_series(raw: pd.Series | None) -> tuple[pd.Series | None, pd.Series | None]:

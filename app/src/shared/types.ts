@@ -775,6 +775,10 @@ export interface InsightCorrelation {
   p_value_naive: number | null
   /** Benjamini-Hochberg q across the whole sweep (~100 tests). */
   q_value: number | null
+  /** Rank correlation sensitivity check; null on pre-robustness rows. */
+  spearman_r: number | null
+  /** True when Pearson and Spearman tell materially different stories. */
+  rank_disagree: boolean | null
 }
 
 export interface InsightModel {
