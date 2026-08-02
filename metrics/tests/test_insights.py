@@ -166,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 6
+    assert model["diagnostics"]["model_version"] == 7
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 10
+    assert model["diagnostics"]["model_version"] == 11
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1616,7 +1616,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [6, 10]
+    assert expected_versions == [7, 11]
 
 
 def test_persistence_state_never_crosses_model_versions():
@@ -1645,6 +1645,39 @@ def test_sleep_midpoint_uses_actual_instant_on_local_clock_across_dst():
         "sleep_start": "2026-03-28T22:00:00Z",
         "sleep_end": "2026-03-29T05:00:00Z",
     }
+    assert sleep_midpoint_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(3.5)
+
+
+def test_sleep_clock_uses_recorded_offset_when_travelling():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import sleep_midpoint_hours, wake_clock_hours
+
+    row = {
+        "date": "2026-06-08",
+        "sleep_start": "2026-06-08T00:00:00Z",
+        "sleep_end": "2026-06-08T08:00:00Z",
+        "sleep_stages": {"_sleep_end_timezone_offset_min": 60},
+    }
+
+    # The travel destination was UTC+1 while the configured home zone (Berlin) was UTC+2.
+    assert sleep_midpoint_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(5.0)
+    assert wake_clock_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(9.0)
+
+
+def test_sleep_clock_keeps_configured_zone_when_recorded_offset_matches_wake():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import sleep_midpoint_hours
+
+    row = {
+        "date": "2026-03-29",
+        "sleep_start": "2026-03-28T22:00:00Z",
+        "sleep_end": "2026-03-29T05:00:00Z",
+        "sleep_stages": {"_sleep_end_timezone_offset_min": 120},
+    }
+
+    # Matching the configured wake offset preserves IANA-zone DST arithmetic.
     assert sleep_midpoint_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(3.5)
 
 

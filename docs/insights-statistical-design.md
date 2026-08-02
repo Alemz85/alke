@@ -67,6 +67,14 @@ instant as normalized `start_at`; otherwise the configured timezone is the
 fallback. This prevents travel from moving a workout to the home-timezone hour
 while preserving exact elapsed durations across offsets and DST.
 
+Sleep follows the same split. Duration and wake-to-workout intervals use
+absolute instants. Sleep midpoint and wake-clock features use the UTC offset
+recorded on Apple's sleep-end timestamp when it differs from the configured
+home-zone offset; matching offsets retain the configured IANA zone so DST
+rules remain exact. The offset is stored inside the atomic sleep JSON group,
+and archived values are backfilled only when both stored sleep instants exactly
+match the raw aggregate.
+
 ## Daily recovery families
 
 ### Prior-day behavior to next sleep/recovery
@@ -244,8 +252,9 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 6 and workout model version 10 enforce the
-prior-day rule above. These versions also add the fully measured,
+workout. Daily model version 7 and workout model version 11 enforce the
+prior-day rule above and preserve recorded local sleep time during travel.
+These versions also retain the fully measured,
 training-day-conditional high-zone composition exposure. Workout version 9
 separates duration from HR-outcome eligibility, normalizes HR intensity by
 measured time, and admits the explicit Apple energy-intensity summary as a
@@ -284,6 +293,11 @@ high-zone fraction as well as average HR-zone and energy intensity.
   10 uses the recorded local hour for those sessions, while exact hours since
   waking and recovery gaps remain unchanged. No current workout crosses a date
   boundary under the correction, and no model verdict changes.
+- All 281 stored sleep nights match an archived raw aggregate exactly. Seven
+  Travel-week nights retained `+0100` while Berlin was `+0200`; the old
+  sleep-midpoint and wake-clock values were one hour late. Versions 7/11 use
+  the recorded sleep offset for local-clock features. Absolute sleep duration
+  and wake-to-workout intervals were already correct.
 - Duration candidates now use measurements according to their own semantics:
   sleep continuity has 94 sessions on 63 dates, prior-day HRV has 103 on 72,
   and prior acute load / previous-workout gap have 217 on 184. Corresponding

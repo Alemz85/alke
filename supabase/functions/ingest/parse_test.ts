@@ -601,9 +601,37 @@ Deno.test("parses a metrics export covering sleep, summed steps, and a scalar", 
   assertEquals(dm.resting_hr, 55.2);
   assertEquals(dm.steps, 4601); // 1200 + 3400.6 rounded
   assertEquals(dm.sleep_duration_min, 450); // 7.5h * 60
-  assertEquals(dm.sleep_stages, { deep: 1.2, core: 4.5, rem: 1.5, awake: 0.3 });
+  assertEquals(dm.sleep_stages, {
+    deep: 1.2,
+    core: 4.5,
+    rem: 1.5,
+    awake: 0.3,
+    _sleep_end_timezone_offset_min: 120,
+  });
   assertEquals(dm.sleep_start, "2026-07-07T21:10:00.000Z");
   assertEquals(dm.sleep_end, "2026-07-08T05:00:00.000Z");
+});
+
+Deno.test("preserves a negative sleep-end timezone offset without sleep stages", () => {
+  const result = parseIngestPayload({
+    data: {
+      workouts: [],
+      metrics: [{
+        name: "sleep_analysis",
+        units: "hr",
+        data: [{
+          date: "2026-07-08 07:00:00 -0430",
+          sleepStart: "2026-07-07 23:10:00 -0430",
+          sleepEnd: "2026-07-08 07:00:00 -0430",
+          totalSleep: 7.5,
+        }],
+      }],
+    },
+  });
+
+  assertEquals(result.dailyMetrics[0].sleep_stages, {
+    _sleep_end_timezone_offset_min: -270,
+  });
 });
 
 Deno.test("ignores unknown metric names gracefully without throwing", () => {

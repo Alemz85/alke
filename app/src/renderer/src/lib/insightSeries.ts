@@ -18,13 +18,61 @@ export interface InsightScatterPoint {
 export function sleepMidpointHours(
   sleepStart: string,
   sleepEnd: string,
-  timezone: string | null | undefined
+  timezone: string | null | undefined,
+  recordedOffsetMinutes?: number | null
 ): number | null {
   const startMs = new Date(sleepStart).getTime()
   const endMs = new Date(sleepEnd).getTime()
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null
 
   const midpointMs = startMs + (endMs - startMs) / 2
+  const recordedOffsetValid =
+    Number.isInteger(recordedOffsetMinutes) &&
+    Math.abs(recordedOffsetMinutes as number) <= 14 * 60
+  if (recordedOffsetValid) {
+    const configuredParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(new Date(endMs))
+    const configuredPart = (type: Intl.DateTimeFormatPartTypes): number =>
+      Number(configuredParts.find((candidate) => candidate.type === type)?.value)
+    const configuredAsUtc = Date.UTC(
+      configuredPart('year'),
+      configuredPart('month') - 1,
+      configuredPart('day'),
+      configuredPart('hour'),
+      configuredPart('minute'),
+      configuredPart('second')
+    )
+    const configuredOffsetMinutes = Math.round((configuredAsUtc - endMs) / 60_000)
+    if (configuredOffsetMinutes !== recordedOffsetMinutes) {
+      const offsetMs = (recordedOffsetMinutes as number) * 60_000
+      const midpointLocal = new Date(midpointMs + offsetMs)
+      const wakeLocal = new Date(endMs + offsetMs)
+      const midpointDay = Date.UTC(
+        midpointLocal.getUTCFullYear(),
+        midpointLocal.getUTCMonth(),
+        midpointLocal.getUTCDate()
+      )
+      const wakeDay = Date.UTC(
+        wakeLocal.getUTCFullYear(),
+        wakeLocal.getUTCMonth(),
+        wakeLocal.getUTCDate()
+      )
+      return (
+        (midpointDay - wakeDay) / 86_400_000 * 24 +
+        midpointLocal.getUTCHours() +
+        midpointLocal.getUTCMinutes() / 60 +
+        midpointLocal.getUTCSeconds() / 3600
+      )
+    }
+  }
   const midpointDay = toZonedYMD(new Date(midpointMs).toISOString(), timezone)
   const wakeDay = toZonedYMD(sleepEnd, timezone)
   const dayOffset =

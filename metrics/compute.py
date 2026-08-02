@@ -332,6 +332,36 @@ def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, li
     return perf_by_date
 
 
+SLEEP_END_OFFSET_KEY = "_sleep_end_timezone_offset_min"
+
+
+def sleep_clock_timezone(row: dict, configured_tz, end: datetime):
+    """Use the recorded wake offset only when it identifies travel.
+
+    Matching offsets retain the configured IANA zone, including its DST
+    transition rules. A differing valid offset is the best available record
+    of the clock where this particular sleep occurred.
+    """
+    stages = row.get("sleep_stages") or {}
+    try:
+        recorded_minutes = float(stages.get(SLEEP_END_OFFSET_KEY))
+    except (AttributeError, TypeError, ValueError):
+        return configured_tz
+    if not math.isfinite(recorded_minutes) or recorded_minutes != int(recorded_minutes):
+        return configured_tz
+    recorded_minutes = int(recorded_minutes)
+    if not -14 * 60 <= recorded_minutes <= 14 * 60:
+        return configured_tz
+    configured_offset = end.astimezone(configured_tz).utcoffset()
+    configured_minutes = (
+        int(configured_offset.total_seconds() / 60)
+        if configured_offset is not None else 0
+    )
+    if recorded_minutes == configured_minutes:
+        return configured_tz
+    return timezone(timedelta(minutes=recorded_minutes))
+
+
 def sleep_midpoint_hours(row: dict, tz) -> float | None:
     """Actual sleep midpoint expressed as hours on the wake-date local clock.
 
@@ -345,9 +375,10 @@ def sleep_midpoint_hours(row: dict, tz) -> float | None:
     end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00"))
     if end.timestamp() <= start.timestamp():
         return None
+    clock_tz = sleep_clock_timezone(row, tz, end)
     midpoint_ts = start.timestamp() + (end.timestamp() - start.timestamp()) / 2
-    midpoint_local = datetime.fromtimestamp(midpoint_ts, tz)
-    wake_local = end.astimezone(tz)
+    midpoint_local = datetime.fromtimestamp(midpoint_ts, clock_tz)
+    wake_local = end.astimezone(clock_tz)
     day_offset = (midpoint_local.date() - wake_local.date()).days
     clock_hours = (
         midpoint_local.hour
@@ -372,7 +403,8 @@ def sleep_awake_fraction(row: dict) -> float | None:
 def wake_clock_hours(row: dict, tz) -> float | None:
     if not row.get("sleep_end"):
         return None
-    wake = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).astimezone(tz)
+    end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00"))
+    wake = end.astimezone(sleep_clock_timezone(row, tz, end))
     row_day = date.fromisoformat(row["date"])
     day_offset = (wake.date() - row_day).days
     return day_offset * 24 + wake.hour + wake.minute / 60 + wake.second / 3600
@@ -782,7 +814,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=6)
+    prior_state = insight_prior_state(prior, expected_version=7)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -795,7 +827,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=10)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=11)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

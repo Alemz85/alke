@@ -1131,7 +1131,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 6,
+            "model_version": 7,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1158,7 +1158,9 @@ def discover_adjusted_insights(
             "caveat": (
                 "Exploratory single-person associations, not causal effects. RHR and HRV are "
                 "finalized full-day aggregates, so same-date relationships are co-measured, "
-                "never pre-workout readiness. High-zone composition is defined only on training "
+                "never pre-workout readiness. Local sleep-clock features use Apple's recorded "
+                "sleep offset when available, preventing travel from masquerading as timing drift. "
+                "High-zone composition is defined only on training "
                 "days whose every workout passes HR coverage, with total load adjusted. "
                 "No result is promoted without multiplicity "
                 "correction, bootstrap sign stability, and multi-night persistence."
@@ -1313,7 +1315,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 10,
+            "model_version": 11,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1354,7 +1356,8 @@ def discover_workout_context_insights(
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
                 "context is included only when its recorded wake instant precedes the workout. "
                 "Clock time and calendar date use HAE's verified recorded offset when available, "
-                "while recovery intervals use absolute instants. "
+                "while recovery intervals use absolute instants. Local sleep-clock features "
+                "likewise prefer the recorded sleep offset during travel. "
                 "Previous-day high-zone composition exists only when every workout on that day "
                 "passes HR coverage and is adjusted for total prior-day load. "
                 "Recovery intervals and prior same-day load include workouts that are too short "

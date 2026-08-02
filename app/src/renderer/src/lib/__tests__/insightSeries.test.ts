@@ -37,6 +37,17 @@ describe('sleepMidpointHours', () => {
       )
     ).toBeCloseTo(3.5)
   })
+
+  it('uses a differing recorded offset when the sleep happened away from home', () => {
+    expect(
+      sleepMidpointHours(
+        '2026-07-08T00:00:00Z',
+        '2026-07-08T08:00:00Z',
+        'Europe/Berlin',
+        60
+      )
+    ).toBeCloseTo(5)
+  })
 })
 
 describe('buildInsightScatter', () => {

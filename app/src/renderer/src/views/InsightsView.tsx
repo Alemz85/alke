@@ -196,7 +196,17 @@ function useAnalysisSeries(): {
       put('steps', m.date, m.steps)
       put('flights', m.date, m.flights_climbed)
       if (m.sleep_start && m.sleep_end) {
-        put('sleep_midpoint', m.date, sleepMidpointHours(m.sleep_start, m.sleep_end, tz))
+        const recordedOffset = m.sleep_stages?.['_sleep_end_timezone_offset_min']
+        put(
+          'sleep_midpoint',
+          m.date,
+          sleepMidpointHours(
+            m.sleep_start,
+            m.sleep_end,
+            tz,
+            typeof recordedOffset === 'number' ? recordedOffset : null
+          )
+        )
       }
     }
     const computedRows = [...(computed.data ?? [])].sort((a, b) => a.date.localeCompare(b.date))

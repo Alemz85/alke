@@ -203,6 +203,20 @@ function localDatePart(raw: unknown): string | null {
   return m ? m[1] : null;
 }
 
+/** UTC offset encoded in a HAE timestamp, in signed minutes. */
+function haeTimezoneOffsetMinutes(raw: unknown): number | null {
+  if (typeof raw !== "string") return null;
+  const match = raw.trim().match(/([+-])(\d{2}):?(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) {
+    return null;
+  }
+  const absoluteMinutes = hours * 60 + minutes;
+  return match[1] === "-" ? -absoluteMinutes : absoluteMinutes;
+}
+
 function toIso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
 }
@@ -841,7 +855,16 @@ function parseSleepEntry(
       hasStage = true;
     }
   }
-  if (hasStage) row.sleep_stages = stages;
+  // Postgres timestamptz preserves the instant but discards the source offset.
+  // Keep the wake-location offset inside the atomic sleep group so travel does
+  // not make local sleep timing look one or more hours later/earlier.
+  const sleepEndOffset = haeTimezoneOffsetMinutes(
+    entry[FIELD_MAP.sleep.end],
+  );
+  if (sleepEndOffset !== null) {
+    stages._sleep_end_timezone_offset_min = sleepEndOffset;
+  }
+  if (hasStage || sleepEndOffset !== null) row.sleep_stages = stages;
 }
 
 // ===========================================================================
