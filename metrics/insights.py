@@ -239,12 +239,38 @@ DEFAULT_WORKOUT_SPECS = [
         ],
         "direction": "same-day-context", "kind": "scalar",
     },
+    {
+        "name": "hours_awake_to_high_zone_fraction",
+        "label": "Hours awake before workout → high-zone fraction",
+        "driver": "hours_since_wake", "outcome": "high_zone_fraction",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            "high_zone_prev_modality",
+        ],
+        "direction": "same-day-context", "kind": "scalar",
+    },
     *[
         {
             "name": f"{driver}_to_workout_intensity",
             "label": f"{label} → recorded intensity",
             "driver": driver, "outcome": "workout_intensity",
             "controls": [*_WORKOUT_BASE_CONTROLS, "log_duration", "intensity_prev_modality"],
+            "direction": (
+                "prior-day-to-workout" if driver.endswith("_prior")
+                else "morning-to-workout"
+            ),
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_READINESS
+    ],
+    *[
+        {
+            "name": f"{driver}_to_high_zone_fraction",
+            "label": f"{label} → high-zone fraction",
+            "driver": driver, "outcome": "high_zone_fraction",
+            "controls": [
+                *_WORKOUT_BASE_CONTROLS, "log_duration", "high_zone_prev_modality",
+            ],
             "direction": (
                 "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
@@ -280,6 +306,22 @@ DEFAULT_WORKOUT_SPECS = [
                 *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
                 "log_duration",
                 "intensity_prev_modality",
+            ],
+            "direction": "pre-workout-state",
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_PRE_STATE
+    ],
+    *[
+        {
+            "name": f"{driver}_to_high_zone_fraction",
+            "label": f"{label} → high-zone fraction",
+            "driver": driver,
+            "outcome": "high_zone_fraction",
+            "controls": [
+                *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
+                "log_duration",
+                "high_zone_prev_modality",
             ],
             "direction": "pre-workout-state",
             "kind": "scalar",
@@ -1270,7 +1312,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 8,
+            "model_version": 9,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),

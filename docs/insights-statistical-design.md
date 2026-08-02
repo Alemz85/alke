@@ -235,12 +235,13 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 5 and workout model version 8 enforce the
+workout. Daily model version 5 and workout model version 9 enforce the
 prior-day rule above. These versions also add the fully measured,
-training-day-conditional high-zone composition exposure. Workout version 8
+training-day-conditional high-zone composition exposure. Workout version 9
 separates duration from HR-outcome eligibility, normalizes HR intensity by
 measured time, and admits the explicit Apple energy-intensity summary as a
-separate outcome.
+separate outcome. Readiness and pre-workout state are screened against
+high-zone fraction as well as average HR-zone and energy intensity.
 
 ## Current data implications (audit 2026-08-02)
 
@@ -280,14 +281,22 @@ separate outcome.
   rowing, cycling, walking, swimming, surfing, and one indoor run. It overlaps
   102 HR-quality sessions but correlates only 0.67 with HR-zone intensity, so it
   is related rather than redundant. Four of its 11 candidates are currently
-  testable; none clears the gates. The expanded 38-candidate workout family has
-  zero raw signals and zero watches, and zero of 39 tested shifted placebos
-  fires.
+  testable; none clears the gates. The expanded 49-candidate workout family has
+  15 testable candidates, zero raw signals or watches, and zero of 45 tested
+  shifted placebos fires.
 - High-zone composition is known for 69 prior-workout exposure days, only 25
   of which contain any zone 4–5 time. The next-recovery candidates currently
   have 50–58 complete pairs; next-workout candidates have only 19 distinct
   dates. All six remain explicitly dormant under the fixed 60-observation/date
   gates rather than being padded with rest-day zeroes.
+- Raw average HR exists for 110 recent sessions but correlates 0.83 with the
+  measured-time zone-intensity outcome. It is not added as another hypothesis:
+  it would duplicate that outcome while losing the swim HR offset applied by
+  zone classification. The high-zone fraction already supplies the distinct
+  “how often did I reach hard effort?” question. In an isolated three-candidate
+  check, prior-day HRV versus high-zone fraction looked like a watch; across the
+  full 15-test multiplicity pool its q-value is 0.416 and it correctly returns
+  to no clear signal.
 - Two sessions with fewer than five classified HR minutes in the current
   workout era now contribute valid duration outcomes but remain ineligible for
   HR-derived outcomes. They also remain in event history: this corrects two

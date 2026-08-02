@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 8
+    assert model["diagnostics"]["model_version"] == 9
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -993,6 +993,9 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
         "high_zone_fraction_prior_to_workout_duration",
         "high_zone_fraction_prior_to_workout_intensity",
         "high_zone_fraction_prior_to_energy_intensity",
+        "hours_awake_to_high_zone_fraction",
+        "hrv_dev_prior_to_high_zone_fraction",
+        "atl_prior_to_high_zone_fraction",
         "workout_time_to_load",
         "workout_time_to_energy_intensity",
         "workout_time_to_high_zones",
@@ -1559,7 +1562,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [5, 8]
+    assert expected_versions == [5, 9]
 
 
 def test_persistence_state_never_crosses_model_versions():
