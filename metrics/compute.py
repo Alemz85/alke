@@ -128,9 +128,14 @@ def run(full: bool) -> None:
         print("no workouts; nothing to compute")
         return
     observed_max = max((int(w["max_hr"]) for w in all_workouts if w["max_hr"] is not None), default=0)
-    hr_max = config.get("hr_max")
-    if hr_max is None or observed_max > hr_max:
-        print(f"hr_max {'initialized' if hr_max is None else 'raised'} to {observed_max}")
+    configured_hr_max = config.get("hr_max")
+    hr_max = int(configured_hr_max) if configured_hr_max is not None else None
+    if (hr_max is None or hr_max <= 0) and observed_max <= 0:
+        print("no valid hr_max; deferring metrics until a positive setting or observation exists")
+        return
+    if hr_max is None or hr_max <= 0 or observed_max > hr_max:
+        action = "initialized" if hr_max is None or hr_max <= 0 else "raised"
+        print(f"hr_max {action} to {observed_max}")
         hr_max = observed_max
         db.update_hr_max(sb, hr_max)
 
