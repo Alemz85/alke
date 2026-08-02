@@ -306,6 +306,32 @@ def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, li
     return perf_by_date
 
 
+def sleep_midpoint_hours(row: dict, tz) -> float | None:
+    """Actual sleep midpoint expressed as hours on the wake-date local clock.
+
+    Compute the midpoint on the UTC timeline first. Arithmetic between two
+    datetimes carrying the same ZoneInfo object uses wall-clock semantics across
+    a DST transition, which can shift this value by 30 minutes.
+    """
+    if not row.get("sleep_start") or not row.get("sleep_end"):
+        return None
+    start = datetime.fromisoformat(row["sleep_start"].replace("Z", "+00:00"))
+    end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00"))
+    if end.timestamp() <= start.timestamp():
+        return None
+    midpoint_ts = start.timestamp() + (end.timestamp() - start.timestamp()) / 2
+    midpoint_local = datetime.fromtimestamp(midpoint_ts, tz)
+    wake_local = end.astimezone(tz)
+    day_offset = (midpoint_local.date() - wake_local.date()).days
+    clock_hours = (
+        midpoint_local.hour
+        + midpoint_local.minute / 60
+        + midpoint_local.second / 3600
+        + midpoint_local.microsecond / 3_600_000_000
+    )
+    return day_offset * 24 + clock_hours
+
+
 def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     import pandas as pd
 
@@ -321,16 +347,6 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     perf_by_date = perf_series_by_date(all_workouts, perf_by_id, tz)
 
-    def midpoint_hours(row: dict) -> float | None:
-        if not row.get("sleep_start") or not row.get("sleep_end"):
-            return None
-        start = datetime.fromisoformat(row["sleep_start"].replace("Z", "+00:00")).astimezone(tz)
-        end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).astimezone(tz)
-        mid = start + (end - start) / 2
-        # hours from the previous local midnight of the wake date, so pre- and
-        # post-midnight midpoints stay comparable
-        return (mid - datetime.combine(end.date(), datetime.min.time(), tz)).total_seconds() / 3600
-
     dm_by_date = {date.fromisoformat(r["date"]): r for r in daily_metrics}
     index = [date.fromisoformat(r["date"]) for r in daily_rows]
     frame = pd.DataFrame(
@@ -339,7 +355,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
                 (dm_by_date.get(d) or {}).get("sleep_duration_min") for d in index
             ],
             "sleep_midpoint": [
-                midpoint_hours(dm_by_date[d]) if d in dm_by_date else None for d in index
+                sleep_midpoint_hours(dm_by_date[d], tz) if d in dm_by_date else None for d in index
             ],
             "rhr_dev": [r["rhr_dev"] for r in daily_rows],
             "hrv_dev": [r["hrv_dev"] for r in daily_rows],

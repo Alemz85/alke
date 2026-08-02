@@ -8,6 +8,7 @@ from metrics.insights import (
     _bh_qvalues,
     _block_bootstrap_stability,
     _effective_n,
+    _evaluate_spec,
     _lag1_autocorr,
     _nw_maxlags,
     apply_persistence,
@@ -391,6 +392,58 @@ def test_default_inference_keeps_swim_ef_descriptive():
     assert all(spec["outcome"] != "ef" for spec in DEFAULT_ADJUSTED_SPECS)
 
 
+def test_load_inference_is_conditional_on_measured_workout_days():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS
+
+    load_specs = [spec for spec in DEFAULT_ADJUSTED_SPECS if spec["outcome"] == "trimp_total"]
+    assert load_specs
+    assert all(spec["outcome_positive_only"] is True for spec in load_specs)
+    assert {spec["name"] for spec in load_specs} == {
+        "rhr_to_workout_load",
+        "hrv_to_workout_load",
+    }
+
+
+def test_exploratory_load_correlations_exclude_rest_day_zeros_at_every_lag():
+    dates = pd.date_range("2026-01-01", periods=80, freq="D")
+    frame = pd.DataFrame(
+        {
+            "driver": np.arange(80, dtype=float),
+            "trimp_total": [float(i + 1) if i % 2 else 0.0 for i in range(80)],
+        },
+        index=dates,
+    )
+
+    rows = compute_correlations(frame, drivers=["driver"], perfs=["trimp_total"], max_lag=2)
+
+    assert [row["n"] for row in rows] == [40, 40, 39]
+
+
+def test_adjusted_load_candidate_excludes_rest_day_zeros():
+    rng = np.random.default_rng(22)
+    dates = pd.date_range("2026-01-01", periods=100, freq="D")
+    frame = pd.DataFrame(
+        {
+            "driver": rng.normal(size=100),
+            "trimp_total": [float(20 + i) if i % 2 else 0.0 for i in range(100)],
+        },
+        index=dates,
+    )
+    spec = {
+        "name": "conditional_load",
+        "label": "Driver → workout-day load",
+        "driver": "driver",
+        "outcome": "trimp_total",
+        "controls": [],
+        "outcome_positive_only": True,
+    }
+
+    result = _evaluate_spec(frame, spec, min_n=20, boot_reps=10)
+
+    assert result is not None
+    assert result["n"] == 50
+
+
 def test_default_specs_include_steps_candidates():
     # NEAT hypothesis gets a controlled test, not just the raw sweep: steps
     # candidates must control for training load so big-step days don't proxy
@@ -498,3 +551,17 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
 
     assert [model["name"] for model in written_models] == ["daily_adjusted_finder"]
     assert deleted_models == ["ef_on_sleep_dlm"]
+
+
+def test_sleep_midpoint_uses_actual_instant_on_local_clock_across_dst():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import sleep_midpoint_hours
+
+    # 23:00 CET → 07:00 CEST is seven elapsed hours. Its actual midpoint is
+    # 03:30 CEST, not 03:00 (the midpoint of the two wall-clock labels).
+    row = {
+        "sleep_start": "2026-03-28T22:00:00Z",
+        "sleep_end": "2026-03-29T05:00:00Z",
+    }
+    assert sleep_midpoint_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(3.5)

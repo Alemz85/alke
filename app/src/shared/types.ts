@@ -761,6 +761,7 @@ export interface ChatAttachment {
 export const MAX_CHAT_ATTACHMENTS = 8
 
 export interface InsightCorrelation {
+  computed_at: string | null
   var_x: string
   var_y: string
   lag_days: number

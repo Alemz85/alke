@@ -51,8 +51,8 @@ DEFAULT_ADJUSTED_SPECS = [
     {"name": "timing_to_sleep", "label": "Sleep timing drift ↔ duration", "driver": "sleep_midpoint_dev", "outcome": "sleep_duration", "controls": ["lag:sleep_duration"], "direction": "co-measured"},
     {"name": "timing_to_rhr", "label": "Sleep timing drift ↔ RHR deviation", "driver": "sleep_midpoint_dev", "outcome": "rhr_dev", "controls": ["lag:rhr_dev", "atl"], "direction": "co-measured"},
     {"name": "timing_to_hrv", "label": "Sleep timing drift ↔ HRV deviation", "driver": "sleep_midpoint_dev", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
-    {"name": "rhr_to_load", "label": "RHR deviation → same-day load", "driver": "rhr_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
-    {"name": "hrv_to_load", "label": "HRV deviation → same-day load", "driver": "hrv_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
+    {"name": "rhr_to_workout_load", "label": "RHR deviation → workout-day load", "driver": "rhr_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "workout-day-dose", "outcome_positive_only": True},
+    {"name": "hrv_to_workout_load", "label": "HRV deviation → workout-day load", "driver": "hrv_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "workout-day-dose", "outcome_positive_only": True},
     # NEAT / ambient activity: does yesterday's movement predict recovery and
     # sleep BEYOND training load? trimp_prior is a control so big-step days
     # don't merely proxy long workouts; lag:outcome absorbs autocorrelation.
@@ -174,7 +174,10 @@ def _evaluate_spec(
     data["time_trend"] = np.arange(len(data), dtype=float)
     weekdays = pd.get_dummies(pd.DatetimeIndex(data.index).dayofweek, prefix="dow", drop_first=True, dtype=float)
     weekdays.index = data.index
-    data = pd.concat([data, weekdays], axis=1).dropna()
+    data = pd.concat([data, weekdays], axis=1)
+    if spec.get("outcome_positive_only"):
+        data = data.loc[data["y"] > 0]
+    data = data.dropna()
     base = {
         "name": name, "label": spec["label"], "driver": driver, "outcome": outcome,
         "direction": spec.get("direction", "co-measured"), "n": int(len(data)),
@@ -497,7 +500,9 @@ def compute_correlations(
     max_lag: int = 3,
 ) -> list[dict]:
     """Pearson r for each (driver at t−lag, perf at t) pair. Pairs with n < 20 are
-    skipped. Overwrites the table each nightly run.
+    skipped. Load outcomes are conditional on positive measured TRIMP days, so
+    rest-day zeroes do not blend training occurrence with workout dose.
+    Overwrites the table each nightly run.
 
     F3 fix — these series are autocorrelated (rolling/EWMA; lag-1 ~0.9), so a
     pearsonr p-value computed on the nominal n is overconfident, and the ~100-pair
@@ -522,6 +527,8 @@ def compute_correlations(
                 continue
             for lag in range(0, max_lag + 1):
                 paired = pd.DataFrame({"x": frame[x].shift(lag), "y": frame[y]}).dropna()
+                if y == "trimp_total":
+                    paired = paired.loc[paired["y"] > 0]
                 if len(paired) < MIN_CORR_N or paired["x"].std() == 0 or paired["y"].std() == 0:
                     continue
                 r, p_naive = pearsonr(paired["x"], paired["y"])

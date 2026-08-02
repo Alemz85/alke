@@ -2262,7 +2262,7 @@ export async function getLastIngestAt(): Promise<string | null> {
 export async function getInsightCorrelations(): Promise<InsightCorrelation[]> {
   const { data, error } = await getClient()
     .from('insight_correlations')
-    .select('var_x, var_y, lag_days, r, n, p_value, n_eff, p_value_naive, q_value')
+    .select('computed_at, var_x, var_y, lag_days, r, n, p_value, n_eff, p_value_naive, q_value')
   if (error) throw new Error(error.message)
   const normalized = (data ?? []).map((row) =>
     normalizeNumeric(row as unknown as InsightCorrelation, [

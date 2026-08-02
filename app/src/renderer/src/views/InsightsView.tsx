@@ -14,6 +14,11 @@ import type { InsightCorrelation } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ChartCard, EmptyState } from '../components'
 import {
+  buildInsightScatter,
+  insightWindowStart,
+  sleepMidpointHours
+} from '../lib/insightSeries'
+import {
   addDays,
   localDateKey,
   todayYMD,
@@ -33,9 +38,10 @@ const DRIVERS = [
 const PERFS = [
   { key: 'decoupling', label: 'Decoupling' },
   { key: 'hrr60', label: 'HRR60' },
-  { key: 'trimp_total', label: 'Daily load' }
+  { key: 'trimp_total', label: 'Workout-day load' }
 ]
 const LAGS = [0, 1, 2, 3]
+const RETIRED_FINDER_CANDIDATES = new Set(['rhr_to_load', 'hrv_to_load'])
 
 function cellColor(r: number): string {
   const alpha = 0.06 + Math.min(Math.abs(r), 1) * 0.8
@@ -69,7 +75,10 @@ interface FinderCandidate {
 
 /** Rebuild the daily analysis series in the renderer so a clicked cell can
  * show its underlying scatter — mirrors metrics/compute.py's frame. */
-function useAnalysisSeries(): Record<string, Map<string, number>> {
+function useAnalysisSeries(): {
+  series: Record<string, Map<string, number>>
+  timezone: string | null
+} {
   const config = useQuery({
     queryKey: ['insights', 'config'],
     queryFn: () => window.api.getUserConfig(),
@@ -112,10 +121,7 @@ function useAnalysisSeries(): Record<string, Map<string, number>> {
     for (const m of daily.data ?? []) {
       put('sleep_duration', m.date, m.sleep_duration_min)
       if (m.sleep_start && m.sleep_end) {
-        const start = new Date(m.sleep_start).getTime()
-        const end = new Date(m.sleep_end).getTime()
-        const mid = new Date((start + end) / 2)
-        put('sleep_midpoint', m.date, mid.getUTCHours() + mid.getUTCMinutes() / 60)
+        put('sleep_midpoint', m.date, sleepMidpointHours(m.sleep_start, m.sleep_end, tz))
       }
     }
     const computedRows = [...(computed.data ?? [])].sort((a, b) => a.date.localeCompare(b.date))
@@ -159,14 +165,8 @@ function useAnalysisSeries(): Record<string, Map<string, number>> {
         put(name, day, values.reduce((a, b) => a + b, 0) / values.length)
       }
     }
-    return series
+    return { series, timezone: tz }
   }, [daily.data, computed.data, workouts.data, config.data])
-}
-
-function shiftDate(date: string, days: number): string {
-  const d = new Date(`${date}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() - days)
-  return d.toISOString().slice(0, 10)
 }
 
 export function InsightsView(): ReactElement {
@@ -183,11 +183,24 @@ export function InsightsView(): ReactElement {
     queryFn: () => window.api.getInsightModels(),
     staleTime: 60_000
   })
-  const series = useAnalysisSeries()
+  const { series, timezone } = useAnalysisSeries()
 
-  const correlations = (correlationsQuery.data ?? []).filter(
+  const storedCorrelations = (correlationsQuery.data ?? []).filter(
     (correlation) => correlation.var_y !== 'ef'
   )
+  const correlations = storedCorrelations.filter((correlation) => {
+    if (correlation.var_y !== 'trimp_total') return true
+    const xs = series[correlation.var_x]
+    const ys = series[correlation.var_y]
+    if (!xs || !ys) return false
+    const fromDate = insightWindowStart(correlation.computed_at, timezone)
+    return (
+      buildInsightScatter(xs, ys, correlation.lag_days, fromDate, true).length === correlation.n
+    )
+  })
+  const waitingForLoadRecompute =
+    storedCorrelations.some((correlation) => correlation.var_y === 'trimp_total') &&
+    !correlations.some((correlation) => correlation.var_y === 'trimp_total')
   const byKey = new Map(correlations.map((c) => [`${c.var_x}|${c.var_y}|${c.lag_days}`, c]))
 
   const scatterPoints = useMemo(() => {
@@ -195,13 +208,15 @@ export function InsightsView(): ReactElement {
     const xs = series[selected.var_x]
     const ys = series[selected.var_y]
     if (!xs || !ys) return []
-    const points: { x: number; y: number; date: string }[] = []
-    for (const [date, y] of ys) {
-      const x = xs.get(shiftDate(date, selected.lag_days))
-      if (x !== undefined) points.push({ x, y, date })
-    }
-    return points
-  }, [selected, series])
+    const correlationFromDate = insightWindowStart(selected.computed_at, timezone)
+    return buildInsightScatter(
+      xs,
+      ys,
+      selected.lag_days,
+      correlationFromDate,
+      selected.var_y === 'trimp_total'
+    )
+  }, [selected, series, timezone])
 
   const models = (modelsQuery.data ?? []).filter((m) => m.coefficients)
   const finderModel = (modelsQuery.data ?? []).find(
@@ -214,7 +229,8 @@ export function InsightsView(): ReactElement {
     caveat?: string
   } | null
   const finderCandidates = (finderDiagnostics?.candidates ?? []).filter(
-    (candidate) => candidate.outcome !== 'ef'
+    (candidate) =>
+      candidate.outcome !== 'ef' && !RETIRED_FINDER_CANDIDATES.has(candidate.name)
   )
   const surfacedCandidates = finderCandidates.filter(
     (candidate) => candidate.status === 'signal' || candidate.status === 'watch'
@@ -347,7 +363,13 @@ export function InsightsView(): ReactElement {
       </section>
 
       {correlations.length === 0 ? (
-        <EmptyState message="Keep training — this tab switches on at ~20 observations (~5–6 weeks) and gets honest at ~3 months." />
+        <EmptyState
+          message={
+            waitingForLoadRecompute
+              ? 'Load relationships are waiting for the next metrics recompute so rest-day zeroes can be excluded.'
+              : 'Keep training — this tab switches on at ~20 observations (~5–6 weeks) and gets honest at ~3 months.'
+          }
+        />
       ) : (
         <>
           <div className="insights-matrix-head">
@@ -424,7 +446,8 @@ export function InsightsView(): ReactElement {
             data — read as hypotheses, not conclusions. p is autocorrelation-corrected (these are
             smoothed daily series — the effective sample is far smaller than the day count); q is
             the false-discovery rate across the whole grid, the number to trust before believing
-            any single cell.
+            any single cell. Workout-day load excludes rest-day zeroes; lag moves the driver back
+            from each measured workout day.
           </p>
 
           {selected && (
