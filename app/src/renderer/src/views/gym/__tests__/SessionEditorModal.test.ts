@@ -201,7 +201,7 @@ describe('dirty draft safety (source contract)', () => {
   })
 
   it('guards every close path and waits for mutateAsync success before closing', () => {
-    expect(source).toContain('const requestClose = (): void =>')
+    expect(source).toContain('const requestClose = useCallback((): void =>')
     expect(source).toContain('setShowDiscardGuard(true)')
     expect(source).toContain("window.addEventListener('beforeunload', onBeforeUnload)")
     expect(source).toContain('await updateMutation.mutateAsync(')

@@ -75,7 +75,6 @@ export function HeroNumber({ value, format, className }: HeroNumberProps): React
         rafRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value])
 
   function prevReducedMotionOrUnchanged(prev: number | null, next: number): boolean {

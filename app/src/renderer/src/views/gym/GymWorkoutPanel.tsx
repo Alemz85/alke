@@ -217,11 +217,12 @@ export function GymWorkoutPanel({
   onClose: () => void
   initialRecoveryTemplateId?: string
 }): ReactElement {
-  const [editing, setEditing] = useState(item.session == null)
+  const sessionMissing = item.session == null
+  const [editing, setEditing] = useState(sessionMissing)
 
   useEffect(() => {
-    setEditing(item.session == null)
-  }, [item.key, item.session?.id])
+    setEditing(sessionMissing)
+  }, [item.key, sessionMissing])
 
   if (item.session && !editing) {
     return (

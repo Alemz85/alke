@@ -136,7 +136,7 @@ export function TemplateViewModal({
   }, [onClose])
 
   const versionsQuery = useGymTemplateVersions(template.family_id)
-  const versions = versionsQuery.data ?? []
+  const versions = useMemo(() => versionsQuery.data ?? [], [versionsQuery.data])
   const hasMultipleVersions = versions.length > 1
 
   const exercisesQuery = useExercises()

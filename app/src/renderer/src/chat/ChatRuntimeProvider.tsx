@@ -129,7 +129,10 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
   const selectedKey = state.selectedSessionId ?? NEW_CHAT_KEY
   const draft = state.drafts[selectedKey] ?? ''
   const mode = state.modes[selectedKey] ?? 'analysis'
-  const attachments = state.attachments[selectedKey] ?? []
+  const attachments = useMemo(
+    () => state.attachments[selectedKey] ?? [],
+    [selectedKey, state.attachments]
+  )
 
   const selectSession = useCallback((sessionId: string): void => {
     dispatch({ type: 'select', sessionId })

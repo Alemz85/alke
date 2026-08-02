@@ -163,7 +163,6 @@ describe('OfflineWriteQueue', () => {
   it('stringifies a non-Error thrown value into lastError', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'health-write-queue-'))
     const queue = new OfflineWriteQueue(join(directory, 'queue.json'), async () => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw { reason: 'network down', code: 'ECONNRESET' }
     })
     await queue.enqueue(operation('op-1'))

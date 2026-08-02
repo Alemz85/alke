@@ -68,10 +68,13 @@ export function GymView(): ReactElement {
   const [selectedGymItemKey, setSelectedGymItemKey] = useState<string | null>(null)
   const [recoveryDraftTemplateId, setRecoveryDraftTemplateId] = useState<string | null>(null)
 
-  const allWorkouts = yearWorkoutsQuery.data ?? []
-  const gymSessions = gymSessionsQuery.data ?? []
-  const allGymSessions = gymHistoryQuery.data ?? gymSessions
-  const templates = templatesQuery.data ?? []
+  const allWorkouts = useMemo(() => yearWorkoutsQuery.data ?? [], [yearWorkoutsQuery.data])
+  const gymSessions = useMemo(() => gymSessionsQuery.data ?? [], [gymSessionsQuery.data])
+  const allGymSessions = useMemo(
+    () => gymHistoryQuery.data ?? gymSessions,
+    [gymHistoryQuery.data, gymSessions]
+  )
+  const templates = useMemo(() => templatesQuery.data ?? [], [templatesQuery.data])
 
   const exercisesById = useMemo(
     () => new Map((exercisesQuery.data ?? []).map((e) => [e.id, e])),

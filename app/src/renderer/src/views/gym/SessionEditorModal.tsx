@@ -2,7 +2,7 @@
 // log" (title/template/notes only, zero set rows) and "full log" (exercise
 // blocks with per-set reps/kg/effort/notes) — dual granularity is a data shape, not
 // a UI mode, so both are the same form with the set editor optionally empty.
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import {
   GYM_BODY_PARTS,
   type Exercise,
@@ -762,14 +762,14 @@ export function SessionEditorModal({
     setDraftSaved(false)
   }
 
-  const requestClose = (): void => {
+  const requestClose = useCallback((): void => {
     if (pending) return
     if (isDirty) {
       setShowDiscardGuard(true)
       return
     }
     onClose()
-  }
+  }, [isDirty, onClose, pending])
 
   const discardDraft = (): void => {
     clearDraft()

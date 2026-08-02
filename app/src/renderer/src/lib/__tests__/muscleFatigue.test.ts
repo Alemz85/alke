@@ -1315,7 +1315,6 @@ describe('realistic training week (mock-data scenario)', () => {
           .toFixed(1)
           .padStart(5)} · fatigue ${(g.fatigue * 100).toFixed(0).padStart(3)}%`
     )
-    // eslint-disable-next-line no-console
     console.log('\n[scenario] Muscle load & fatigue — Sun 2026-07-12, aerobic base 45:\n' + lines.join('\n') + '\n')
     expect(ranked.length).toBe(6)
   })

@@ -216,7 +216,6 @@ export function TemplateEditorModal({
     )
     // Runs once per catalog load transition, not on every keystroke — items
     // is deliberately excluded to avoid fighting the user's own edits.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exercisesById])
 
   const addItem = (): void => setItems((prev) => [...prev, blankItem()])

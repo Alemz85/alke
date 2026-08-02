@@ -657,7 +657,6 @@ describe('realistic training scenario (mock-data)', () => {
           .toFixed(1)
           .padStart(6)} · pct ${g.currentPct.toFixed(0).padStart(3)}% · lowData ${g.lowData}`
     )
-    // eslint-disable-next-line no-console
     console.log('\n[scenario] Strength level — Sun 2026-07-12:\n' + lines.join('\n') + '\n')
     expect(res.groups.length).toBe(6)
   })

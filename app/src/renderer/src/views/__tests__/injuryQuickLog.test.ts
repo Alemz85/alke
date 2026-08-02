@@ -23,14 +23,14 @@ describe('quick-log "Feeling fine" reflects logged-today state', () => {
 
   it('logFeelingFine is a no-op once already logged today (guards races around the disabled prop)', () => {
     const actionRow = source.match(/function ActionRow\([\s\S]*?\n\/\/ ── recovery plan modal/)?.[0] ?? ''
-    const fnMatch = actionRow.match(/const logFeelingFine = \(\): void => \{[\s\S]*?\n  \}/)
+    const fnMatch = actionRow.match(/const logFeelingFine = \(\): void => \{[\s\S]*?\n {2}\}/)
     expect(fnMatch).not.toBeNull()
     expect(fnMatch?.[0]).toContain('if (loggedFineToday || fineMutation.isPending) return')
   })
 
   it('the optimistic update replaces an existing same-day entry instead of always prepending', () => {
     const actionRow = source.match(/function ActionRow\([\s\S]*?\n\/\/ ── recovery plan modal/)?.[0] ?? ''
-    const onMutateMatch = actionRow.match(/onMutate: async \(\) => \{[\s\S]*?\n    \},/)
+    const onMutateMatch = actionRow.match(/onMutate: async \(\) => \{[\s\S]*?\n {4}\},/)
     expect(onMutateMatch).not.toBeNull()
     const body = onMutateMatch?.[0] ?? ''
     expect(body).toContain('todayUserEntry(rows, todayYMD)')

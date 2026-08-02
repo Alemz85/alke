@@ -211,7 +211,7 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
     : ''
 
   // --- Daily metrics: body-weight pill + RHR pill ---
-  const dailyMetrics = dailyMetricsQuery.data ?? []
+  const dailyMetrics = useMemo(() => dailyMetricsQuery.data ?? [], [dailyMetricsQuery.data])
   const sortedMetrics = useMemo(
     () => [...dailyMetrics].sort((a, b) => a.date.localeCompare(b.date)),
     [dailyMetrics]
