@@ -6,7 +6,9 @@ suite when the maps diverge, naming the direction of the drift."""
 import re
 from pathlib import Path
 
-from metrics.compute import GOAL_SYNONYMS
+import pytest
+
+from metrics.compute import GOAL_SYNONYMS, goal_matches
 
 MODALITY_TS = (
     Path(__file__).resolve().parents[2] / "app" / "src" / "renderer" / "src" / "lib" / "modality.ts"
@@ -33,3 +35,11 @@ def test_goal_synonyms_match_app_modality_matcher():
         "app/src/renderer/src/lib/modality.ts — update both sides together.\n"
         f"python: {GOAL_SYNONYMS}\nts:     {ts_map}"
     )
+
+
+@pytest.mark.parametrize(
+    "workout_type",
+    ["running", "indoor_run", "biking", "outdoor_walk", "hiking"],
+)
+def test_cardio_goal_counts_every_tracked_aerobic_family(workout_type):
+    assert goal_matches(workout_type, "cardio")

@@ -7,7 +7,7 @@ const GOAL_SYNONYMS: Record<string, string[]> = {
   swim: ['swim'],
   bike: ['cycling', 'biking'],
   row: ['rowing'],
-  cardio: ['swim', 'cycling', 'elliptical', 'rowing']
+  cardio: ['swim', 'run', 'cycling', 'biking', 'rowing', 'elliptical', 'walk', 'hiking']
 }
 
 export function workoutMatchesGoal(workoutType: string | null, goalKey: string): boolean {

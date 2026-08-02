@@ -45,4 +45,11 @@ describe('workoutMatchesGoal', () => {
   it('matches cardio goal against elliptical via synonym', () => {
     expect(workoutMatchesGoal('elliptical', 'cardio')).toBe(true)
   })
+
+  it.each(['running', 'indoor_run', 'biking', 'outdoor_walk', 'hiking'])(
+    'matches cardio goal against %s',
+    (workoutType) => {
+      expect(workoutMatchesGoal(workoutType, 'cardio')).toBe(true)
+    }
+  )
 })

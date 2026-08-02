@@ -43,7 +43,7 @@ GOAL_SYNONYMS = {
     "swim": ["swim"],
     "bike": ["cycling", "biking"],
     "row": ["rowing"],
-    "cardio": ["swim", "cycling", "elliptical", "rowing"],
+    "cardio": ["swim", "run", "cycling", "biking", "rowing", "elliptical", "walk", "hiking"],
 }
 
 
