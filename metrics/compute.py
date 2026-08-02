@@ -27,6 +27,7 @@ from metrics.models import (
     rolling_median,
     swim_active_ef,
     swim_active_hr_drift_pct,
+    swim_ef_eligibility,
     time_in_zones,
     trimp_edwards,
     z2_trimp_from_zones,
@@ -144,12 +145,16 @@ def run(full: bool) -> None:
         bounds = zone_bounds(hr_max, rhr_recent_for(day, rhr_by_date), z2_low, z2_high)
         is_swim = bool(w["type"]) and "swim" in w["type"].lower()
         tiz = time_in_zones(samples, bounds, swim_hr_offset=swim_offset if is_swim else 0.0)
-        eligible = ef_eligibility(w["type"], tiz, w["duration_s"])
+        swim_sets = swim_sets_by_workout.get(w["id"], []) if is_swim else []
+        eligible = (
+            swim_ef_eligibility(w["type"], swim_sets, samples, bounds, swim_offset)
+            if is_swim
+            else ef_eligibility(w["type"], tiz, w["duration_s"])
+        )
         efficiency = None
         drift = None
         if eligible:
             if is_swim:
-                swim_sets = swim_sets_by_workout.get(w["id"], [])
                 efficiency = swim_active_ef(swim_sets, samples)
                 drift = swim_active_hr_drift_pct(swim_sets, samples)
             else:

@@ -16,6 +16,7 @@ from metrics.models import (
     hrr60,
     swim_active_ef,
     swim_active_hr_drift_pct,
+    swim_ef_eligibility,
     time_in_zones,
     trimp_edwards,
     zone_bounds,
@@ -122,6 +123,30 @@ def test_swim_active_hr_drift_requires_four_active_samples():
     sets = [{"start_offset_s": 0, "duration_s": 60, "distance_m": 50}]
 
     assert swim_active_hr_drift_pct(sets, [(0, 120), (20, 120), (40, 120)]) is None
+
+
+def test_swim_ef_eligibility_uses_active_duration_not_total_workout_time():
+    sets = [
+        {"start_offset_s": 0, "duration_s": 300, "distance_m": 250},
+        {"start_offset_s": 600, "duration_s": 300, "distance_m": 250},
+    ]
+    samples = [(s, 130) for s in range(0, 900, 10)]
+
+    assert not swim_ef_eligibility("pool_swim", sets, samples, BOUNDS, -10)
+
+
+def test_swim_ef_eligibility_excludes_rest_hr_from_aerobic_gate():
+    sets = [
+        {"start_offset_s": 0, "duration_s": 600, "distance_m": 500},
+        {"start_offset_s": 1200, "duration_s": 600, "distance_m": 500},
+    ]
+    samples = [
+        *[(s, 130) for s in range(0, 600, 10)],
+        *[(s, 180) for s in range(600, 1200, 10)],
+        *[(s, 130) for s in range(1200, 1800, 10)],
+    ]
+
+    assert swim_ef_eligibility("pool_swim", sets, samples, BOUNDS, -10)
 
 
 def test_ef_eligibility_swims_bikes_and_runs_z1z2_70pct_20min():

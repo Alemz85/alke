@@ -107,8 +107,10 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
     compute.run(full=False)
 
     recent = next(r for r in captured["computed"] if r["workout_id"] == recent_id)
-    assert recent["ef"] == pytest.approx((500 / (600 / 60)) / 126)
-    assert recent["decoupling_pct"] == pytest.approx(10.0)
+    # The full workout lasts 30 minutes, but its active swim sets total only 10.
+    # It must not qualify as a >=20-minute steady EF/decoupling observation.
+    assert recent["ef"] is None
+    assert recent["decoupling_pct"] is None
 
     by_date = {r["date"]: r for r in captured["daily"]}
     # The pre-window workout's day keeps its stored TRIMP (was 0.0 before the fix).

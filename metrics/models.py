@@ -138,6 +138,34 @@ def swim_active_hr_drift_pct(sets: list[dict], samples: list[Sample]) -> float |
     return (avg2 - avg1) / avg1 * 100.0
 
 
+def swim_ef_eligibility(
+    workout_type: str | None,
+    sets: list[dict],
+    samples: list[Sample],
+    bounds: tuple[float, float, float, float],
+    swim_hr_offset: float,
+) -> bool:
+    """Apply the steady-aerobic gate to active swim time and active HR only.
+
+    Zone time is calculated within each set separately so a rest gap between
+    sets cannot be bridged by ``time_in_zones``' spacing cap.
+    """
+    valid_sets = _valid_swim_sets(sets)
+    active_tiz = {z: 0 for z in range(1, 6)}
+    for start, duration, _ in valid_sets:
+        set_samples = [
+            (offset, bpm)
+            for offset, bpm in samples
+            if start <= offset < start + duration
+        ]
+        set_tiz = time_in_zones(set_samples, bounds, swim_hr_offset)
+        for zone, seconds in set_tiz.items():
+            active_tiz[zone] += seconds
+
+    active_duration_s = sum(duration for _, duration, _ in valid_sets)
+    return ef_eligibility(workout_type, active_tiz, active_duration_s)
+
+
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
     """EF/decoupling eligibility: swim, bike AND run, each gated ≥20 min and ≥70%
     of classified time in Z1–Z2 (the same aerobic-specific gate for all three).
