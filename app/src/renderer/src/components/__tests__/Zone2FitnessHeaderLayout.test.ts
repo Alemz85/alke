@@ -24,4 +24,10 @@ describe('Zone2FitnessHeader layout', () => {
     expect(styles).toMatch(/\.z2f-trend \.z2traj-plot\s*{[^}]*background: var\(--color-surface\)/s)
     expect(styles).toMatch(/\.z2f-footnote\s*{[^}]*max-width: none/s)
   })
+
+  it('describes the actual calibration signals and keeps swim efficiency separate', () => {
+    expect(source).toContain('Built from Zone 2 load')
+    expect(source).toContain('swim efficiency stays separate because technique can dominate it')
+    expect(source).not.toContain('Built from your swim and bike pace/HR')
+  })
 })

@@ -59,11 +59,11 @@ function totalZ2Seconds(workouts: Workout[]): number {
   }, 0)
 }
 
-// v2 honesty caption: the number is anchored to the user's own swim/bike signals now,
-// with watch VO2max demoted to an occasional calibration check. Trend is trustworthy;
-// absolute level keeps a real band.
+// Honesty caption mirrors the nightly fusion: load sets the trajectory, eligible
+// run/bike EF and watch VO2max calibrate its height, and autonomic signals only
+// corroborate confidence. Swim EF remains a separate technique-sensitive readout.
 const HONESTY_CAPTION =
-  'Built from your swim and bike pace/HR plus RHR and HRV trends. Watch VO2max only calibrates it occasionally. Trust the trend; treat the level as a band.'
+  'Built from Zone 2 load, calibrated by eligible running or cycling efficiency and occasional watch VO2max. RHR and HRV corroborate confidence; swim efficiency stays separate because technique can dominate it. Trust the trend; treat the level as a band.'
 
 // Fallback maintenance copy (spec §5c) if the row's flag carries no message.
 const MAINTENANCE_COPY =
