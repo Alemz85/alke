@@ -51,6 +51,7 @@ const PERFS = [
 ]
 const LAGS = [0, 1, 2, 3]
 const RETIRED_FINDER_CANDIDATES = new Set(['rhr_to_load', 'hrv_to_load'])
+const FINALIZED_DAILY_DRIVERS = new Set(['rhr_dev', 'hrv_dev'])
 
 function cellColor(r: number): string {
   const alpha = 0.06 + Math.min(Math.abs(r), 1) * 0.8
@@ -113,6 +114,9 @@ function formatClockHour(hour: number | undefined): string {
 
 function candidateInterpretation(candidate: FinderCandidate): string {
   if (candidate.direction === 'co-measured') {
+    if (FINALIZED_DAILY_DRIVERS.has(candidate.outcome ?? '')) {
+      return 'Same-date association with a finalized daily aggregate; causal direction and within-day order are unresolved.'
+    }
     return 'Same night/morning association; causal direction is unresolved.'
   }
   if (candidate.direction === 'circadian') {
@@ -120,6 +124,9 @@ function candidateInterpretation(candidate: FinderCandidate): string {
   }
   if (candidate.direction === 'morning-to-workout') {
     return 'Morning context precedes the workout; this is recorded behavior, not a capacity test.'
+  }
+  if (candidate.direction === 'prior-day-to-workout') {
+    return "The previous day's finalized daily aggregate predates the workout; this is recorded behavior, not a capacity test."
   }
   if (candidate.direction === 'same-day-context') {
     return 'Position in the waking day precedes the workout; still observational.'
@@ -279,7 +286,11 @@ export function InsightsView(): ReactElement {
   const { series, timezone, workoutContextCount } = useAnalysisSeries()
 
   const storedCorrelations = (correlationsQuery.data ?? []).filter(
-    (correlation) => correlation.var_y !== 'ef'
+    (correlation) =>
+      correlation.var_y !== 'ef' &&
+      !(
+        correlation.lag_days === 0 && FINALIZED_DAILY_DRIVERS.has(correlation.var_x)
+      )
   )
   const correlationSchemaCurrent = storedCorrelations.some(
     (correlation) => correlation.var_x === 'sleep_shortfall'
@@ -327,16 +338,16 @@ export function InsightsView(): ReactElement {
   const finderFamilies = [
     {
       key: 'daily',
-      title: 'Daily recovery',
-      detail: 'Prior-day behavior, sleep, and morning recovery',
-      expectedVersion: 2,
+      title: 'Daily physiology',
+      detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
+      expectedVersion: 3,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {
       key: 'workout',
       title: 'Workout context',
       detail: 'Readiness, waking-day position, and circular workout time',
-      expectedVersion: 2,
+      expectedVersion: 3,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {
@@ -367,9 +378,9 @@ export function InsightsView(): ReactElement {
       detail: 'duration and timing days'
     },
     {
-      label: 'Recovery context',
+      label: 'Physiology context',
       value: Math.max(series.rhr_dev?.size ?? 0, series.hrv_dev?.size ?? 0),
-      detail: 'RHR or HRV days'
+      detail: 'finalized RHR or HRV days'
     },
     {
       label: 'Workout context',
@@ -620,7 +631,8 @@ export function InsightsView(): ReactElement {
             the false-discovery rate across the whole grid, the number to trust before believing
             any single cell. A † marks Pearson/rank disagreement, often an outlier or nonlinear
             relationship. Workout-day load excludes rest-day zeroes; lag moves the driver back from
-            each measured workout day.
+            each measured workout day. RHR and HRV are finalized full-day aggregates, so their
+            same-day cells are withheld; only prior-day values can precede performance.
           </p>
 
           {selected && (

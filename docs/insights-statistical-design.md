@@ -25,9 +25,11 @@ continuity proxy.
 
 ## Temporal ordering
 
-The row labelled date `t` contains the sleep ending on `t` and the morning
-recovery measurements associated with `t`. A workout later on `t` is in the
-future relative to those measurements.
+The row labelled date `t` contains the sleep ending on `t`. Respiratory rate
+is treated as sleep-associated. RHR and HRV are different: Health Auto Export
+sends one midnight-stamped daily aggregate and later exports can revise it
+after a workout on `t`. The final stored RHR/HRV value is therefore not known
+before that workout.
 
 This creates the following legal ordering:
 
@@ -38,6 +40,11 @@ sleep and morning recovery on t
         ↓
 workout choice and recorded intensity later on t
 ```
+
+That ordering applies to sleep-derived variables, not final same-day RHR/HRV.
+For RHR/HRV the legal workout predictor is the finalized aggregate from
+`t-1`. A same-date relationship may be screened only as co-measured, with
+within-day order and causal direction explicitly unresolved.
 
 ATL and CTL computed for `t` already include the workout on `t`. They must
 never control an analysis of sleep or morning recovery on `t`, and they must
@@ -57,9 +64,10 @@ Current sleep is not allowed to pull its own baseline toward itself.
 ### Prior-day behavior to next sleep/recovery
 
 Exposures are prior-day TRIMP and prior-day steps. Outcomes are sleep
-shortfall relative to the prior 28-day median, sleep awake fraction, RHR
-deviation, HRV deviation, and respiratory-rate deviation relative to its
-prior 28-day median.
+shortfall relative to the prior 28-day median, sleep awake fraction, and
+respiratory-rate deviation relative to its prior 28-day median. Finalized
+same-day RHR/HRV aggregates are excluded from this directed family because a
+workout later on the outcome date can contribute to their final value.
 
 Each outcome controls its previous value and the pre-exposure chronic load.
 The TRIMP and step exposures control one another so a long active workout does
@@ -69,9 +77,9 @@ not masquerade as two independent effects.
 
 Sleep shortfall, sleep-midpoint drift, and sleep awake fraction are screened
 against RHR, HRV, and respiratory-rate deviation. These are explicitly
-labelled co-measured associations: the Apple Health daily aggregates do not
-support a causal direction within the night/morning block. Prior ATL and the
-previous outcome are controls.
+labelled co-measured associations. For RHR/HRV, “co-measured” means same-date
+association with a finalized full-day aggregate, not a morning-readiness
+measurement. Prior ATL and the previous outcome are controls.
 
 ## Workout-context families
 
@@ -95,16 +103,16 @@ would require a standardized task, pace/power, and preferably perceived
 exertion. They answer how hard the recorded session was, conditional on doing
 a workout.
 
-Workout readiness candidates relate sleep shortfall, sleep timing drift, RHR,
-HRV, and respiratory-rate deviation to duration and TRIMP per minute. Hours
-since waking is screened separately because clock time and biological-day
-position are not the same exposure. They control prior load state, modality,
-time since the previous workout, time since the previous workout of that
-modality, and any load already accumulated earlier that day. The last control
-is essential: an evening session is more likely than a morning session to be a
-second session, and otherwise “time of day” could merely rediscover accumulated
-same-day fatigue. Missing recovery measurements reduce a candidate's own
-sample; they do not cause imputation.
+Workout readiness candidates relate sleep shortfall, sleep timing drift,
+previous-day finalized RHR/HRV, and sleep-associated respiratory-rate
+deviation to duration and TRIMP per minute. Hours since waking is screened
+separately because clock time and biological-day position are not the same
+exposure. They control prior load state, modality, time since the previous
+workout, time since the previous workout of that modality, and any load already
+accumulated earlier that day. The last control is essential: an evening session
+is more likely than a morning session to be a second session, and otherwise
+“time of day” could merely rediscover accumulated same-day fatigue. Missing
+measurements reduce a candidate's own sample; they do not cause imputation.
 
 ### Workout time of day
 
@@ -158,13 +166,26 @@ families. Every candidate passes the same policy:
 Exploratory correlations remain a hypothesis-discovery surface. They use a
 trailing 180-day window, effective-sample correction, rank-correlation
 robustness, and FDR q-values. Workout-load outcomes include workout days only
-at every lag.
+at every lag. Lag zero is withheld when RHR or HRV is placed on the driver side;
+their final same-day aggregate cannot precede performance.
+
+## Measurement-time audit (2026-08-02)
+
+Real `raw_payloads`, which outrank the vendor documentation, show RHR, HRV,
+and respiratory rate arriving as one entry per local date stamped `00:00:00`.
+Across the recent repeated exports, HRV changed on 22 of 23 re-exported dates
+and RHR on 14 of 22. On eight workout dates, an HRV value had already been
+exported before the workout and was revised by a later export. The ingest merge
+correctly retains the latest non-null aggregate for display, but that final
+value cannot be used retrospectively as if it had been observed before the
+workout. Model version 3 enforces the prior-day rule above.
 
 ## Current data implications (audit 2026-08-02)
 
 - 577 daily rows are present; steps and walking distance are complete.
-- Sleep has 281 days, RHR 259, HRV 311, and respiratory rate 286: these are
-  eligible for guarded daily inference.
+- Sleep has 281 days, RHR 259, HRV 311, and respiratory rate 286. RHR/HRV are
+  eligible as co-measured daily aggregates and prior-day predictors, not as
+  same-day readiness measurements.
 - Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
   detailed gym sessions 5: these remain dormant.
 - 108 workouts in the daily-data era have positive HR-derived load and at
@@ -174,6 +195,10 @@ at every lag.
   60-date rule. HRV-context candidates have 100 sessions on 71 dates and can be
   evaluated, while reliable modality-specific timing curves remain out of
   reach.
+- With the measurement-time correction, previous-day HRV candidates have 99
+  sessions on 71 dates and show no clear relationship to duration or recorded
+  intensity. The former same-day HRV-to-intensity raw signal disappears; it was
+  compatible with within-day aggregate revision rather than readiness.
 - Decoupling exists for only 14 recent workouts and HRR60 for none, so neither
   is a promotable workout-context outcome yet.
 

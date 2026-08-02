@@ -164,7 +164,8 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 2
+    assert model["diagnostics"]["model_version"] == 3
+    assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
 
@@ -279,7 +280,8 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 2
+    assert model["diagnostics"]["model_version"] == 3
+    assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
     candidate = model["diagnostics"]["candidates"][0]
@@ -726,10 +728,12 @@ def test_weight_series_coerces_string_values():
 
 def test_correlations_detect_driver_to_weight_slope_relationship():
     frame = make_frame(200)
-    # plant a same-day relationship between rhr_dev and weight_7d_slope
-    frame["weight_7d_slope"] = frame["rhr_dev"] * 0.05 + RNG.normal(0, 0.01, 200)
-    rows = compute_correlations(frame, drivers=["rhr_dev"], perfs=["weight_7d_slope"], max_lag=0)
+    # RHR is a finalized full-day aggregate, so only its prior-day value may
+    # lead an outcome. Plant that temporally valid relationship.
+    frame["weight_7d_slope"] = frame["rhr_dev"].shift(1) * 0.05 + RNG.normal(0, 0.01, 200)
+    rows = compute_correlations(frame, drivers=["rhr_dev"], perfs=["weight_7d_slope"], max_lag=1)
     assert len(rows) == 1
+    assert rows[0]["lag_days"] == 1
     assert rows[0]["r"] > 0.8
     assert rows[0]["n"] >= 20
 
@@ -823,8 +827,8 @@ def test_load_inference_is_conditional_on_measured_workout_days():
     assert load_specs
     assert all(spec["outcome_positive_only"] is True for spec in load_specs)
     assert {spec["name"] for spec in load_specs} == {
-        "rhr_to_workout_load",
-        "hrv_to_workout_load",
+        "prior_rhr_to_workout_load",
+        "prior_hrv_to_workout_load",
     }
 
 
@@ -875,7 +879,9 @@ def test_default_specs_include_steps_candidates():
     from metrics.insights import DEFAULT_ADJUSTED_SPECS
 
     steps_specs = {s["name"]: s for s in DEFAULT_ADJUSTED_SPECS if s["driver"] == "steps_prior"}
-    assert {"steps_to_rhr", "steps_to_hrv", "steps_to_sleep"} <= set(steps_specs)
+    assert {"steps_to_sleep", "steps_to_sleep_continuity", "steps_to_respiration"} <= set(steps_specs)
+    assert "steps_to_rhr" not in steps_specs
+    assert "steps_to_hrv" not in steps_specs
     assert all("trimp_prior" in s["controls"] for s in steps_specs.values())
 
 
@@ -900,6 +906,38 @@ def test_default_specs_cover_respiration_continuity_and_relative_sleep():
         "timing_to_respiration",
         "steps_to_sleep_continuity",
     } <= names
+
+
+def test_daily_aggregate_hr_is_never_treated_as_same_day_readiness():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS
+
+    directed_daily_hr = [
+        spec
+        for spec in DEFAULT_ADJUSTED_SPECS
+        if spec["outcome"] in {"rhr_dev", "hrv_dev"}
+        and spec["direction"] != "co-measured"
+    ]
+    assert directed_daily_hr == []
+
+    workout_drivers = {spec.get("driver") for spec in DEFAULT_WORKOUT_SPECS}
+    assert {"rhr_dev_prior", "hrv_dev_prior"} <= workout_drivers
+    assert "rhr_dev" not in workout_drivers
+    assert "hrv_dev" not in workout_drivers
+    assert all(
+        spec["direction"] == "prior-day-to-workout"
+        for spec in DEFAULT_WORKOUT_SPECS
+        if spec.get("driver") in {"rhr_dev_prior", "hrv_dev_prior"}
+    )
+
+    workout_day_load = {
+        spec["name"]: spec["driver"]
+        for spec in DEFAULT_ADJUSTED_SPECS
+        if spec["outcome"] == "trimp_total"
+    }
+    assert workout_day_load == {
+        "prior_rhr_to_workout_load": "rhr_dev_prior",
+        "prior_hrv_to_workout_load": "hrv_dev_prior",
+    }
 
 
 def test_workout_specs_control_session_sequence_and_include_wake_alignment():
@@ -952,6 +990,30 @@ def test_correlations_skip_trivial_shifted_pair():
     frame["trimp_prior"] = frame["trimp_total"].shift(1)
     rows = compute_correlations(frame, drivers=["trimp_prior"], perfs=["trimp_total"], max_lag=2)
     assert rows == []
+
+
+def test_correlations_skip_same_day_finalized_hr_aggregates_as_drivers():
+    rng = np.random.default_rng(95)
+    frame = pd.DataFrame(
+        {
+            "rhr_dev": rng.normal(size=100),
+            "hrv_dev": rng.normal(size=100),
+            "trimp_total": rng.uniform(1, 100, size=100),
+        },
+        index=pd.date_range("2025-01-01", periods=100, freq="D"),
+    )
+
+    rows = compute_correlations(
+        frame,
+        drivers=["rhr_dev", "hrv_dev"],
+        perfs=["trimp_total"],
+        max_lag=1,
+    )
+
+    assert {(row["var_x"], row["lag_days"]) for row in rows} == {
+        ("rhr_dev", 1),
+        ("hrv_dev", 1),
+    }
 
 
 def test_perf_series_by_date_keeps_ef_out_of_inference():
@@ -1044,6 +1106,31 @@ def test_daily_insight_frame_masks_rolling_recovery_on_unmeasured_days():
     assert pd.isna(frame.loc["2026-01-02", "hrv_dev"])
 
 
+def test_daily_insight_frame_exposes_only_previous_day_finalized_hr_aggregates():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_daily_insight_frame
+
+    daily_rows = [
+        {"date": "2026-01-01", "rhr_dev": 1.0, "hrv_dev": -2.0, "ctl": 5.0, "atl": 6.0, "trimp_total": 0.0},
+        {"date": "2026-01-02", "rhr_dev": 3.0, "hrv_dev": -4.0, "ctl": 5.0, "atl": 6.0, "trimp_total": 0.0},
+        {"date": "2026-01-03", "rhr_dev": 5.0, "hrv_dev": -6.0, "ctl": 5.0, "atl": 6.0, "trimp_total": 0.0},
+    ]
+    daily_metrics = [
+        {"date": row["date"], "resting_hr": 50.0, "hrv_sdnn_ms": 60.0}
+        for row in daily_rows
+    ]
+
+    frame = build_daily_insight_frame(daily_metrics, daily_rows, ZoneInfo("UTC"))
+
+    assert pd.isna(frame.loc["2026-01-01", "rhr_dev_prior"])
+    assert pd.isna(frame.loc["2026-01-01", "hrv_dev_prior"])
+    assert frame.loc["2026-01-02", "rhr_dev_prior"] == pytest.approx(1.0)
+    assert frame.loc["2026-01-02", "hrv_dev_prior"] == pytest.approx(-2.0)
+    assert frame.loc["2026-01-03", "rhr_dev_prior"] == pytest.approx(3.0)
+    assert frame.loc["2026-01-03", "hrv_dev_prior"] == pytest.approx(-4.0)
+
+
 def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
     from zoneinfo import ZoneInfo
 
@@ -1055,6 +1142,10 @@ def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
             "ctl_prior": [10.0, 11.0, 12.0],
             "trimp_prior": [1.0, 2.0, 3.0],
             "sleep_shortfall": [0.0, 30.0, -20.0],
+            "rhr_dev": [99.0, 99.0, 99.0],
+            "hrv_dev": [99.0, 99.0, 99.0],
+            "rhr_dev_prior": [1.0, 2.0, 3.0],
+            "hrv_dev_prior": [-1.0, -2.0, -3.0],
         },
         index=index,
     )
@@ -1088,6 +1179,10 @@ def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
     assert row["workout_intensity"] == pytest.approx(1.5)
     assert row["high_zone_fraction"] == pytest.approx(0.25)
     assert row["sleep_shortfall"] == pytest.approx(30.0)
+    assert row["rhr_dev_prior"] == pytest.approx(2.0)
+    assert row["hrv_dev_prior"] == pytest.approx(-2.0)
+    assert "rhr_dev" not in frame
+    assert "hrv_dev" not in frame
     assert row["modality"] == "cycling"
 
 
@@ -1165,7 +1260,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [2, 2]
+    assert expected_versions == [3, 3]
 
 
 def test_persistence_state_never_crosses_model_versions():

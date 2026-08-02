@@ -30,6 +30,7 @@ PERFS = ["decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 # Pairs the exploratory sweep must skip: trimp_prior IS trimp_total shifted one
 # day, so correlating the two only measures training-schedule autocorrelation.
 EXCLUDED_SWEEP_PAIRS = {("trimp_prior", "trimp_total")}
+FULL_DAY_AGGREGATE_DRIVERS = {"rhr_dev", "hrv_dev"}
 
 # Adjusted-finder gates beyond raw n. All fixed [PRIOR]-style knobs, declared in
 # code before seeing results (same pre-registration discipline as the specs).
@@ -48,11 +49,14 @@ WEIGHT_FFILL_LIMIT_DAYS = 3
 WEIGHT_ROLLING_WINDOW_DAYS = 7
 WEIGHT_ROLLING_MIN_PERIODS = 4
 
-_RECOVERY_OUTCOMES = (
+_PRE_WORKOUT_RECOVERY_OUTCOMES = (
     ("sleep_shortfall", "sleep shortfall"),
     ("sleep_awake_fraction", "sleep awake fraction"),
-    ("rhr_dev", "RHR deviation"),
-    ("hrv_dev", "HRV deviation"),
+    ("respiratory_rate_dev", "respiratory-rate deviation"),
+)
+_CO_MEASURED_PHYSIOLOGY_OUTCOMES = (
+    ("rhr_dev", "daily RHR aggregate deviation"),
+    ("hrv_dev", "daily HRV aggregate deviation"),
     ("respiratory_rate_dev", "respiratory-rate deviation"),
 )
 
@@ -65,7 +69,7 @@ DEFAULT_ADJUSTED_SPECS = [
             "controls": [f"lag:{outcome}", "ctl_pre_exposure", "steps_prior"],
             "direction": "lagged",
         }
-        for outcome, label in _RECOVERY_OUTCOMES
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
     ],
     *[
         {
@@ -75,7 +79,7 @@ DEFAULT_ADJUSTED_SPECS = [
             "controls": [f"lag:{outcome}", "trimp_prior", "ctl_pre_exposure"],
             "direction": "lagged",
         }
-        for outcome, label in _RECOVERY_OUTCOMES
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
     ],
     *[
         {
@@ -85,7 +89,7 @@ DEFAULT_ADJUSTED_SPECS = [
             "controls": [f"lag:{outcome}", "atl_prior"],
             "direction": "co-measured",
         }
-        for outcome, label in _RECOVERY_OUTCOMES[2:]
+        for outcome, label in _CO_MEASURED_PHYSIOLOGY_OUTCOMES
     ],
     {
         "name": "timing_to_sleep_shortfall", "label": "Sleep timing drift ↔ shortfall",
@@ -100,7 +104,7 @@ DEFAULT_ADJUSTED_SPECS = [
             "controls": [f"lag:{outcome}", "atl_prior"],
             "direction": "co-measured",
         }
-        for outcome, label in _RECOVERY_OUTCOMES[2:]
+        for outcome, label in _CO_MEASURED_PHYSIOLOGY_OUTCOMES
     ],
     *[
         {
@@ -110,17 +114,17 @@ DEFAULT_ADJUSTED_SPECS = [
             "controls": [f"lag:{outcome}", "atl_prior"],
             "direction": "co-measured",
         }
-        for outcome, label in _RECOVERY_OUTCOMES[2:]
+        for outcome, label in _CO_MEASURED_PHYSIOLOGY_OUTCOMES
     ],
     {
-        "name": "rhr_to_workout_load", "label": "RHR deviation → workout-day load",
-        "driver": "rhr_dev", "outcome": "trimp_total",
+        "name": "prior_rhr_to_workout_load", "label": "Previous-day RHR deviation → workout-day load",
+        "driver": "rhr_dev_prior", "outcome": "trimp_total",
         "controls": ["lag:trimp_total", "ctl_prior"],
         "direction": "workout-day-dose", "outcome_positive_only": True,
     },
     {
-        "name": "hrv_to_workout_load", "label": "HRV deviation → workout-day load",
-        "driver": "hrv_dev", "outcome": "trimp_total",
+        "name": "prior_hrv_to_workout_load", "label": "Previous-day HRV deviation → workout-day load",
+        "driver": "hrv_dev_prior", "outcome": "trimp_total",
         "controls": ["lag:trimp_total", "ctl_prior"],
         "direction": "workout-day-dose", "outcome_positive_only": True,
     },
@@ -139,8 +143,8 @@ _WORKOUT_BASE_CONTROLS = [
 _WORKOUT_READINESS = (
     ("sleep_shortfall", "Sleep shortfall"),
     ("sleep_midpoint_dev", "Sleep timing drift"),
-    ("rhr_dev", "RHR deviation"),
-    ("hrv_dev", "HRV deviation"),
+    ("rhr_dev_prior", "Previous-day RHR deviation"),
+    ("hrv_dev_prior", "Previous-day HRV deviation"),
     ("respiratory_rate_dev", "Respiratory-rate deviation"),
 )
 
@@ -151,7 +155,11 @@ DEFAULT_WORKOUT_SPECS = [
             "label": f"{label} → workout duration",
             "driver": driver, "outcome": "workout_duration",
             "controls": [*_WORKOUT_BASE_CONTROLS, "duration_prev_modality"],
-            "direction": "morning-to-workout", "kind": "scalar",
+            "direction": (
+                "prior-day-to-workout" if driver.endswith("_prior")
+                else "morning-to-workout"
+            ),
+            "kind": "scalar",
         }
         for driver, label in _WORKOUT_READINESS
     ],
@@ -178,7 +186,11 @@ DEFAULT_WORKOUT_SPECS = [
             "label": f"{label} → recorded intensity",
             "driver": driver, "outcome": "workout_intensity",
             "controls": [*_WORKOUT_BASE_CONTROLS, "log_duration", "intensity_prev_modality"],
-            "direction": "morning-to-workout", "kind": "scalar",
+            "direction": (
+                "prior-day-to-workout" if driver.endswith("_prior")
+                else "morning-to-workout"
+            ),
+            "kind": "scalar",
         }
         for driver, label in _WORKOUT_READINESS
     ],
@@ -953,7 +965,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 2,
+            "model_version": 3,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -977,7 +989,12 @@ def discover_adjusted_insights(
                 ],
                 "note": "Null drivers (circularly shifted) run the identical gates; any promotion here estimates the pipeline's false-fire rate.",
             },
-            "caveat": "Exploratory single-person associations, not causal effects. No result is promoted without multiplicity correction, bootstrap sign stability, and multi-night persistence.",
+            "caveat": (
+                "Exploratory single-person associations, not causal effects. RHR and HRV are "
+                "finalized full-day aggregates, so same-date relationships are co-measured, "
+                "never pre-workout readiness. No result is promoted without multiplicity "
+                "correction, bootstrap sign stability, and multi-night persistence."
+            ),
         },
     }
 
@@ -1124,7 +1141,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 2,
+            "model_version": 3,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1158,7 +1175,8 @@ def discover_workout_context_insights(
             "caveat": (
                 "Workout-only single-person associations, not capacity tests or causal effects. "
                 "Recorded intensity is TRIMP per minute; timing is adjusted for modality but may "
-                "still reflect scheduling and unmeasured workout intent."
+                "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
+                "the previous day's finalized aggregate, never a same-day value."
             ),
         },
     }
@@ -1282,6 +1300,11 @@ def compute_correlations(
             if y not in frame.columns or x == y or (x, y) in EXCLUDED_SWEEP_PAIRS:
                 continue
             for lag in range(0, max_lag + 1):
+                # HAE finalizes RHR/HRV after the day and can revise them after
+                # a workout. They are valid prior-day predictors, never
+                # same-day pre-workout drivers.
+                if lag == 0 and x in FULL_DAY_AGGREGATE_DRIVERS:
+                    continue
                 paired = pd.DataFrame({"x": frame[x].shift(lag), "y": frame[y]}).dropna()
                 if y == "trimp_total":
                     paired = paired.loc[paired["y"] > 0]

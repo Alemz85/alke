@@ -406,6 +406,11 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
     frame["ctl_prior"] = frame["ctl"].shift(1)
     frame["atl_prior"] = frame["atl"].shift(1)
     frame["ctl_pre_exposure"] = frame["ctl"].shift(2)
+    # HAE's midnight-stamped RHR/HRV values are finalized full-day aggregates:
+    # later exports revise them after same-day workouts. Only yesterday's
+    # finalized aggregate is temporally available before today's session.
+    frame["rhr_dev_prior"] = frame["rhr_dev"].shift(1)
+    frame["hrv_dev_prior"] = frame["hrv_dev"].shift(1)
 
     frame["sleep_shortfall"] = -prior_rolling_deviation(frame["sleep_duration"])
     frame["sleep_midpoint_dev"] = prior_rolling_deviation(frame["sleep_midpoint"]).abs()
@@ -449,7 +454,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     rows: list[dict] = []
     context_columns = (
         "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
-        "rhr_dev", "hrv_dev", "respiratory_rate_dev",
+        "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior",
     )
     for workout in all_workouts:
@@ -565,7 +570,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=2)
+    prior_state = insight_prior_state(prior, expected_version=3)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -578,7 +583,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=2)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=3)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )
