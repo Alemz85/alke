@@ -353,14 +353,14 @@ export function InsightsView(): ReactElement {
       key: 'daily',
       title: 'Daily physiology',
       detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
-      expectedVersion: 4,
+      expectedVersion: 5,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {
       key: 'workout',
       title: 'Workout context',
       detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
-      expectedVersion: 7,
+      expectedVersion: 8,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {

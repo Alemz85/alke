@@ -489,6 +489,54 @@ def workout_energy_intensity(raw: dict | None) -> float | None:
     return value
 
 
+def daily_high_zone_fraction(all_workouts, perf_by_id, tz) -> dict[date, float]:
+    """HR-quality workout-day fraction of measured time in zones 4–5.
+
+    A day is omitted if any workout on it fails the HR-outcome quality gate.
+    Rest days are also omitted: downstream candidates therefore compare the
+    composition of known training days rather than rediscovering workout vs
+    rest. Multi-session days aggregate seconds before taking the fraction.
+    """
+    totals: dict[date, dict[str, float | bool]] = defaultdict(
+        lambda: {"high": 0.0, "total": 0.0, "valid": True}
+    )
+    for workout in all_workouts:
+        day = local_date(workout["start_at"], tz)
+        state = totals[day]
+        computed = perf_by_id.get(workout["id"]) or {}
+        try:
+            duration_s = float(workout.get("duration_s"))
+            trimp = float(computed.get("trimp"))
+            zones = computed.get("time_in_zones") or {}
+            zone_seconds = sum(
+                float(zones.get(f"z{zone}") or 0.0) for zone in range(1, 6)
+            )
+            hr_coverage = zone_seconds / duration_s
+            high_seconds = float(zones.get("z4") or 0.0) + float(zones.get("z5") or 0.0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            state["valid"] = False
+            continue
+        valid = (
+            math.isfinite(duration_s)
+            and duration_s > 0
+            and math.isfinite(trimp)
+            and trimp > 0
+            and zone_seconds >= MIN_WORKOUT_HR_SECONDS
+            and MIN_WORKOUT_HR_COVERAGE <= hr_coverage <= MAX_WORKOUT_HR_COVERAGE
+        )
+        if not valid:
+            state["valid"] = False
+            continue
+        state["high"] = float(state["high"]) + high_seconds
+        state["total"] = float(state["total"]) + zone_seconds
+
+    return {
+        day: float(state["high"]) / float(state["total"])
+        for day, state in totals.items()
+        if state["valid"] and float(state["total"]) > 0
+    }
+
+
 def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     """One row per positive-duration workout with pre-workout context.
 
@@ -509,7 +557,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
         "sleep_awake_fraction",
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
-        "ctl_prior", "atl_prior", "trimp_prior",
+        "ctl_prior", "atl_prior", "trimp_prior", "high_zone_fraction_prior",
     )
     last_workout_at = None
     last_modality_at: dict[str, datetime] = {}
@@ -656,6 +704,12 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     index = [date.fromisoformat(row["date"]) for row in daily_rows]
     frame = build_daily_insight_frame(daily_metrics, daily_rows, tz)
+    high_zones_by_date = daily_high_zone_fraction(all_workouts, perf_by_id, tz)
+    frame["high_zone_fraction_prior"] = pd.Series(
+        [high_zones_by_date.get(day) for day in index],
+        index=frame.index,
+        dtype=float,
+    ).shift(1)
     frame["decoupling"] = [
         pd.Series(perf_by_date[day]["decoupling"]).mean()
         if perf_by_date[day]["decoupling"] else None
@@ -674,7 +728,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=4)
+    prior_state = insight_prior_state(prior, expected_version=5)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -687,7 +741,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=7)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=8)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

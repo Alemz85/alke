@@ -63,7 +63,8 @@ Current sleep is not allowed to pull its own baseline toward itself.
 
 ### Prior-day behavior to next sleep/recovery
 
-Exposures are prior-day TRIMP, prior-day steps, and prior-day flights climbed.
+Exposures are prior-day TRIMP, prior-day steps, prior-day flights climbed, and
+prior-day high-zone fraction.
 Flights add vertical activity that steps do not fully encode: in the current
 data their correlation is 0.66, while walking/running distance is effectively a
 duplicate of steps at 0.99. Outcomes are sleep shortfall relative to the prior
@@ -78,6 +79,14 @@ long active workout or high-step day cannot masquerade as an independent
 stair-climbing effect. Flights is not forced into the established TRIMP and
 steps candidates: it starts later, and complete-case deletion would silently
 redefine those analyses around the newer sensor era.
+
+High-zone fraction asks a different conditional question: among days on which
+training occurred, does intensity composition matter beyond total TRIMP? It is
+defined only when every workout that day passes the HR coverage gate; rest days
+and partly measured workout days stay missing rather than becoming zero. The
+candidate controls total TRIMP, steps, prior chronic load, and the previous
+outcome. This prevents it from merely rediscovering training versus rest or a
+larger overall dose.
 
 ### Co-measured sleep and recovery
 
@@ -134,9 +143,11 @@ session was, conditional on doing a workout.
 
 Workout readiness candidates relate sleep shortfall, three-night mean
 shortfall, sleep timing drift, sleep awake fraction,
-previous-day finalized RHR/HRV, and sleep-associated respiratory-rate
-deviation to duration, TRIMP per measured HR minute, and Apple energy
-intensity. The three-night exposure requires three complete consecutive
+previous-day finalized RHR/HRV, sleep-associated respiratory-rate deviation,
+and previous-day high-zone fraction to duration, TRIMP per measured HR minute,
+and Apple energy intensity. The high-zone candidate controls total prior-day
+load and exists only after a fully HR-covered training day. The three-night
+exposure requires three complete consecutive
 calendar days; it is not imputed across a missing night. Prior acute load and
 time since the previous workout are also screened as pre-workout state
 candidates. Hours since waking is screened separately because clock time and
@@ -224,10 +235,12 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 4 and workout model version 7 enforce the
-prior-day rule above. Workout version 7 additionally separates duration from
-HR-outcome eligibility, normalizes HR intensity by measured time, and admits
-the explicit Apple energy-intensity summary as a separate outcome.
+workout. Daily model version 5 and workout model version 8 enforce the
+prior-day rule above. These versions also add the fully measured,
+training-day-conditional high-zone composition exposure. Workout version 8
+separates duration from HR-outcome eligibility, normalizes HR intensity by
+measured time, and admits the explicit Apple energy-intensity summary as a
+separate outcome.
 
 ## Current data implications (audit 2026-08-02)
 
@@ -267,14 +280,19 @@ the explicit Apple energy-intensity summary as a separate outcome.
   rowing, cycling, walking, swimming, surfing, and one indoor run. It overlaps
   102 HR-quality sessions but correlates only 0.67 with HR-zone intensity, so it
   is related rather than redundant. Four of its 11 candidates are currently
-  testable; none clears the gates. The expanded 35-candidate workout family has
+  testable; none clears the gates. The expanded 38-candidate workout family has
   zero raw signals and zero watches, and zero of 39 tested shifted placebos
   fires.
+- High-zone composition is known for 69 prior-workout exposure days, only 25
+  of which contain any zone 4–5 time. The next-recovery candidates currently
+  have 50–58 complete pairs; next-workout candidates have only 19 distinct
+  dates. All six remain explicitly dormant under the fixed 60-observation/date
+  gates rather than being padded with rest-day zeroes.
 - Two sessions with fewer than five classified HR minutes in the current
   workout era now contribute valid duration outcomes but remain ineligible for
   HR-derived outcomes. They also remain in event history: this corrects two
-  later recovery intervals; the
-  largest changed from 22.2 hours to 19 minutes, and the short session's 5.15
+  later recovery intervals; the largest changed from 22.2 hours to 19 minutes,
+  and the short session's 5.15
   TRIMP contributes to the later session's same-day prior load.
 - With the measurement-time and coverage corrections, previous-day HRV has 103
   sessions on 72 dates for duration and 93 on 67 for intensity; neither shows

@@ -1,5 +1,7 @@
 """Insights layer tests (SPEC §5.4): exploratory and adjusted correlations."""
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -164,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 4
+    assert model["diagnostics"]["model_version"] == 5
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -280,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 7
+    assert model["diagnostics"]["model_version"] == 8
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -934,6 +936,9 @@ def test_default_specs_cover_respiration_continuity_and_relative_sleep():
         "sleep_shortfall_to_hrv",
         "timing_to_respiration",
         "steps_to_sleep_continuity",
+        "prior_high_zones_to_sleep",
+        "prior_high_zones_to_sleep_continuity",
+        "prior_high_zones_to_respiration",
     } <= names
 
 
@@ -985,6 +990,9 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
         "hours_awake_to_workout_duration",
         "hours_awake_to_workout_intensity",
         "hours_awake_to_energy_intensity",
+        "high_zone_fraction_prior_to_workout_duration",
+        "high_zone_fraction_prior_to_workout_intensity",
+        "high_zone_fraction_prior_to_energy_intensity",
         "workout_time_to_load",
         "workout_time_to_energy_intensity",
         "workout_time_to_high_zones",
@@ -1340,6 +1348,7 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     daily = pd.DataFrame(
         {
             "wake_hour": [8.0], "ctl_prior": [10.0], "trimp_prior": [5.0],
+            "high_zone_fraction_prior": [0.25],
         },
         index=pd.to_datetime(["2026-01-02"]),
     )
@@ -1363,6 +1372,37 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["days_since_prev_modality"] == pytest.approx(8.0 / 24.0)
     assert second["same_day_prior_load"] == pytest.approx(20.0)
     assert second["load_prev_modality"] == pytest.approx(20.0)
+    assert second["high_zone_fraction_prior"] == pytest.approx(0.25)
+
+
+def test_daily_high_zone_fraction_requires_complete_hr_coverage_for_every_session():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import daily_high_zone_fraction
+
+    workouts = [
+        {"id": "quality", "start_at": "2026-01-01T08:00:00Z", "duration_s": 1200},
+        {"id": "mixed-quality", "start_at": "2026-01-02T08:00:00Z", "duration_s": 1200},
+        {"id": "mixed-poor", "start_at": "2026-01-02T12:00:00Z", "duration_s": 1200},
+    ]
+    computed = {
+        "quality": {
+            "trimp": 30.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        },
+        "mixed-quality": {
+            "trimp": 30.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        },
+        "mixed-poor": {
+            "trimp": 15.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 0, "z4": 0, "z5": 0},
+        },
+    }
+
+    by_day = daily_high_zone_fraction(workouts, computed, ZoneInfo("UTC"))
+
+    assert by_day == {date(2026, 1, 1): pytest.approx(0.25)}
 
 
 def test_workout_frame_short_sessions_keep_duration_but_not_hr_outcomes():
@@ -1519,7 +1559,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [4, 7]
+    assert expected_versions == [5, 8]
 
 
 def test_persistence_state_never_crosses_model_versions():

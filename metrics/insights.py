@@ -97,6 +97,19 @@ DEFAULT_ADJUSTED_SPECS = [
     ],
     *[
         {
+            "name": f"prior_high_zones_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev').removesuffix('_shortfall')}",
+            "label": f"Prior-day high-zone fraction → {label}",
+            "driver": "high_zone_fraction_prior",
+            "outcome": outcome,
+            "controls": [
+                f"lag:{outcome}", "trimp_prior", "steps_prior", "ctl_pre_exposure",
+            ],
+            "direction": "lagged",
+        }
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
+    ],
+    *[
+        {
             "name": f"sleep_shortfall_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
             "label": f"Sleep shortfall ↔ {label}",
             "driver": "sleep_shortfall", "outcome": outcome,
@@ -162,6 +175,7 @@ _WORKOUT_READINESS = (
     ("rhr_dev_prior", "Previous-day RHR deviation"),
     ("hrv_dev_prior", "Previous-day HRV deviation"),
     ("respiratory_rate_dev", "Respiratory-rate deviation"),
+    ("high_zone_fraction_prior", "Previous-day high-zone fraction"),
 )
 _WORKOUT_PRE_STATE = (
     ("atl_prior", "Prior acute load"),
@@ -1075,7 +1089,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 4,
+            "model_version": 5,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1102,7 +1116,9 @@ def discover_adjusted_insights(
             "caveat": (
                 "Exploratory single-person associations, not causal effects. RHR and HRV are "
                 "finalized full-day aggregates, so same-date relationships are co-measured, "
-                "never pre-workout readiness. No result is promoted without multiplicity "
+                "never pre-workout readiness. High-zone composition is defined only on training "
+                "days whose every workout passes HR coverage, with total load adjusted. "
+                "No result is promoted without multiplicity "
                 "correction, bootstrap sign stability, and multi-night persistence."
             ),
         },
@@ -1254,7 +1270,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 7,
+            "model_version": 8,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1294,6 +1310,8 @@ def discover_workout_context_insights(
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
                 "context is included only when its recorded wake time precedes the workout. "
+                "Previous-day high-zone composition exists only when every workout on that day "
+                "passes HR coverage and is adjusted for total prior-day load. "
                 "Recovery intervals and prior same-day load include workouts that are too short "
                 "or too sparsely measured to serve as HR-derived outcome rows."
             ),
