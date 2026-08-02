@@ -456,7 +456,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
           {!evidenceOk && reason && (
             <p className="z2f-evidence-note">
               <span className="z2f-evidence-tag">{latest.evidence_state.replace('_', ' ')}</span>{' '}
-              {reason} Showing last known value.
+              {reason}
             </p>
           )}
 

@@ -30,4 +30,8 @@ describe('Zone2FitnessHeader layout', () => {
     expect(source).toContain('swim efficiency stays separate because technique can dominate it')
     expect(source).not.toContain('Built from your swim and bike pace/HR')
   })
+
+  it('does not claim uncertain rows are frozen at a last-known value', () => {
+    expect(source).not.toContain('Showing last known value')
+  })
 })
