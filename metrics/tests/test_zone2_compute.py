@@ -315,6 +315,25 @@ def test_run_ef_weight_matches_the_run_ef_variance(monkeypatch):
     assert w == pytest.approx(1.0 / _m.Z2_RUN_EF_VARIANCE, abs=0.02)
 
 
+def test_swim_ef_never_enters_durable_fusion(monkeypatch):
+    """Whole-workout swim EF mixes rest structure and returning technique with
+    cardio fitness, so even a long RHR-corroborated history must not set D."""
+    with_swim_ef = _run_synthetic(
+        monkeypatch, aerobic_type="swimming", with_ef=True, with_vo2=False, with_rhr=True
+    )
+    monkeypatch.undo()
+    without_swim_ef = _run_synthetic(
+        monkeypatch, aerobic_type="swimming", with_ef=False, with_vo2=False, with_rhr=True
+    )
+
+    assert all(row["contributing"]["swim_ef"] == 0.0 for row in with_swim_ef)
+    for with_row, without_row in zip(with_swim_ef, without_swim_ef):
+        assert with_row["durable_base"] == without_row["durable_base"]
+        assert with_row["confidence"] == without_row["confidence"]
+        assert with_row["durable_band_lo"] == without_row["durable_band_lo"]
+        assert with_row["durable_band_hi"] == without_row["durable_band_hi"]
+
+
 # ===========================================================================
 # F5: B is stamped with the PREVIOUS completed week — no intra-week lookahead.
 # ===========================================================================
