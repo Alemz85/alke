@@ -33,7 +33,8 @@ def fetch_user_config(sb: Client) -> dict:
 def fetch_workouts(sb: Client, since_iso: str | None) -> list[dict]:
     def q():
         query = sb.table("workouts").select(
-            "id, external_id, type, start_at, end_at, duration_s, distance_m, avg_hr, max_hr"
+            "id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, "
+            "avg_hr, max_hr, source, raw"
         )
         if since_iso:
             query = query.gte("start_at", since_iso)

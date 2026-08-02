@@ -15,7 +15,7 @@ Every candidate must declare four things before it is evaluated:
 4. the minimum information and stability gates required to surface it.
 
 Variables are not added merely because a database column exists. In
-particular, active energy, wrist temperature, weight, protein, gym-set RPE,
+particular, daily active energy, wrist temperature, weight, protein, gym-set RPE,
 HRR60, and modality-specific decoupling currently lack enough observations.
 Walking/running distance is almost a duplicate of steps and is not an
 independent hypothesis. REM/deep/core shares are compositional and consumer
@@ -120,22 +120,27 @@ The outcomes deliberately separate different questions:
   full workout duration would silently treat every unmeasured second as zero
   effort. Duration remains adjusted because intensity and sustainable duration
   trade off;
+- Apple energy intensity: the workout summary in `kcal/(hour·kg)` (numerically
+  MET-like). It supplies a separate device-estimated effort outcome when HR is
+  absent or incomplete. Only explicit MET or `kcal/hr·kg` units and values from
+  0.5–25 are accepted; no value is reconstructed from energy or body weight;
 - high-zone fraction: the fraction of measured HR time in zones 4-5.
 
-TRIMP per measured HR minute and high-zone fraction are not labelled
-“capacity.” Capacity would require a standardized task, pace/power, and
-preferably perceived exertion. They answer how hard the recorded session was,
-conditional on doing a workout.
+Neither intensity measure nor high-zone fraction is labelled “capacity.”
+Capacity would require a standardized task, pace/power, and preferably
+perceived exertion. Apple energy intensity is also not measured mechanical
+power; it is a device estimate. These outcomes answer how hard the recorded
+session was, conditional on doing a workout.
 
 Workout readiness candidates relate sleep shortfall, three-night mean
 shortfall, sleep timing drift, sleep awake fraction,
 previous-day finalized RHR/HRV, and sleep-associated respiratory-rate
-deviation to duration and TRIMP per measured HR minute. The three-night
-exposure requires three complete consecutive calendar days; it is not imputed
-across a missing night. Prior acute load and time since the previous workout
-are also screened as pre-workout state candidates. Hours since waking is
-screened separately because clock time and biological-day position are not the
-same exposure.
+deviation to duration, TRIMP per measured HR minute, and Apple energy
+intensity. The three-night exposure requires three complete consecutive
+calendar days; it is not imputed across a missing night. Prior acute load and
+time since the previous workout are also screened as pre-workout state
+candidates. Hours since waking is screened separately because clock time and
+biological-day position are not the same exposure.
 
 Every workout fit controls chronic and acute load through the prior day,
 previous-day load, modality, time since the previous workout, time since the
@@ -219,9 +224,10 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 4 and workout model version 6 enforce the
-prior-day rule above. Workout version 6 additionally separates duration from
-HR-outcome eligibility and normalizes intensity by measured HR time.
+workout. Daily model version 4 and workout model version 7 enforce the
+prior-day rule above. Workout version 7 additionally separates duration from
+HR-outcome eligibility, normalizes HR intensity by measured time, and admits
+the explicit Apple energy-intensity summary as a separate outcome.
 
 ## Current data implications (audit 2026-08-02)
 
@@ -257,6 +263,13 @@ HR-outcome eligibility and normalizes intensity by measured HR time.
   respectively). Three-night sleep shortfall remains dormant for both duration
   (71/46) and intensity (65/43). None clears multiplicity and stability gates;
   greater eligibility is not evidence of an effect.
+- Apple energy intensity exists for 110 sessions on 77 dates across strength,
+  rowing, cycling, walking, swimming, surfing, and one indoor run. It overlaps
+  102 HR-quality sessions but correlates only 0.67 with HR-zone intensity, so it
+  is related rather than redundant. Four of its 11 candidates are currently
+  testable; none clears the gates. The expanded 35-candidate workout family has
+  zero raw signals and zero watches, and zero of 39 tested shifted placebos
+  fires.
 - Two sessions with fewer than five classified HR minutes in the current
   workout era now contribute valid duration outcomes but remain ineligible for
   HR-derived outcomes. They also remain in event history: this corrects two

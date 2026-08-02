@@ -3,6 +3,17 @@ from unittest.mock import MagicMock
 from metrics import db
 
 
+def test_fetch_workouts_includes_compact_raw_summaries_for_metrics():
+    sb = MagicMock()
+    table = sb.table.return_value
+    table.select.return_value.order.return_value.range.return_value.execute.return_value.data = []
+
+    assert db.fetch_workouts(sb, None) == []
+
+    columns = table.select.call_args.args[0]
+    assert "raw" in {column.strip() for column in columns.split(",")}
+
+
 def test_delete_insight_model_is_scoped_by_name():
     sb = MagicMock()
     table = sb.table.return_value

@@ -461,6 +461,32 @@ def workout_modality(workout_type: str | None) -> str:
 MIN_WORKOUT_HR_SECONDS = 300.0
 MIN_WORKOUT_HR_COVERAGE = 0.90
 MAX_WORKOUT_HR_COVERAGE = 1.05
+MIN_WORKOUT_ENERGY_INTENSITY = 0.5
+MAX_WORKOUT_ENERGY_INTENSITY = 25.0
+
+
+def workout_energy_intensity(raw: dict | None) -> float | None:
+    """Apple/HAE average workout intensity in kcal/(hour·kg), or MET.
+
+    Real payloads use ``kcal/hr·kg`` while the HAE schema documents MET; the
+    quantities are numerically equivalent for this purpose. Unknown units and
+    physiologically implausible values stay missing rather than being guessed.
+    """
+    if not isinstance(raw, dict):
+        return None
+    summary = raw.get("intensity")
+    if not isinstance(summary, dict) or isinstance(summary.get("qty"), bool):
+        return None
+    units = str(summary.get("units") or "").casefold().replace(" ", "")
+    if units not in {"met", "kcal/hr·kg", "kcal/(hr·kg)"}:
+        return None
+    try:
+        value = float(summary.get("qty"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or not MIN_WORKOUT_ENERGY_INTENSITY <= value <= MAX_WORKOUT_ENERGY_INTENSITY:
+        return None
+    return value
 
 
 def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
@@ -551,6 +577,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "start_cos": math.cos(theta),
             "modality": modality,
             "hr_coverage_fraction": hr_coverage,
+            "energy_intensity": workout_energy_intensity(workout.get("raw")),
             "workout_load": trimp if hr_outcomes_valid else np.nan,
             "workout_duration": duration_min,
             "log_duration": math.log(duration_min),
@@ -590,6 +617,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         ("workout_load", "load_prev_modality"),
         ("workout_duration", "duration_prev_modality"),
         ("workout_intensity", "intensity_prev_modality"),
+        ("energy_intensity", "energy_intensity_prev_modality"),
         ("high_zone_fraction", "high_zone_prev_modality"),
     ):
         # Missing HR outcomes do not replace the last valid modality outcome;
@@ -659,7 +687,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=6)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=7)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

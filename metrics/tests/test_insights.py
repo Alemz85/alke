@@ -280,7 +280,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 6
+    assert model["diagnostics"]["model_version"] == 7
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -288,6 +288,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     assert "wake time precedes" in model["diagnostics"]["caveat"]
     assert "measured HR minute" in model["diagnostics"]["caveat"]
     assert "90%" in model["diagnostics"]["caveat"]
+    assert "Apple energy intensity" in model["diagnostics"]["caveat"]
     candidate = model["diagnostics"]["candidates"][0]
     assert candidate["status"] == "signal"
     assert candidate["q_value"] == pytest.approx(candidate["p_value"])
@@ -983,7 +984,9 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
         "log_hours_since_prev_workout_to_workout_intensity",
         "hours_awake_to_workout_duration",
         "hours_awake_to_workout_intensity",
+        "hours_awake_to_energy_intensity",
         "workout_time_to_load",
+        "workout_time_to_energy_intensity",
         "workout_time_to_high_zones",
     } <= names
     for spec in DEFAULT_WORKOUT_SPECS:
@@ -1207,6 +1210,7 @@ def test_workout_insight_frame_keeps_duration_when_load_is_unmeasured_and_derive
         {
             "id": "no-load", "type": "rowing",
             "start_at": "2026-01-03T08:00:00Z", "duration_s": 1800,
+            "raw": {"intensity": {"qty": 7.5, "units": "kcal/hr·kg"}},
         },
     ]
     computed = {
@@ -1239,6 +1243,25 @@ def test_workout_insight_frame_keeps_duration_when_load_is_unmeasured_and_derive
     assert pd.isna(no_load["workout_load"])
     assert pd.isna(no_load["workout_intensity"])
     assert pd.isna(no_load["high_zone_fraction"])
+    assert no_load["energy_intensity"] == pytest.approx(7.5)
+
+
+def test_workout_energy_intensity_accepts_only_plausible_supported_units():
+    from metrics.compute import workout_energy_intensity
+
+    assert workout_energy_intensity(
+        {"intensity": {"qty": 7.25, "units": "kcal/hr·kg"}}
+    ) == pytest.approx(7.25)
+    assert workout_energy_intensity(
+        {"intensity": {"qty": 8.0, "units": "MET"}}
+    ) == pytest.approx(8.0)
+    assert workout_energy_intensity(
+        {"intensity": {"qty": 8.0, "units": "kcal"}}
+    ) is None
+    assert workout_energy_intensity(
+        {"intensity": {"qty": 30.0, "units": "MET"}}
+    ) is None
+    assert workout_energy_intensity({}) is None
 
 
 def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
@@ -1496,7 +1519,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [4, 6]
+    assert expected_versions == [4, 7]
 
 
 def test_persistence_state_never_crosses_model_versions():

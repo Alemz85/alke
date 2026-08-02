@@ -215,12 +215,39 @@ DEFAULT_WORKOUT_SPECS = [
         ],
         "direction": "same-day-context", "kind": "scalar",
     },
+    {
+        "name": "hours_awake_to_energy_intensity",
+        "label": "Hours awake before workout → Apple energy intensity",
+        "driver": "hours_since_wake", "outcome": "energy_intensity",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            "energy_intensity_prev_modality",
+        ],
+        "direction": "same-day-context", "kind": "scalar",
+    },
     *[
         {
             "name": f"{driver}_to_workout_intensity",
             "label": f"{label} → recorded intensity",
             "driver": driver, "outcome": "workout_intensity",
             "controls": [*_WORKOUT_BASE_CONTROLS, "log_duration", "intensity_prev_modality"],
+            "direction": (
+                "prior-day-to-workout" if driver.endswith("_prior")
+                else "morning-to-workout"
+            ),
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_READINESS
+    ],
+    *[
+        {
+            "name": f"{driver}_to_energy_intensity",
+            "label": f"{label} → Apple energy intensity",
+            "driver": driver, "outcome": "energy_intensity",
+            "controls": [
+                *_WORKOUT_BASE_CONTROLS, "log_duration",
+                "energy_intensity_prev_modality",
+            ],
             "direction": (
                 "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
@@ -239,6 +266,22 @@ DEFAULT_WORKOUT_SPECS = [
                 *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
                 "log_duration",
                 "intensity_prev_modality",
+            ],
+            "direction": "pre-workout-state",
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_PRE_STATE
+    ],
+    *[
+        {
+            "name": f"{driver}_to_energy_intensity",
+            "label": f"{label} → Apple energy intensity",
+            "driver": driver,
+            "outcome": "energy_intensity",
+            "controls": [
+                *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
+                "log_duration",
+                "energy_intensity_prev_modality",
             ],
             "direction": "pre-workout-state",
             "kind": "scalar",
@@ -269,6 +312,16 @@ DEFAULT_WORKOUT_SPECS = [
         "controls": [
             *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake", "log_duration",
             "intensity_prev_modality",
+        ],
+        "direction": "circadian", "kind": "cyclic",
+    },
+    {
+        "name": "workout_time_to_energy_intensity",
+        "label": "Workout time → Apple energy intensity",
+        "outcome": "energy_intensity",
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake",
+            "log_duration", "energy_intensity_prev_modality",
         ],
         "direction": "circadian", "kind": "cyclic",
     },
@@ -1193,14 +1246,15 @@ def discover_workout_context_insights(
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
             "wake-ordered sleep context; outcome-specific HR completeness gates; "
-            "measured-time intensity; joint 24-hour sine/cosine timing tests; "
+            "measured-time HR intensity + Apple energy-intensity outcome; "
+            "joint 24-hour sine/cosine timing tests; "
             "conservative maximum of HAC and date-clustered uncertainty; effective-n floor; "
             "BH FDR; calendar-date block sign/phase stability; collinearity collapse; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 6,
+            "model_version": 7,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1235,7 +1289,8 @@ def discover_workout_context_insights(
                 "Workout-only single-person associations, not capacity tests or causal effects. "
                 "Recorded intensity is TRIMP per measured HR minute. HR-derived load, intensity, "
                 "and zone outcomes require at least 90% HR-time coverage; duration remains usable "
-                "without HR. Timing is adjusted for modality but may "
+                "without HR. Apple energy intensity is a separate device-estimated kcal/(hour·kg) "
+                "outcome, not measured power or fitness. Timing is adjusted for modality but may "
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
                 "context is included only when its recorded wake time precedes the workout. "
