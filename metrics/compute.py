@@ -458,8 +458,19 @@ def workout_modality(workout_type: str | None) -> str:
     return "other"
 
 
+MIN_WORKOUT_HR_SECONDS = 300.0
+MIN_WORKOUT_HR_COVERAGE = 0.90
+MAX_WORKOUT_HR_COVERAGE = 1.05
+
+
 def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
-    """One row per workout with measured HR load and pre-workout context."""
+    """One row per positive-duration workout with pre-workout context.
+
+    Duration is recorded independently of HR and remains a valid outcome when
+    HR is missing. Load, intensity, and zone outcomes require at least five
+    measured minutes and near-complete HR-time coverage; this prevents gaps in
+    the HR stream from being interpreted as low effort.
+    """
     import numpy as np
     import pandas as pd
 
@@ -498,13 +509,17 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         day = start.date()
         same_day_prior_load = prior_load_by_day[day]
         try:
-            trimp = float(computed.get("trimp"))
             duration_s = float(workout.get("duration_s"))
-            zones = computed.get("time_in_zones") or {}
-            zone_seconds = sum(float(zones.get(f"z{zone}") or 0.0) for zone in range(1, 6))
+        except (TypeError, ValueError):
+            duration_s = np.nan
+        try:
+            trimp = float(computed.get("trimp"))
         except (TypeError, ValueError):
             trimp = np.nan
-            duration_s = np.nan
+        zones = computed.get("time_in_zones") or {}
+        try:
+            zone_seconds = sum(float(zones.get(f"z{zone}") or 0.0) for zone in range(1, 6))
+        except (TypeError, ValueError):
             zones = {}
             zone_seconds = 0.0
 
@@ -515,13 +530,15 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         last_modality_at[modality] = start
         if np.isfinite(trimp) and trimp > 0:
             prior_load_by_day[day] += trimp
-        # Tiny/zero-HR sessions make ratios unstable. Positive TRIMP also
-        # excludes legacy workouts whose duration exists without measured HR.
-        if (
-            not np.isfinite(trimp) or not np.isfinite(duration_s)
-            or trimp <= 0 or duration_s <= 0 or zone_seconds < 300
-        ):
+        if not np.isfinite(duration_s) or duration_s <= 0:
             continue
+        hr_coverage = zone_seconds / duration_s
+        hr_outcomes_valid = (
+            np.isfinite(trimp)
+            and trimp > 0
+            and zone_seconds >= MIN_WORKOUT_HR_SECONDS
+            and MIN_WORKOUT_HR_COVERAGE <= hr_coverage <= MAX_WORKOUT_HR_COVERAGE
+        )
         day_key = pd.Timestamp(start.date())
         context = daily_frame.loc[day_key] if day_key in daily_frame.index else None
         hour = start.hour + start.minute / 60 + start.second / 3600
@@ -533,13 +550,16 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "start_sin": math.sin(theta),
             "start_cos": math.cos(theta),
             "modality": modality,
-            "workout_load": trimp,
+            "hr_coverage_fraction": hr_coverage,
+            "workout_load": trimp if hr_outcomes_valid else np.nan,
             "workout_duration": duration_min,
             "log_duration": math.log(duration_min),
-            "workout_intensity": trimp / duration_min,
+            "workout_intensity": (
+                trimp / (zone_seconds / 60.0) if hr_outcomes_valid else np.nan
+            ),
             "high_zone_fraction": (
                 float(zones.get("z4") or 0.0) + float(zones.get("z5") or 0.0)
-            ) / zone_seconds,
+            ) / zone_seconds if hr_outcomes_valid else np.nan,
             "hours_since_prev_workout": hours_since_prev_workout,
             "days_since_prev_modality": days_since_prev_modality,
             "same_day_prior_load": same_day_prior_load,
@@ -572,7 +592,11 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         ("workout_intensity", "intensity_prev_modality"),
         ("high_zone_fraction", "high_zone_prev_modality"),
     ):
-        frame[prior_name] = frame.groupby("modality", sort=False)[outcome].shift(1)
+        # Missing HR outcomes do not replace the last valid modality outcome;
+        # duration, which is always present on a retained row, still advances.
+        frame[prior_name] = frame.groupby("modality", sort=False)[outcome].transform(
+            lambda values: values.ffill().shift(1)
+        )
     modality_dummies = pd.get_dummies(
         frame["modality"], prefix="modality", drop_first=True, dtype=float
     )
@@ -635,7 +659,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=5)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=6)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

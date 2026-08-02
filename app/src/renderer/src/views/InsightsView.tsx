@@ -251,7 +251,14 @@ function useAnalysisSeries(): {
         (sum, zone) => sum + Number(w.computed?.time_in_zones?.[zone] ?? 0),
         0
       )
-      if ((w.computed.trimp ?? 0) > 0 && (w.duration_s ?? 0) > 0 && zoneSeconds >= 300) {
+      const durationSeconds = w.duration_s ?? 0
+      const hrCoverage = durationSeconds > 0 ? zoneSeconds / durationSeconds : 0
+      if (
+        (w.computed.trimp ?? 0) > 0 &&
+        zoneSeconds >= 300 &&
+        hrCoverage >= 0.9 &&
+        hrCoverage <= 1.05
+      ) {
         workoutContextCount++
       }
       const day = localDateKey(w.start_at, tz)
@@ -353,7 +360,7 @@ export function InsightsView(): ReactElement {
       key: 'workout',
       title: 'Workout context',
       detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
-      expectedVersion: 5,
+      expectedVersion: 6,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {
@@ -389,9 +396,9 @@ export function InsightsView(): ReactElement {
       detail: 'finalized RHR or HRV days'
     },
     {
-      label: 'Workout context',
+      label: 'HR-derived outcomes',
       value: workoutContextCount,
-      detail: 'sessions with ≥5 min measured HR'
+      detail: 'sessions with ≥90% HR coverage'
     }
   ]
   const genericModels = models.filter(

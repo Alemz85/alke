@@ -89,42 +89,53 @@ measurement. Prior ATL and the previous outcome are controls.
 
 ## Workout-context families
 
-Workout analyses use one row per workout with positive HR-derived TRIMP and
-positive duration. Rest days and workouts without usable HR data are not
-members of this population. Multiple sessions on one local date remain
-separate workout observations, but they share the same morning recovery
-exposure and parts of the same daily environment. They therefore count as one
-date for minimum-information gates and as one cluster for uncertainty.
+Workout analyses use one row per workout with positive duration. Duration is
+recorded independently of HR, so an otherwise valid workout is not discarded
+merely because its HR stream is absent or incomplete. HR-derived outcomes have
+a stricter population: positive TRIMP, at least five minutes of classified HR,
+and classified-HR time between 90% and 105% of recorded duration. The upper
+tolerance allows small timestamp/rounding disagreement but rejects internally
+inconsistent records. This is a fixed measurement-quality rule, not a
+data-tuned significance threshold. Rest days are not members of either
+population. Multiple sessions on one local date remain separate workout
+observations, but they share the same morning recovery exposure and parts of
+the same daily environment. They therefore count as one date for
+minimum-information gates and as one cluster for uncertainty.
 
 Outcome eligibility does not erase event history. Every recorded workout,
 including a short or HR-sparse session that cannot supply a stable outcome,
 updates time since the previous workout and time since the previous workout of
 that modality. Any positive measured TRIMP from such a session also contributes
 to the load already accumulated before a later same-day outcome row. Previous-
-modality outcome controls remain restricted to eligible rows because a short
-session cannot supply a stable intensity ratio.
+modality HR-outcome controls remain restricted to HR-eligible rows because a
+short or poorly covered session cannot supply a stable intensity ratio.
+Duration history, however, advances on every positive-duration workout.
 
 The outcomes deliberately separate different questions:
 
-- total TRIMP: the scheduled dose chosen for the session;
+- total recorded TRIMP: the scheduled dose chosen for a session whose HR stream
+  passes the completeness gate;
 - duration: how long the session was;
-- TRIMP per minute: recorded cardiovascular intensity, with duration still
-  adjusted because intensity and sustainable duration trade off;
+- TRIMP per measured HR minute: recorded cardiovascular intensity. Dividing by
+  full workout duration would silently treat every unmeasured second as zero
+  effort. Duration remains adjusted because intensity and sustainable duration
+  trade off;
 - high-zone fraction: the fraction of measured HR time in zones 4-5.
 
-TRIMP per minute and high-zone fraction are not labelled “capacity.” Capacity
-would require a standardized task, pace/power, and preferably perceived
-exertion. They answer how hard the recorded session was, conditional on doing
-a workout.
+TRIMP per measured HR minute and high-zone fraction are not labelled
+“capacity.” Capacity would require a standardized task, pace/power, and
+preferably perceived exertion. They answer how hard the recorded session was,
+conditional on doing a workout.
 
 Workout readiness candidates relate sleep shortfall, three-night mean
 shortfall, sleep timing drift, sleep awake fraction,
 previous-day finalized RHR/HRV, and sleep-associated respiratory-rate
-deviation to duration and TRIMP per minute. The three-night exposure requires
-three complete consecutive calendar days; it is not imputed across a missing
-night. Prior acute load and time since the previous workout are also screened
-as pre-workout state candidates. Hours since waking is screened separately
-because clock time and biological-day position are not the same exposure.
+deviation to duration and TRIMP per measured HR minute. The three-night
+exposure requires three complete consecutive calendar days; it is not imputed
+across a missing night. Prior acute load and time since the previous workout
+are also screened as pre-workout state candidates. Hours since waking is
+screened separately because clock time and biological-day position are not the
+same exposure.
 
 Every workout fit controls chronic and acute load through the prior day,
 previous-day load, modality, time since the previous workout, time since the
@@ -208,8 +219,9 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 4 and workout model version 5 enforce the
-prior-day rule above.
+workout. Daily model version 4 and workout model version 6 enforce the
+prior-day rule above. Workout version 6 additionally separates duration from
+HR-outcome eligibility and normalizes intensity by measured HR time.
 
 ## Current data implications (audit 2026-08-02)
 
@@ -227,27 +239,35 @@ prior-day rule above.
   most are indoor strength, rowing, cycling, or pool sessions and the historic
   running block lacks them. They are not treated as physiological ambient
   exposure until the source semantics and outdoor coverage are trustworthy.
-- 108 workouts in the daily-data era have positive HR-derived load and at
-  least five minutes of classified HR, but they come from 77 dates; 55 sessions
-  lie on one of 24 multi-workout dates. The common complete-case timing frame
-  currently has 82 sessions on 56 dates, so it remains dormant under the
-  60-date rule. Clock time and hours since waking correlate 0.91 in the observed
-  frame, reinforcing the need to wait for enough complete waking-day context.
-  HRV-context candidates have 99 sessions on 71 dates and can be evaluated,
-  while reliable modality-specific timing curves remain out of reach.
-- Sleep continuity candidates have 91 sessions on 62 dates and can be tested;
-  three-night sleep shortfall has only 69 sessions on 46 dates and remains
-  dormant. Acute-load and previous-workout-gap candidates have 101 sessions on
-  72 dates. In the current data none of these clear multiplicity and stability
-  gates; eligibility is not evidence of an effect.
-- Two short sessions in the current workout era are ineligible as outcomes but
-  remain in event history. This corrects two later recovery intervals; the
+- 224 positive-duration workouts across 190 dates can inform duration
+  behavior. Of the 108 sessions that otherwise have positive HR-derived load
+  and at least five classified minutes, 102 sessions across 73 dates pass the
+  90% coverage gate. The six failures are outdoor walks with only 60.5%–87.8%
+  coverage; leaving the old denominator in place would have made those gaps
+  look like low effort.
+- Complete waking-day timing frames currently contain 84 sessions on 56 dates
+  for duration and 78 sessions on 53 dates for HR-derived intensity, so both
+  remain dormant under the 60-date timing rule. Clock time and hours since
+  waking correlate 0.91 in the observed frame, reinforcing the need for that
+  control rather than a clock-only interpretation.
+- Duration candidates now use measurements according to their own semantics:
+  sleep continuity has 94 sessions on 63 dates, prior-day HRV has 103 on 72,
+  and prior acute load / previous-workout gap have 217 on 184. Corresponding
+  intensity candidates retain only HR-quality rows (85/58, 93/67, and 95/68,
+  respectively). Three-night sleep shortfall remains dormant for both duration
+  (71/46) and intensity (65/43). None clears multiplicity and stability gates;
+  greater eligibility is not evidence of an effect.
+- Two sessions with fewer than five classified HR minutes in the current
+  workout era now contribute valid duration outcomes but remain ineligible for
+  HR-derived outcomes. They also remain in event history: this corrects two
+  later recovery intervals; the
   largest changed from 22.2 hours to 19 minutes, and the short session's 5.15
-  TRIMP now contributes to the later session's same-day prior load.
-- With the measurement-time correction, previous-day HRV candidates have 99
-  sessions on 71 dates and show no clear relationship to duration or recorded
-  intensity. The former same-day HRV-to-intensity raw signal disappears; it was
-  compatible with within-day aggregate revision rather than readiness.
+  TRIMP contributes to the later session's same-day prior load.
+- With the measurement-time and coverage corrections, previous-day HRV has 103
+  sessions on 72 dates for duration and 93 on 67 for intensity; neither shows
+  a clear relationship. The former same-day HRV-to-intensity raw signal
+  disappears; it was compatible with within-day aggregate revision rather than
+  readiness.
 - Decoupling exists for only 14 recent workouts and HRR60 for none, so neither
   is a promotable workout-context outcome yet.
 

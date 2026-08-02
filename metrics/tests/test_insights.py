@@ -280,12 +280,14 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 5
+    assert model["diagnostics"]["model_version"] == 6
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
     assert "wake-ordered sleep context" in model["spec"]
     assert "wake time precedes" in model["diagnostics"]["caveat"]
+    assert "measured HR minute" in model["diagnostics"]["caveat"]
+    assert "90%" in model["diagnostics"]["caveat"]
     candidate = model["diagnostics"]["candidates"][0]
     assert candidate["status"] == "signal"
     assert candidate["q_value"] == pytest.approx(candidate["p_value"])
@@ -1177,7 +1179,7 @@ def test_daily_insight_frame_exposes_only_previous_day_finalized_hr_aggregates()
     assert frame.loc["2026-01-03", "hrv_dev_prior"] == pytest.approx(-4.0)
 
 
-def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
+def test_workout_insight_frame_keeps_duration_when_load_is_unmeasured_and_derives_context():
     from zoneinfo import ZoneInfo
 
     from metrics.compute import build_workout_insight_frame
@@ -1220,7 +1222,7 @@ def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
 
     frame = build_workout_insight_frame(workouts, computed, daily, ZoneInfo("UTC"))
 
-    assert len(frame) == 1
+    assert len(frame) == 2
     row = frame.iloc[0]
     assert row["start_hour"] == pytest.approx(23.5)
     assert row["workout_load"] == pytest.approx(30.0)
@@ -1232,6 +1234,79 @@ def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
     assert "rhr_dev" not in frame
     assert "hrv_dev" not in frame
     assert row["modality"] == "cycling"
+    no_load = frame.iloc[1]
+    assert no_load["workout_duration"] == pytest.approx(30.0)
+    assert pd.isna(no_load["workout_load"])
+    assert pd.isna(no_load["workout_intensity"])
+    assert pd.isna(no_load["high_zone_fraction"])
+
+
+def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    workouts = [
+        {
+            "id": "quality-first", "type": "rowing",
+            "start_at": "2026-01-02T08:00:00Z", "duration_s": 1200,
+        },
+        {
+            "id": "low-coverage-history", "type": "rowing",
+            "start_at": "2026-01-02T10:00:00Z", "duration_s": 1200,
+        },
+        {
+            "id": "quality-second", "type": "rowing",
+            "start_at": "2026-01-02T12:00:00Z", "duration_s": 1200,
+        },
+        {
+            "id": "over-covered", "type": "rowing",
+            "start_at": "2026-01-02T14:00:00Z", "duration_s": 1200,
+        },
+    ]
+    computed = {
+        # Exactly 90% coverage: mean measured zone weight is 1.5, whereas
+        # dividing by wall-clock duration would incorrectly report 1.35.
+        "quality-first": {
+            "trimp": 27.0,
+            "time_in_zones": {"z1": 540, "z2": 540, "z3": 0, "z4": 0, "z5": 0},
+        },
+        "low-coverage-history": {
+            "trimp": 15.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 0, "z4": 0, "z5": 0},
+        },
+        "quality-second": {
+            "trimp": 30.0,
+            "time_in_zones": {"z1": 600, "z2": 600, "z3": 0, "z4": 0, "z5": 0},
+        },
+        "over-covered": {
+            "trimp": 33.0,
+            "time_in_zones": {"z1": 660, "z2": 660, "z3": 0, "z4": 0, "z5": 0},
+        },
+    }
+
+    frame = build_workout_insight_frame(
+        workouts, computed, pd.DataFrame(), ZoneInfo("UTC")
+    )
+
+    assert len(frame) == 4
+    first, low_coverage, second, over_covered = (frame.iloc[i] for i in range(4))
+    assert first["hr_coverage_fraction"] == pytest.approx(0.9)
+    assert first["workout_intensity"] == pytest.approx(1.5)
+    assert low_coverage["hr_coverage_fraction"] == pytest.approx(0.5)
+    assert low_coverage["workout_duration"] == pytest.approx(20.0)
+    assert pd.isna(low_coverage["workout_load"])
+    assert pd.isna(low_coverage["workout_intensity"])
+    assert pd.isna(low_coverage["high_zone_fraction"])
+    # The low-quality workout still exists for chronology and measured
+    # same-day dose, but cannot replace the previous valid outcome control.
+    assert second["hours_since_prev_workout"] == pytest.approx(2.0)
+    assert second["same_day_prior_load"] == pytest.approx(42.0)
+    assert second["load_prev_modality"] == pytest.approx(27.0)
+    assert second["intensity_prev_modality"] == pytest.approx(1.5)
+    assert over_covered["hr_coverage_fraction"] == pytest.approx(1.1)
+    assert pd.isna(over_covered["workout_load"])
+    assert pd.isna(over_covered["workout_intensity"])
 
 
 def test_workout_insight_frame_controls_prior_session_and_hours_awake():
@@ -1267,7 +1342,7 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["load_prev_modality"] == pytest.approx(20.0)
 
 
-def test_workout_frame_history_includes_sessions_too_short_for_outcomes():
+def test_workout_frame_short_sessions_keep_duration_but_not_hr_outcomes():
     from zoneinfo import ZoneInfo
 
     from metrics.compute import build_workout_insight_frame
@@ -1311,14 +1386,19 @@ def test_workout_frame_history_includes_sessions_too_short_for_outcomes():
         workouts, computed, pd.DataFrame(), ZoneInfo("UTC")
     )
 
-    assert len(frame) == 2
-    second = frame.iloc[1]
+    assert len(frame) == 3
+    short = frame.iloc[1]
+    second = frame.iloc[2]
+    assert short["workout_duration"] == pytest.approx(4.0)
+    assert pd.isna(short["workout_load"])
+    assert pd.isna(short["workout_intensity"])
     assert second["hours_since_prev_workout"] == pytest.approx(2.0)
     assert second["days_since_prev_modality"] == pytest.approx(2.0 / 24.0)
     assert second["same_day_prior_load"] == pytest.approx(5.0)
-    # Outcome-history controls stay on eligible rows so a four-minute session
-    # cannot supply an unstable intensity ratio.
+    # HR-derived histories stay on HR-eligible rows, while duration uses the
+    # four-minute session because duration does not depend on HR measurement.
     assert second["load_prev_modality"] == pytest.approx(20.0)
+    assert second["duration_prev_modality"] == pytest.approx(4.0)
 
 
 def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
@@ -1416,7 +1496,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [4, 5]
+    assert expected_versions == [4, 6]
 
 
 def test_persistence_state_never_crosses_model_versions():

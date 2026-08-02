@@ -1192,14 +1192,15 @@ def discover_workout_context_insights(
         "spec": (
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
-            "wake-ordered sleep context; joint 24-hour sine/cosine timing tests; "
+            "wake-ordered sleep context; outcome-specific HR completeness gates; "
+            "measured-time intensity; joint 24-hour sine/cosine timing tests; "
             "conservative maximum of HAC and date-clustered uncertainty; effective-n floor; "
             "BH FDR; calendar-date block sign/phase stability; collinearity collapse; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 5,
+            "model_version": 6,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1232,12 +1233,14 @@ def discover_workout_context_insights(
             },
             "caveat": (
                 "Workout-only single-person associations, not capacity tests or causal effects. "
-                "Recorded intensity is TRIMP per minute; timing is adjusted for modality but may "
+                "Recorded intensity is TRIMP per measured HR minute. HR-derived load, intensity, "
+                "and zone outcomes require at least 90% HR-time coverage; duration remains usable "
+                "without HR. Timing is adjusted for modality but may "
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
                 "context is included only when its recorded wake time precedes the workout. "
                 "Recovery intervals and prior same-day load include workouts that are too short "
-                "or too sparsely measured to serve as outcome rows."
+                "or too sparsely measured to serve as HR-derived outcome rows."
             ),
         },
     }
