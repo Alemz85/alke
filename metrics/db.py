@@ -61,6 +61,32 @@ def fetch_hr_samples(sb: Client, workout_ids: list[str]) -> dict[str, list[tuple
     return out
 
 
+def fetch_swim_sets(sb: Client, workout_ids: list[str]) -> dict[str, list[dict]]:
+    """Active swim-set windows for the requested workouts, keyed by workout ID."""
+    out: dict[str, list[dict]] = {w: [] for w in workout_ids}
+    for i in range(0, len(workout_ids), 50):
+        chunk = workout_ids[i : i + 50]
+
+        def q(chunk=chunk):
+            return (
+                sb.table("swim_sets")
+                .select("workout_id, start_offset_s, duration_s, distance_m")
+                .in_("workout_id", chunk)
+                .order("workout_id")
+                .order("set_index")
+            )
+
+        for row in _fetch_all(q):
+            out[row["workout_id"]].append(
+                {
+                    "start_offset_s": int(row["start_offset_s"]),
+                    "duration_s": float(row["duration_s"]),
+                    "distance_m": float(row["distance_m"]),
+                }
+            )
+    return out
+
+
 def fetch_daily_metrics(sb: Client) -> list[dict]:
     def q():
         return sb.table("daily_metrics").select(

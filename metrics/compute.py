@@ -25,6 +25,7 @@ from metrics.models import (
     hr_drift_pct,
     hrr60,
     rolling_median,
+    swim_active_ef,
     time_in_zones,
     trimp_edwards,
     z2_trimp_from_zones,
@@ -128,7 +129,9 @@ def run(full: bool) -> None:
     # ---- per-workout metrics (window) ----
     since = None if full else (now - timedelta(days=RECOMPUTE_DAYS)).isoformat()
     window_workouts = db.fetch_workouts(sb, since)
-    samples_by_workout = db.fetch_hr_samples(sb, [w["id"] for w in window_workouts])
+    window_workout_ids = [w["id"] for w in window_workouts]
+    samples_by_workout = db.fetch_hr_samples(sb, window_workout_ids)
+    swim_sets_by_workout = db.fetch_swim_sets(sb, window_workout_ids)
     swim_offset = float(config.get("swim_hr_offset") or -10)
     z2_low = float(config.get("zone2_low_frac") or 0.60)
     z2_high = float(config.get("zone2_high_frac") or 0.70)
@@ -141,12 +144,19 @@ def run(full: bool) -> None:
         is_swim = bool(w["type"]) and "swim" in w["type"].lower()
         tiz = time_in_zones(samples, bounds, swim_hr_offset=swim_offset if is_swim else 0.0)
         eligible = ef_eligibility(w["type"], tiz, w["duration_s"])
+        efficiency = None
+        if eligible:
+            efficiency = (
+                swim_active_ef(swim_sets_by_workout.get(w["id"], []), samples)
+                if is_swim
+                else ef(w["distance_m"], w["duration_s"], w["avg_hr"])
+            )
         computed_rows.append(
             {
                 "workout_id": w["id"],
                 "time_in_zones": {f"z{z}": s for z, s in tiz.items()},
                 "trimp": round(trimp_edwards(tiz), 2),
-                "ef": ef(w["distance_m"], w["duration_s"], w["avg_hr"]) if eligible else None,
+                "ef": efficiency,
                 "decoupling_pct": hr_drift_pct(samples) if eligible else None,
                 "hrr60": hrr60(samples, w["duration_s"]),
                 "computed_at": now.isoformat(),

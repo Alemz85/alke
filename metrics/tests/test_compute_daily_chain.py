@@ -10,6 +10,8 @@ asserts a pre-window workout's day keeps its stored trimp_total."""
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from metrics import compute, db
 
 TZ = "Europe/Paris"
@@ -68,8 +70,20 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
 
     monkeypatch.setattr(db, "fetch_workouts", fake_fetch_workouts)
     monkeypatch.setattr(db, "fetch_hr_samples", fake_hr_samples)
+    monkeypatch.setattr(
+        db,
+        "fetch_swim_sets",
+        lambda sb, ids: {
+            i: ([{"start_offset_s": 0, "duration_s": 600, "distance_m": 500}]
+                if i == recent_id else [])
+            for i in ids
+        },
+        raising=False,
+    )
     monkeypatch.setattr(db, "update_hr_max", lambda sb, v: None)
-    monkeypatch.setattr(db, "upsert_computed_workouts", lambda sb, rows: None)
+    monkeypatch.setattr(
+        db, "upsert_computed_workouts", lambda sb, rows: captured.setdefault("computed", rows)
+    )
     monkeypatch.setattr(db, "fetch_computed_workouts", lambda sb: stored_computed)
     monkeypatch.setattr(db, "upsert_computed_daily",
                         lambda sb, rows: captured.setdefault("daily", rows))
@@ -81,6 +95,9 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
     monkeypatch.setattr(compute, "datetime", _FrozenNow)
 
     compute.run(full=False)
+
+    recent = next(r for r in captured["computed"] if r["workout_id"] == recent_id)
+    assert recent["ef"] == pytest.approx((500 / (600 / 60)) / 135)
 
     by_date = {r["date"]: r for r in captured["daily"]}
     # The pre-window workout's day keeps its stored TRIMP (was 0.0 before the fix).

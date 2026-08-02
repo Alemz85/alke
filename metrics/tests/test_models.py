@@ -14,6 +14,7 @@ from metrics.models import (
     flags_for_day,
     hr_drift_pct,
     hrr60,
+    swim_active_ef,
     time_in_zones,
     trimp_edwards,
     zone_bounds,
@@ -71,6 +72,35 @@ def test_ef_formula():
     assert ef(None, 1800, 120) is None
     assert ef(1400, 1800, None) is None
     assert ef(1400, 0, 120) is None
+
+
+def test_swim_active_ef_excludes_rest_time_and_rest_hr():
+    sets = [
+        {"start_offset_s": 0, "duration_s": 60, "distance_m": 50},
+        {"start_offset_s": 120, "duration_s": 60, "distance_m": 50},
+    ]
+    samples = [
+        (0, 120), (20, 120), (40, 120),
+        (70, 80), (100, 80),
+        (120, 140), (140, 140), (160, 140),
+    ]
+
+    assert swim_active_ef(sets, samples) == pytest.approx((100 / 2) / 130)
+
+
+def test_swim_active_ef_requires_five_active_hr_samples():
+    sets = [{"start_offset_s": 0, "duration_s": 60, "distance_m": 50}]
+
+    assert swim_active_ef(sets, [(0, 120), (10, 120), (20, 120), (30, 120)]) is None
+
+
+def test_swim_active_ef_ignores_invalid_sets():
+    sets = [
+        {"start_offset_s": 0, "duration_s": 0, "distance_m": 50},
+        {"start_offset_s": 60, "duration_s": 60, "distance_m": 0},
+    ]
+
+    assert swim_active_ef(sets, [(i * 10, 120) for i in range(20)]) is None
 
 
 def test_ef_eligibility_swims_bikes_and_runs_z1z2_70pct_20min():

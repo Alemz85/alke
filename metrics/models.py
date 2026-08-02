@@ -11,6 +11,7 @@ SPACING_CAP_S = 30
 ACWR_FLAG_THRESHOLD = 1.5
 RHR_FLAG_DEV_BPM = 4.0
 RHR_FLAG_RUN_DAYS = 3
+MIN_ACTIVE_SWIM_HR_SAMPLES = 5
 
 
 def zone_bounds(
@@ -59,6 +60,41 @@ def ef(distance_m: float | None, duration_s: float | None, avg_hr: float | None)
     if not distance_m or not duration_s or not avg_hr:
         return None
     return (distance_m / (duration_s / 60.0)) / avg_hr
+
+
+def swim_active_ef(sets: list[dict], samples: list[Sample]) -> float | None:
+    """Swim EF from active set windows only, excluding rests from both pace and HR.
+
+    `swim_sets` are ingest-derived active blocks. A swim without those blocks or
+    enough in-block HR samples stays unavailable rather than falling back to the
+    rest-biased whole-workout duration/average HR.
+    """
+    valid_sets: list[tuple[float, float, float]] = []
+    for row in sets:
+        try:
+            start = float(row["start_offset_s"])
+            duration = float(row["duration_s"])
+            distance = float(row["distance_m"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if duration <= 0 or distance <= 0:
+            continue
+        valid_sets.append((start, duration, distance))
+
+    if not valid_sets:
+        return None
+
+    active_hr = [
+        float(bpm)
+        for offset, bpm in samples
+        if any(start <= offset < start + duration for start, duration, _ in valid_sets)
+    ]
+    if len(active_hr) < MIN_ACTIVE_SWIM_HR_SAMPLES:
+        return None
+
+    distance_m = sum(distance for _, _, distance in valid_sets)
+    duration_s = sum(duration for _, duration, _ in valid_sets)
+    return ef(distance_m, duration_s, sum(active_hr) / len(active_hr))
 
 
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
