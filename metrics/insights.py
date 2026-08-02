@@ -1,5 +1,11 @@
 """Exploratory + confirmatory insights (SPEC §5.4). Pure functions over a
-daily analysis frame; compute.py builds the frame and writes the results."""
+daily analysis frame; compute.py builds the frame and writes the results.
+
+Swim EF is deliberately absent from the default inference surfaces. It is a
+useful descriptive measure, but for a returning swimmer it combines technique
+reacquisition with aerobic state; sample size alone cannot identify which
+latent factor moved it.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +19,10 @@ import statsmodels.api as sm
 from scipy.stats import pearsonr, spearmanr, t as student_t
 
 MIN_CORR_N = 20
-MIN_DLM_N = 40
 MIN_ADJUSTED_N = 60
 
 DRIVERS = ["sleep_duration", "sleep_midpoint_dev", "rhr_dev", "hrv_dev", "trimp_prior", "steps_prior"]
-PERFS = ["ef", "decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
+PERFS = ["decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 
 # Pairs the exploratory sweep must skip: trimp_prior IS trimp_total shifted one
 # day, so correlating the two only measures training-schedule autocorrelation.
@@ -48,13 +53,6 @@ DEFAULT_ADJUSTED_SPECS = [
     {"name": "timing_to_hrv", "label": "Sleep timing drift ↔ HRV deviation", "driver": "sleep_midpoint_dev", "outcome": "hrv_dev", "controls": ["lag:hrv_dev", "atl"], "direction": "co-measured"},
     {"name": "rhr_to_load", "label": "RHR deviation → same-day load", "driver": "rhr_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
     {"name": "hrv_to_load", "label": "HRV deviation → same-day load", "driver": "hrv_dev", "outcome": "trimp_total", "controls": ["lag:trimp_total", "ctl"], "direction": "training-choice"},
-    # Performance candidates stay dormant until enough swim EF observations
-    # accumulate. EF is swim-only in compute.py, avoiding cross-modality units.
-    {"name": "sleep_prev_to_ef", "label": "Previous-night sleep → swim efficiency", "driver": "sleep_duration", "driver_lag": 1, "outcome": "ef", "controls": ["ctl", "atl"], "direction": "lagged"},
-    {"name": "timing_to_ef", "label": "Sleep timing drift → swim efficiency", "driver": "sleep_midpoint_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "sleep-before-workout"},
-    {"name": "rhr_to_ef", "label": "RHR deviation → swim efficiency", "driver": "rhr_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "pre-workout-marker"},
-    {"name": "hrv_to_ef", "label": "HRV deviation → swim efficiency", "driver": "hrv_dev", "outcome": "ef", "controls": ["ctl", "atl"], "direction": "pre-workout-marker"},
-    {"name": "prior_load_to_ef", "label": "Prior-day load → swim efficiency", "driver": "trimp_prior", "outcome": "ef", "controls": ["ctl"], "direction": "lagged"},
     # NEAT / ambient activity: does yesterday's movement predict recovery and
     # sleep BEYOND training load? trimp_prior is a control so big-step days
     # don't merely proxy long workouts; lag:outcome absorbs autocorrelation.
@@ -552,58 +550,3 @@ def compute_correlations(
     for row, q in zip(rows, _bh_qvalues([row["p_value"] for row in rows])):
         row["q_value"] = float(q)
     return rows
-
-
-def ef_dlm(frame: pd.DataFrame) -> dict | None:
-    """OLS: EF_t ~ sleep_{t−1} + sleep_7d_mean + rhr_dev_t + CTL_t + ATL_t with
-    HC3 robust SEs. Runs only at ≥40 EF observations; returns an insight_models
-    row for `ef_on_sleep_dlm`. CTL and ATL are both EWMA of the same load and
-    routinely correlate >0.9 — robust SEs don't fix the variance inflation that
-    puts on their coefficients, so collinear regressors (|r| ≥ 0.85) are dropped
-    deterministically keep-first, same rule as the adjusted finder's controls."""
-    df = pd.DataFrame(
-        {
-            "ef": frame.get("ef"),
-            "sleep_prev": frame.get("sleep_duration").shift(1) if "sleep_duration" in frame else np.nan,
-            "sleep_7d_mean": (
-                frame.get("sleep_duration").rolling(7, min_periods=4).mean()
-                if "sleep_duration" in frame
-                else np.nan
-            ),
-            "rhr_dev": frame.get("rhr_dev"),
-            "ctl": frame.get("ctl"),
-            "atl": frame.get("atl"),
-        }
-    ).dropna()
-    if len(df) < MIN_DLM_N:
-        return None
-
-    kept, dropped = _drop_collinear_controls(df, ["sleep_prev", "sleep_7d_mean", "rhr_dev", "ctl", "atl"])
-    X = sm.add_constant(df[kept])
-    fit = sm.OLS(df["ef"], X).fit(cov_type="HC3")
-    ci = fit.conf_int(alpha=0.05)
-    coefficients = {
-        name: {
-            "coef": float(fit.params[name]),
-            "ci_low": float(ci.loc[name, 0]),
-            "ci_high": float(ci.loc[name, 1]),
-            "p_value": float(fit.pvalues[name]),
-        }
-        for name in fit.params.index
-    }
-    n = int(len(df))
-    return {
-        "name": "ef_on_sleep_dlm",
-        "computed_at": datetime.now(timezone.utc).isoformat(),
-        "spec": "OLS: EF_t ~ sleep_{t-1} + sleep_7d_mean + rhr_dev_t + CTL_t + ATL_t (HC3 robust SEs; collinear regressors |r|≥0.85 dropped keep-first)",
-        "coefficients": coefficients,
-        "diagnostics": {
-            "n": n,
-            "r2": float(fit.rsquared),
-            "dropped_regressors": dropped,
-            "caveat": (
-                f"Exploratory model on n={n} swim-day observations from a single person — "
-                "coefficients describe associations, not causes, and will shift as data accumulates."
-            ),
-        },
-    }

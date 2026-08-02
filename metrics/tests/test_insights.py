@@ -1,5 +1,4 @@
-"""Insights layer tests (SPEC §5.4): correlations with lags + the EF
-distributed-lag model."""
+"""Insights layer tests (SPEC §5.4): exploratory and adjusted correlations."""
 
 import numpy as np
 import pandas as pd
@@ -14,7 +13,6 @@ from metrics.insights import (
     apply_persistence,
     compute_correlations,
     discover_adjusted_insights,
-    ef_dlm,
     weight_series,
     zscore_trailing,
 )
@@ -252,39 +250,6 @@ def test_block_bootstrap_stability_strong_vs_noise_and_deterministic():
     assert _block_bootstrap_stability(strong, [], 0.8, "strong", reps=100) == s
 
 
-def test_ef_dlm_recovers_coefficient_and_requires_40_obs():
-    n = 120
-    dates = pd.date_range("2026-01-01", periods=n, freq="D")
-    sleep = RNG.normal(450, 40, n)
-    frame = pd.DataFrame(
-        {
-            "sleep_duration": sleep,
-            "rhr_dev": RNG.normal(0, 2, n),
-            "ctl": RNG.normal(20, 5, n),
-            "atl": RNG.normal(25, 8, n),
-        },
-        index=dates,
-    )
-    sleep_prev = np.roll(sleep, 1)
-    frame["ef"] = 0.1 + 0.0005 * sleep_prev + RNG.normal(0, 0.001, n)
-    frame.iloc[0, frame.columns.get_loc("ef")] = np.nan  # no lag for day one
-
-    model = ef_dlm(frame)
-    assert model is not None
-    assert model["name"] == "ef_on_sleep_dlm"
-    assert model["coefficients"]["sleep_prev"]["coef"] == pytest.approx(0.0005, rel=0.15)
-    assert model["diagnostics"]["n"] >= 40
-    assert 0 < model["diagnostics"]["r2"] <= 1
-    assert "caveat" in model["diagnostics"]
-    ci = model["coefficients"]["sleep_prev"]
-    assert ci["ci_low"] < ci["coef"] < ci["ci_high"]
-
-    # under 40 EF observations -> None
-    small = frame.copy()
-    small.iloc[40:, small.columns.get_loc("ef")] = np.nan
-    assert ef_dlm(small) is None
-
-
 def test_weight_series_linear_decline_gives_constant_negative_slope():
     n = 60
     dates = pd.date_range("2026-01-01", periods=n, freq="D")
@@ -418,10 +383,12 @@ def test_correlations_attach_qvalue_across_sweep():
     assert all("q_value" in r and "n_eff" in r and "p_value_naive" in r for r in rows)
 
 
-def test_perfs_constant_includes_weight_slope():
-    from metrics.insights import PERFS
+def test_default_inference_keeps_swim_ef_descriptive():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, PERFS
 
     assert "weight_7d_slope" in PERFS
+    assert "ef" not in PERFS
+    assert all(spec["outcome"] != "ef" for spec in DEFAULT_ADJUSTED_SPECS)
 
 
 def test_default_specs_include_steps_candidates():
@@ -471,37 +438,9 @@ def test_correlations_skip_trivial_shifted_pair():
     assert rows == []
 
 
-def test_ef_dlm_drops_collinear_regressor():
-    n = 120
-    rng = np.random.default_rng(9)
-    dates = pd.date_range("2026-01-01", periods=n, freq="D")
-    sleep = rng.normal(450, 40, n)
-    ctl = rng.normal(20, 5, n)
-    frame = pd.DataFrame(
-        {
-            "sleep_duration": sleep,
-            "rhr_dev": rng.normal(0, 2, n),
-            "ctl": ctl,
-            "atl": ctl * 1.2 + rng.normal(0, 0.1, n),  # near-copy of ctl
-        },
-        index=dates,
-    )
-    sleep_prev = np.roll(sleep, 1)
-    frame["ef"] = 0.1 + 0.0005 * sleep_prev + rng.normal(0, 0.001, n)
-    frame.iloc[0, frame.columns.get_loc("ef")] = np.nan
-
-    model = ef_dlm(frame)
-    assert "atl" in model["diagnostics"]["dropped_regressors"]
-    assert "atl" not in model["coefficients"]
-    # the model still recovers the planted sleep coefficient without atl
-    assert model["coefficients"]["sleep_prev"]["coef"] == pytest.approx(0.0005, rel=0.15)
-
-
-def test_perf_series_by_date_ef_is_swim_only():
-    # ef_eligibility now extends to bikes (bike EF feeds the zone2 durable
-    # calibration), but swim EF (~0.5–1.5 m/min/bpm) and bike EF (~2–4) are
-    # incomparable units — the insights per-day EF series must stay SWIM-ONLY,
-    # while decoupling/hrr60 (relative/HR-domain) stay cross-sport.
+def test_perf_series_by_date_keeps_ef_out_of_inference():
+    # EF stays descriptive because swim EF combines technique reacquisition and
+    # aerobic state. Decoupling/hrr60 remain valid cross-sport outcomes here.
     from zoneinfo import ZoneInfo
 
     from metrics.compute import perf_series_by_date
@@ -521,7 +460,41 @@ def test_perf_series_by_date_ef_is_swim_only():
     from datetime import date
 
     day = date(2026, 7, 1)
-    assert out[day]["ef"] == [1.2]                 # bike EF excluded from the series
+    assert "ef" not in out[day]
     assert sorted(out[day]["decoupling"]) == [3.0, 5.0]  # cross-sport preserved
     assert out[day]["hrr60"] == [22.0]
     assert date(2026, 7, 2) not in out
+
+
+def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
+    from zoneinfo import ZoneInfo
+
+    from metrics import compute
+
+    written_models = []
+    deleted_models = []
+    monkeypatch.setattr(compute.db, "fetch_computed_workouts", lambda _sb: [])
+    monkeypatch.setattr(compute.db, "replace_insight_correlations", lambda _sb, _rows: None)
+    monkeypatch.setattr(compute.db, "fetch_insight_model", lambda _sb, _name: None)
+    monkeypatch.setattr(compute.db, "upsert_insight_model", lambda _sb, row: written_models.append(row))
+    monkeypatch.setattr(compute.db, "delete_insight_model", lambda _sb, name: deleted_models.append(name))
+
+    compute.run_insights(
+        object(),
+        all_workouts=[],
+        daily_metrics=[],
+        daily_rows=[
+            {
+                "date": "2026-08-01",
+                "rhr_dev": 0.0,
+                "hrv_dev": 0.0,
+                "ctl": 0.0,
+                "atl": 0.0,
+                "trimp_total": 0.0,
+            }
+        ],
+        tz=ZoneInfo("UTC"),
+    )
+
+    assert [model["name"] for model in written_models] == ["daily_adjusted_finder"]
+    assert deleted_models == ["ef_on_sleep_dlm"]

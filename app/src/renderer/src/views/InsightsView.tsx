@@ -31,7 +31,6 @@ const DRIVERS = [
   { key: 'trimp_prior', label: 'Prior-day load' }
 ]
 const PERFS = [
-  { key: 'ef', label: 'EF' },
   { key: 'decoupling', label: 'Decoupling' },
   { key: 'hrr60', label: 'HRR60' },
   { key: 'trimp_total', label: 'Daily load' }
@@ -57,6 +56,7 @@ const tooltipStyle = {
 interface FinderCandidate {
   name: string
   label: string
+  outcome?: string
   status: 'signal' | 'watch' | 'no_clear_signal' | 'insufficient' | 'suppressed_collinear'
   direction?: string
   n: number
@@ -137,7 +137,6 @@ function useAnalysisSeries(): Record<string, Map<string, number>> {
     })
     // per-day workout performance means
     const perfAcc: Record<string, Map<string, number[]>> = {
-      ef: new Map(),
       decoupling: new Map(),
       hrr60: new Map()
     }
@@ -145,7 +144,6 @@ function useAnalysisSeries(): Record<string, Map<string, number>> {
       if (!w.computed) continue
       const day = localDateKey(w.start_at, tz)
       const pairs: [string, number | null][] = [
-        ['ef', w.computed.ef],
         ['decoupling', w.computed.decoupling_pct],
         ['hrr60', w.computed.hrr60]
       ]
@@ -187,7 +185,9 @@ export function InsightsView(): ReactElement {
   })
   const series = useAnalysisSeries()
 
-  const correlations = correlationsQuery.data ?? []
+  const correlations = (correlationsQuery.data ?? []).filter(
+    (correlation) => correlation.var_y !== 'ef'
+  )
   const byKey = new Map(correlations.map((c) => [`${c.var_x}|${c.var_y}|${c.lag_days}`, c]))
 
   const scatterPoints = useMemo(() => {
@@ -208,13 +208,14 @@ export function InsightsView(): ReactElement {
     (model) => model.name === 'daily_adjusted_finder'
   )
   const finderDiagnostics = finderModel?.diagnostics as unknown as {
-    candidate_count?: number
     signal_count?: number
     watch_count?: number
     candidates?: FinderCandidate[]
     caveat?: string
   } | null
-  const finderCandidates = finderDiagnostics?.candidates ?? []
+  const finderCandidates = (finderDiagnostics?.candidates ?? []).filter(
+    (candidate) => candidate.outcome !== 'ef'
+  )
   const surfacedCandidates = finderCandidates.filter(
     (candidate) => candidate.status === 'signal' || candidate.status === 'watch'
   )
@@ -234,11 +235,13 @@ export function InsightsView(): ReactElement {
     },
     {
       label: 'Workout performance',
-      value: Math.max(series.ef?.size ?? 0, series.decoupling?.size ?? 0, series.hrr60?.size ?? 0),
+      value: Math.max(series.decoupling?.size ?? 0, series.hrr60?.size ?? 0),
       detail: 'days with a computed outcome'
     }
   ]
-  const genericModels = models.filter((model) => model.name !== 'daily_adjusted_finder')
+  const genericModels = models.filter(
+    (model) => model.name !== 'daily_adjusted_finder' && model.name !== 'ef_on_sleep_dlm'
+  )
 
   return (
     <div className="view insights-view">
@@ -273,7 +276,7 @@ export function InsightsView(): ReactElement {
           </div>
           {finderDiagnostics && (
             <span className="insights-finder-count tabular-nums">
-              {finderDiagnostics.candidate_count ?? finderCandidates.length} screened
+              {finderCandidates.length} screened
             </span>
           )}
         </div>

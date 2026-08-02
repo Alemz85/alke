@@ -287,26 +287,20 @@ def run(full: bool) -> None:
 
 
 def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, list[float]]]:
-    """Per-day performance readings: EF / decoupling / HRR60 collected over that
-    day's workouts (averaged downstream). The EF series is SWIM-ONLY: ef_eligibility
-    now spans swim, bike AND run (bike/run EF feed the zone2 durable calibration),
-    but a per-day average mixing swim EF (~0.5–1.5 m/min/bpm) with bike/run EF
-    (higher, and mutually incomparable) would be incomparable units and corrupt the
-    correlation/DLM series; gating on swim preserves its original meaning. The
-    zone2 model instead consumes bike EF and run EF as SEPARATE signals, each with
-    its own baseline/top. Decoupling and HRR60 are relative/HR-domain quantities
-    and stay cross-sport."""
+    """Per-day decoupling / HRR60 readings collected over that day's workouts.
+
+    EF stays descriptive at workout level. In addition to having incomparable
+    units across sports, swim EF confounds technique reacquisition with aerobic
+    state; a larger n does not resolve that identification problem. Decoupling
+    and HRR60 are relative/HR-domain quantities and remain cross-sport."""
     perf_by_date: dict[date, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for w in all_workouts:
         perf = perf_by_id.get(w["id"])
         if not perf:
             continue
         day = local_date(w["start_at"], tz)
-        is_swim = "swim" in (w.get("type") or "").lower()
-        for key, col in (("ef", "ef"), ("decoupling_pct", "decoupling"), ("hrr60", "hrr60")):
+        for key, col in (("decoupling_pct", "decoupling"), ("hrr60", "hrr60")):
             if perf[key] is None:
-                continue
-            if col == "ef" and not is_swim:
                 continue
             perf_by_date[day][col].append(float(perf[key]))
     return perf_by_date
@@ -318,12 +312,12 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     from metrics.insights import (
         compute_correlations,
         discover_adjusted_insights,
-        ef_dlm,
         weight_series,
         zscore_trailing,
     )
 
-    # per-day performance: EF (swim-only) / decoupling / HRR60 per day
+    # Per-day inferential outcomes. EF remains descriptive because swim EF
+    # cannot distinguish technique reacquisition from aerobic change.
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     perf_by_date = perf_series_by_date(all_workouts, perf_by_id, tz)
 
@@ -352,7 +346,6 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
             "ctl": [r["ctl"] for r in daily_rows],
             "atl": [r["atl"] for r in daily_rows],
             "trimp_total": [r["trimp_total"] for r in daily_rows],
-            "ef": [pd.Series(perf_by_date[d]["ef"]).mean() if perf_by_date[d]["ef"] else None for d in index],
             "decoupling": [
                 pd.Series(perf_by_date[d]["decoupling"]).mean() if perf_by_date[d]["decoupling"] else None
                 for d in index
@@ -403,12 +396,9 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
         f"placebo fired {diag['placebo']['signal_count']}/{diag['placebo']['tested']})"
     )
 
-    model = ef_dlm(frame)
-    if model is not None:
-        db.upsert_insight_model(sb, model)
-        print(f"insight_models: ef_on_sleep_dlm (n={model['diagnostics']['n']})")
-    else:
-        print("insight_models: skipped (fewer than 40 EF observations)")
+    # Retire the old EF-on-sleep row as well as stopping future computation;
+    # upserts alone would otherwise leave a stale model visible indefinitely.
+    db.delete_insight_model(sb, "ef_on_sleep_dlm")
 
 
 def iso_weeks_spanning(days: list[date]) -> list[tuple[int, int]]:

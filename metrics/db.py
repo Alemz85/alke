@@ -192,6 +192,10 @@ def upsert_insight_model(sb: Client, row: dict) -> None:
     sb.table("insight_models").upsert(row).execute()
 
 
+def delete_insight_model(sb: Client, name: str) -> None:
+    sb.table("insight_models").delete().eq("name", name).execute()
+
+
 def fetch_insight_model(sb: Client, name: str) -> dict | None:
     """Previous nightly row for one model — the adjusted finder reads its own
     persistence (hysteresis) state back out of diagnostics."""
