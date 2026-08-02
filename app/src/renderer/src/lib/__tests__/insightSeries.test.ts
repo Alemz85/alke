@@ -3,13 +3,52 @@ import {
   buildInsightScatter,
   insightAxis,
   insightWindowStart,
+  rollingCalendarCircularDeviation,
   rollingCalendarMedianDeviation,
   rollingCalendarMedianDelta,
   priorTrainingDensity,
   rollingWeightTrend,
   sleepAwakeFraction,
+  sleepInsightEligible,
   sleepMidpointHours
 } from '../insightSeries'
+
+describe('sleepInsightEligible', () => {
+  const valid = {
+    sleepStart: '2026-01-01T22:00:00Z',
+    sleepEnd: '2026-01-02T06:00:00Z',
+    durationMinutes: 420,
+    stages: { core: 4, deep: 1, rem: 2, awake: 1 }
+  }
+
+  it('rejects naps, stitched spans, and awake-only aggregates', () => {
+    expect(sleepInsightEligible(valid)).toBe(true)
+    expect(sleepInsightEligible({ ...valid, durationMinutes: 120 })).toBe(false)
+    expect(sleepInsightEligible({ ...valid, sleepStart: '2026-01-01T14:00:00Z' })).toBe(false)
+    expect(
+      sleepInsightEligible({
+        ...valid,
+        stages: { core: 0, deep: 0, rem: 0, awake: 7 }
+      })
+    ).toBe(false)
+  })
+})
+
+describe('rollingCalendarCircularDeviation', () => {
+  it('treats clock times on opposite sides of midnight as neighbors', () => {
+    const values = new Map(
+      Array.from({ length: 15 }, (_, index) => [
+        `2026-01-${String(index + 1).padStart(2, '0')}`,
+        index === 14 ? 1.5 : index % 2 === 0 ? 23.5 : 0.5
+      ])
+    )
+
+    expect(rollingCalendarCircularDeviation(values, 28, 14).get('2026-01-15')).toBeCloseTo(
+      1.5,
+      1
+    )
+  })
+})
 
 describe('priorTrainingDensity', () => {
   it('uses the preceding seven calendar days, is scale-free, and omits all-rest weeks', () => {

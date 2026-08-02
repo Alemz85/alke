@@ -347,6 +347,54 @@ def workout_duration_by_date(all_workouts, tz) -> dict[date, float]:
 
 
 SLEEP_END_OFFSET_KEY = "_sleep_end_timezone_offset_min"
+MIN_SLEEP_INSIGHT_DURATION_MIN = 180.0
+MAX_SLEEP_UNACCOUNTED_MIN = 180.0
+MAX_SLEEP_DURATION_OVER_SPAN_MIN = 15.0
+
+
+def sleep_insight_eligible(row: dict) -> bool:
+    """Return whether an aggregate is plausible main sleep for inference.
+
+    HAE can label naps, awake-only episodes, or multiple sleep episodes joined
+    by a long daytime gap with one daily date. Those records remain useful for
+    display, but treating them as the night's sleep would contaminate every
+    duration, timing, continuity, and pre-workout hypothesis.
+    """
+    try:
+        duration = float(row.get("sleep_duration_min"))
+        start = datetime.fromisoformat(row["sleep_start"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00"))
+        span_minutes = (end.timestamp() - start.timestamp()) / 60.0
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    if (
+        not math.isfinite(duration)
+        or not math.isfinite(span_minutes)
+        or duration < MIN_SLEEP_INSIGHT_DURATION_MIN
+        or span_minutes <= 0
+        or duration > span_minutes + MAX_SLEEP_DURATION_OVER_SPAN_MIN
+        or span_minutes - duration > MAX_SLEEP_UNACCOUNTED_MIN
+    ):
+        return False
+
+    stages = row.get("sleep_stages")
+    if not isinstance(stages, dict):
+        return True
+    known_stages = ("awake", "core", "deep", "rem")
+    if not any(name in stages for name in known_stages):
+        return True
+    parsed: dict[str, float] = {}
+    for name in known_stages:
+        if name not in stages:
+            parsed[name] = 0.0
+            continue
+        try:
+            parsed[name] = float(stages[name])
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(parsed[name]) or parsed[name] < 0:
+            return False
+    return sum(parsed[name] for name in ("core", "deep", "rem")) > 0
 
 
 def sleep_clock_timezone(row: dict, configured_tz, end: datetime):
@@ -442,29 +490,42 @@ def build_daily_insight_frame(
     """Build the temporal-contract daily frame without database writes."""
     import pandas as pd
 
-    from metrics.insights import prior_rolling_deviation, weight_series
+    from metrics.insights import (
+        prior_rolling_circular_deviation,
+        prior_rolling_deviation,
+        weight_series,
+    )
 
     dm_by_date = {date.fromisoformat(row["date"]): row for row in daily_metrics}
     index = [date.fromisoformat(row["date"]) for row in daily_rows]
+    eligible_sleep = {
+        day: sleep_insight_eligible(row) for day, row in dm_by_date.items()
+    }
     frame = pd.DataFrame(
         {
             "sleep_duration": [
-                (dm_by_date.get(day) or {}).get("sleep_duration_min") for day in index
+                (dm_by_date.get(day) or {}).get("sleep_duration_min")
+                if eligible_sleep.get(day, False) else None
+                for day in index
             ],
             "sleep_midpoint": [
-                sleep_midpoint_hours(dm_by_date[day], tz) if day in dm_by_date else None
+                sleep_midpoint_hours(dm_by_date[day], tz)
+                if eligible_sleep.get(day, False) else None
                 for day in index
             ],
             "sleep_awake_fraction": [
-                sleep_awake_fraction(dm_by_date[day]) if day in dm_by_date else None
+                sleep_awake_fraction(dm_by_date[day])
+                if eligible_sleep.get(day, False) else None
                 for day in index
             ],
             "wake_hour": [
-                wake_clock_hours(dm_by_date[day], tz) if day in dm_by_date else None
+                wake_clock_hours(dm_by_date[day], tz)
+                if eligible_sleep.get(day, False) else None
                 for day in index
             ],
             "wake_at_epoch": [
-                wake_epoch(dm_by_date[day]) if day in dm_by_date else None
+                wake_epoch(dm_by_date[day])
+                if eligible_sleep.get(day, False) else None
                 for day in index
             ],
             "respiratory_rate": [
@@ -536,7 +597,10 @@ def build_daily_insight_frame(
     frame["sleep_shortfall_3d"] = frame["sleep_shortfall"].rolling(
         window=3, min_periods=3
     ).mean()
-    frame["sleep_midpoint_dev"] = prior_rolling_deviation(frame["sleep_midpoint"]).abs()
+    frame["sleep_midpoint_shift"] = prior_rolling_circular_deviation(
+        frame["sleep_midpoint"]
+    )
+    frame["sleep_midpoint_dev"] = frame["sleep_midpoint_shift"].abs()
     frame["respiratory_rate_dev"] = prior_rolling_deviation(frame["respiratory_rate"])
 
     if any("weight_kg" in (row or {}) for row in daily_metrics):
@@ -662,10 +726,12 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     rows: list[dict] = []
     sleep_context_columns = {
         "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
+        "sleep_midpoint_shift",
         "sleep_awake_fraction", "respiratory_rate_dev",
     }
     context_columns = (
         "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
+        "sleep_midpoint_shift",
         "sleep_awake_fraction",
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior", "high_zone_fraction_prior",
@@ -867,7 +933,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=8)
+    prior_state = insight_prior_state(prior, expected_version=9)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -880,7 +946,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=13)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=14)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

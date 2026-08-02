@@ -18,10 +18,11 @@ import {
   insightAxis,
   insightWindowStart,
   priorTrainingDensity,
-  rollingCalendarMedianDeviation,
+  rollingCalendarCircularDeviation,
   rollingCalendarMedianDelta,
   rollingWeightTrend,
   sleepAwakeFraction,
+  sleepInsightEligible,
   sleepMidpointHours
 } from '../lib/insightSeries'
 import {
@@ -37,6 +38,7 @@ import './InsightsView.css'
 const DRIVERS = [
   { key: 'sleep_shortfall', label: 'Sleep shortfall' },
   { key: 'sleep_midpoint_dev', label: 'Sleep timing drift' },
+  { key: 'sleep_midpoint_shift', label: 'Sleep timing shift' },
   { key: 'sleep_awake_fraction', label: 'Sleep awake fraction' },
   { key: 'rhr_dev', label: 'RHR deviation' },
   { key: 'hrv_dev', label: 'HRV deviation' },
@@ -192,12 +194,18 @@ function useAnalysisSeries(): {
     const dailyRows = [...(daily.data ?? [])].sort((a, b) => a.date.localeCompare(b.date))
     const dailyByDate = new Map(dailyRows.map((row) => [row.date, row]))
     for (const m of dailyRows) {
-      put('sleep_duration', m.date, m.sleep_duration_min)
-      put('sleep_awake_fraction', m.date, sleepAwakeFraction(m.sleep_stages))
       put('respiratory_rate', m.date, m.respiratory_rate)
       put('steps', m.date, m.steps)
       put('flights', m.date, m.flights_climbed)
-      if (m.sleep_start && m.sleep_end) {
+      const eligibleSleep = sleepInsightEligible({
+        sleepStart: m.sleep_start,
+        sleepEnd: m.sleep_end,
+        durationMinutes: m.sleep_duration_min,
+        stages: m.sleep_stages
+      })
+      if (eligibleSleep && m.sleep_start && m.sleep_end) {
+        put('sleep_duration', m.date, m.sleep_duration_min)
+        put('sleep_awake_fraction', m.date, sleepAwakeFraction(m.sleep_stages))
         const recordedOffset = m.sleep_stages?.['_sleep_end_timezone_offset_min']
         put(
           'sleep_midpoint',
@@ -232,12 +240,13 @@ function useAnalysisSeries(): {
     )) {
       put('sleep_shortfall', date, -delta)
     }
-    for (const [date, deviation] of rollingCalendarMedianDeviation(
+    for (const [date, shift] of rollingCalendarCircularDeviation(
       series.sleep_midpoint ?? new Map(),
       28,
       14
     )) {
-      put('sleep_midpoint_dev', date, deviation)
+      put('sleep_midpoint_shift', date, shift)
+      put('sleep_midpoint_dev', date, Math.abs(shift))
     }
     for (const [date, delta] of rollingCalendarMedianDelta(
       series.respiratory_rate ?? new Map(),
@@ -333,7 +342,7 @@ export function InsightsView(): ReactElement {
       )
   )
   const correlationSchemaCurrent = storedCorrelations.some(
-    (correlation) => correlation.var_x === 'training_density_7d_prior'
+    (correlation) => correlation.var_x === 'sleep_midpoint_shift'
   )
   const correlations = (correlationSchemaCurrent ? storedCorrelations : []).filter((correlation) => {
     if (correlation.var_y !== 'trimp_total') return true
@@ -380,14 +389,14 @@ export function InsightsView(): ReactElement {
       key: 'daily',
       title: 'Daily physiology',
       detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
-      expectedVersion: 8,
+      expectedVersion: 9,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {
       key: 'workout',
       title: 'Workout context',
       detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
-      expectedVersion: 13,
+      expectedVersion: 14,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {

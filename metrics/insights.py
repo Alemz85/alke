@@ -22,7 +22,8 @@ MIN_CORR_N = 20
 MIN_ADJUSTED_N = 60
 
 DRIVERS = [
-    "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
+    "sleep_shortfall", "sleep_midpoint_dev", "sleep_midpoint_shift",
+    "sleep_awake_fraction",
     "rhr_dev", "hrv_dev", "respiratory_rate_dev", "trimp_prior", "steps_prior",
     "flights_prior", "training_density_7d_prior",
 ]
@@ -133,6 +134,23 @@ DEFAULT_ADJUSTED_SPECS = [
         for outcome, label in _CO_MEASURED_PHYSIOLOGY_OUTCOMES
     ],
     {
+        "name": "phase_shift_to_sleep_shortfall",
+        "label": "Later sleep timing ↔ shortfall",
+        "driver": "sleep_midpoint_shift", "outcome": "sleep_shortfall",
+        "controls": ["lag:sleep_shortfall", "atl_prior"],
+        "direction": "co-measured",
+    },
+    *[
+        {
+            "name": f"phase_shift_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
+            "label": f"Later sleep timing ↔ {label}",
+            "driver": "sleep_midpoint_shift", "outcome": outcome,
+            "controls": [f"lag:{outcome}", "atl_prior"],
+            "direction": "co-measured",
+        }
+        for outcome, label in _CO_MEASURED_PHYSIOLOGY_OUTCOMES
+    ],
+    {
         "name": "timing_to_sleep_shortfall", "label": "Sleep timing drift ↔ shortfall",
         "driver": "sleep_midpoint_dev", "outcome": "sleep_shortfall",
         "controls": ["lag:sleep_shortfall", "atl_prior"], "direction": "co-measured",
@@ -186,6 +204,7 @@ _WORKOUT_READINESS = (
     ("sleep_shortfall", "Sleep shortfall"),
     ("sleep_shortfall_3d", "Three-night mean sleep shortfall"),
     ("sleep_midpoint_dev", "Sleep timing drift"),
+    ("sleep_midpoint_shift", "Later sleep timing"),
     ("sleep_awake_fraction", "Sleep awake fraction"),
     ("rhr_dev_prior", "Previous-day RHR deviation"),
     ("hrv_dev_prior", "Previous-day HRV deviation"),
@@ -444,6 +463,43 @@ def prior_rolling_deviation(
     numeric = pd.to_numeric(series, errors="coerce")
     baseline = numeric.rolling(f"{days}D", min_periods=min_periods, closed="left").median()
     return numeric - baseline
+
+
+def prior_rolling_circular_deviation(
+    series: pd.Series,
+    days: int = 28,
+    min_periods: int = 14,
+) -> pd.Series:
+    """Signed clock-hour deviation from a robust prior circular baseline.
+
+    A circular mean supplies an unwrap center; the median of the unwrapped
+    prior values preserves the outlier resistance of the linear baseline.
+    Results are wrapped to [-12, 12), so 23:30 and 00:30 are one hour apart.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    result = pd.Series(np.nan, index=numeric.index, dtype=float)
+    for position, (timestamp, current) in enumerate(numeric.items()):
+        if pd.isna(current):
+            continue
+        window_start = timestamp - pd.Timedelta(days=days)
+        prior = numeric.loc[
+            (numeric.index >= window_start) & (numeric.index < timestamp)
+        ].dropna()
+        if len(prior) < min_periods:
+            continue
+        hours = np.mod(prior.to_numpy(dtype=float), 24.0)
+        angles = hours * 2.0 * math.pi / 24.0
+        mean_sin = float(np.mean(np.sin(angles)))
+        mean_cos = float(np.mean(np.cos(angles)))
+        if math.hypot(mean_sin, mean_cos) <= 1e-9:
+            continue
+        center = (math.atan2(mean_sin, mean_cos) % (2.0 * math.pi)) * 24.0 / (
+            2.0 * math.pi
+        )
+        unwrapped = center + ((hours - center + 12.0) % 24.0 - 12.0)
+        baseline = float(np.median(unwrapped))
+        result.iloc[position] = (float(current) - baseline + 12.0) % 24.0 - 12.0
+    return result
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -1163,13 +1219,14 @@ def discover_adjusted_insights(
         "spec": (
             "Predeclared partial associations; weekday + annual season + time trend + candidate-specific "
             "prior-state/load controls; scale-free prior-week training-time distribution tests; "
+            "main-sleep eligibility + circular signed/absolute sleep-timing baselines; "
             "HAC (Newey-West) CI; effective-n floor; BH FDR; "
             "moving-block bootstrap sign stability; collinear-driver suppression; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 8,
+            "model_version": 9,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1198,6 +1255,8 @@ def discover_adjusted_insights(
                 "finalized full-day aggregates, so same-date relationships are co-measured, "
                 "never pre-workout readiness. Local sleep-clock features use Apple's recorded "
                 "sleep offset when available, preventing travel from masquerading as timing drift. "
+                "Sleep hypotheses exclude sub-three-hour, awake-only, and stitched aggregates; "
+                "signed timing is circular, with positive values meaning later than baseline. "
                 "Prior-week training-time spread is defined only when that week contains a "
                 "workout and is adjusted for the week's total recorded duration. "
                 "High-zone composition is defined only on training "
@@ -1347,7 +1406,7 @@ def discover_workout_context_insights(
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
             "HR-independent same-day prior-duration control; "
             "recorded-offset local clock + instant elapsed-since-wake; "
-            "wake-ordered sleep context; outcome-specific HR completeness gates; "
+            "wake-ordered sleep context with main-sleep eligibility; outcome-specific HR completeness gates; "
             "scale-free prior-week training-time distribution with total-duration adjustment; "
             "measured-time HR intensity + Apple energy-intensity outcome; "
             "joint 24-hour sine/cosine timing tests; "
@@ -1357,7 +1416,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 13,
+            "model_version": 14,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1400,6 +1459,8 @@ def discover_workout_context_insights(
                 "Clock time and calendar date use HAE's verified recorded offset when available, "
                 "while recovery intervals use absolute instants. Local sleep-clock features "
                 "likewise prefer the recorded sleep offset during travel. "
+                "Sleep context excludes sub-three-hour, awake-only, and stitched aggregates; "
+                "signed timing is circular, with positive values meaning later than baseline. "
                 "Prior-week training-time spread is undefined for all-rest weeks and adjusted "
                 "for total seven-day duration, so it does not substitute frequency for volume. "
                 "Previous-day high-zone composition exists only when every workout on that day "

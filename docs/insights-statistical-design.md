@@ -75,6 +75,15 @@ rules remain exact. The offset is stored inside the atomic sleep JSON group,
 and archived values are backfilled only when both stored sleep instants exactly
 match the raw aggregate.
 
+Daily sleep aggregates are not automatically treated as the night's main
+sleep. A row enters any sleep hypothesis only when it lasts at least three
+hours, has valid ordered start/end instants, its reported duration does not
+exceed the elapsed span by more than 15 minutes, and no more than three hours
+of the span is unaccounted for. When Apple stages are present, core + deep + REM
+must be positive. This fixed measurement-quality contract excludes naps,
+awake-only exports, and widely separated episodes stitched into one span. The
+rows remain stored and visible; only inferential sleep features are missing.
+
 ## Daily recovery families
 
 ### Prior-day behavior to next sleep/recovery
@@ -113,11 +122,17 @@ larger overall dose.
 
 ### Co-measured sleep and recovery
 
-Sleep shortfall, sleep-midpoint drift, and sleep awake fraction are screened
-against RHR, HRV, and respiratory-rate deviation. These are explicitly
-labelled co-measured associations. For RHR/HRV, “co-measured” means same-date
-association with a finalized full-day aggregate, not a morning-readiness
-measurement. Prior ATL and the previous outcome are controls.
+Sleep shortfall, sleep-midpoint drift, signed sleep-midpoint shift, and sleep
+awake fraction are screened against RHR, HRV, and respiratory-rate deviation.
+Clock time is circular: a 23:55 midpoint is close to 00:05. The baseline first
+uses the circular mean of the prior 28 calendar days as an unwrap center, then
+the median of those unwrapped values for robustness. Signed shift is wrapped
+to [-12, 12) hours (positive means later than usual); drift is its absolute
+magnitude. Keeping both distinguishes a direction-specific phase association
+from irregular timing in either direction. These are explicitly labelled
+co-measured associations. For RHR/HRV, “co-measured” means same-date association
+with a finalized full-day aggregate, not a morning-readiness measurement.
+Prior ATL and the previous outcome are controls.
 
 ## Workout-context families
 
@@ -167,7 +182,7 @@ power; it is a device estimate. These outcomes answer how hard the recorded
 session was, conditional on doing a workout.
 
 Workout readiness candidates relate sleep shortfall, three-night mean
-shortfall, sleep timing drift, sleep awake fraction,
+shortfall, sleep timing drift, signed sleep timing shift, sleep awake fraction,
 previous-day finalized RHR/HRV, sleep-associated respiratory-rate deviation,
 and previous-day high-zone fraction to duration, TRIMP per measured HR minute,
 and Apple energy intensity. The high-zone candidate controls total prior-day
@@ -269,8 +284,9 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 8 and workout model version 13 enforce the
-prior-day rule above and preserve recorded local sleep time during travel.
+workout. Daily model version 9 and workout model version 14 enforce the
+prior-day rule above, preserve recorded local sleep time during travel, reject
+non-main-sleep aggregates, and use circular signed/absolute timing baselines.
 These versions also retain the fully measured,
 training-day-conditional high-zone composition exposure. Workout version 9
 separates duration from HR-outcome eligibility, normalizes HR intensity by
@@ -282,7 +298,8 @@ high-zone fraction as well as average HR-zone and energy intensity.
 
 - 577 daily rows are present; steps and walking distance are complete, while
   flights climbed has 442 days.
-- Sleep has 281 days, RHR 259, HRV 311, and respiratory rate 286. RHR/HRV are
+- Sleep has 281 stored aggregates, of which 274 pass the main-sleep inference
+  contract; RHR has 259 days, HRV 311, and respiratory rate 286. RHR/HRV are
   eligible as co-measured daily aggregates and prior-day predictors, not as
   same-day readiness measurements.
 - Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
@@ -300,7 +317,7 @@ high-zone fraction as well as average HR-zone and energy intensity.
   90% coverage gate. The six failures are outdoor walks with only 60.5%–87.8%
   coverage; leaving the old denominator in place would have made those gaps
   look like low effort.
-- There are 27 multi-session dates and 34 later same-day sessions. Version 13
+- There are 27 multi-session dates and 34 later same-day sessions. Version 14
   controls duration accumulated before each later session independently of HR
   coverage; an unmeasured earlier workout can no longer masquerade as no prior
   same-day work.
@@ -314,9 +331,14 @@ high-zone fraction as well as average HR-zone and energy intensity.
   10 uses the recorded local hour for those sessions, while exact hours since
   waking and recovery gaps remain unchanged. No current workout crosses a date
   boundary under the correction, and no model verdict changes.
-- All 281 stored sleep nights match an archived raw aggregate exactly. Seven
+- All 281 stored sleep aggregates match an archived raw aggregate exactly.
+  Seven are not plausible main sleep: three are sub-three-hour or awake-only
+  episodes and four are stitched spans with more than three unaccounted hours
+  (one in 2025, the rest in early 2026). They remain visible but cannot
+  contribute duration, midpoint, continuity, wake-time, or readiness values.
+  A different set of seven
   Travel-week nights retained `+0100` while Berlin was `+0200`; the old
-  sleep-midpoint and wake-clock values were one hour late. Versions 8/13 use
+  sleep-midpoint and wake-clock values were one hour late. Versions 9/14 use
   the recorded sleep offset for local-clock features. Absolute sleep duration
   and wake-to-workout intervals were already correct.
 - Duration candidates now use measurements according to their own semantics:
@@ -324,14 +346,14 @@ high-zone fraction as well as average HR-zone and energy intensity.
   and prior acute load / previous-workout gap have 217 on 184. Corresponding
   intensity candidates retain only HR-quality rows (85/58, 93/67, and 95/68,
   respectively). Three-night sleep shortfall remains dormant for both duration
-  (71/46) and intensity (65/43). None clears multiplicity and stability gates;
+  (64/43) and intensity (58/40). None clears multiplicity and stability gates;
   greater eligibility is not evidence of an effect.
 - Apple energy intensity exists for 110 sessions on 77 dates across strength,
   rowing, cycling, walking, swimming, surfing, and one indoor run. It overlaps
   102 HR-quality sessions but correlates only 0.67 with HR-zone intensity, so it
-  is related rather than redundant. Four of its 11 candidates are currently
-  testable; none clears the gates. The expanded 49-candidate workout family has
-  15 testable candidates, zero raw signals or watches, and zero of 45 tested
+  is related rather than redundant. None of its candidates clears the gates.
+  The expanded 57-candidate workout family has 17 testable candidates, zero
+  raw signals or watches, and zero of 56 tested
   shifted placebos fires.
 - High-zone composition is known for 69 prior-workout exposure days, only 25
   of which contain any zone 4–5 time. The next-recovery candidates currently
@@ -343,10 +365,16 @@ high-zone fraction as well as average HR-zone and energy intensity.
   adjusted cases;
   none clears the gates. Workout duration has 173/142 sessions/dates and Apple
   energy intensity has 91/62, so both are testable; HR-zone outcomes remain
-  dormant at 84/59. The expanded daily family has 27 candidates (24 testable,
-  five raw signals still awaiting persistence; one of 66 shifted placebos
-  fires). The workout family has 53 candidates (17 testable, no raw signal;
-  zero of 53 shifted placebos fires).
+  dormant at 84/59. The expanded daily family has 31 candidates (28 testable,
+  two raw signals and one watch still awaiting persistence; one of 78 shifted
+  placebos fires). The workout family has 57 candidates (17 testable, no raw
+  signal or watch; zero of 56 shifted placebos fires).
+- Circular signed sleep phase is defined on 235 dates and correlates only 0.17
+  with absolute timing drift, confirming that it asks a distinct question.
+  Its four daily candidates have 166–222 adjusted observations; none is clear
+  after FDR (q = 0.31–0.69). Workout duration and Apple energy candidates have
+  82 sessions on 55 dates, while HR-zone outcomes have 76 on 52; all remain
+  dormant under the fixed 60-date rule.
 - Raw average HR exists for 110 recent sessions but correlates 0.83 with the
   measured-time zone-intensity outcome. It is not added as another hypothesis:
   it would duplicate that outcome while losing the swim HR offset applied by

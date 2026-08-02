@@ -166,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 8
+    assert model["diagnostics"]["model_version"] == 9
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 13
+    assert model["diagnostics"]["model_version"] == 14
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1000,6 +1000,29 @@ def test_default_specs_cover_respiration_continuity_and_relative_sleep():
     } <= names
 
 
+def test_default_specs_distinguish_signed_sleep_phase_from_irregularity():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS, DRIVERS
+
+    assert "sleep_midpoint_shift" in DRIVERS
+    daily = {
+        spec["outcome"]
+        for spec in DEFAULT_ADJUSTED_SPECS
+        if spec.get("driver") == "sleep_midpoint_shift"
+    }
+    workout = {
+        spec["outcome"]
+        for spec in DEFAULT_WORKOUT_SPECS
+        if spec.get("driver") == "sleep_midpoint_shift"
+    }
+    assert daily == {
+        "sleep_shortfall", "rhr_dev", "hrv_dev", "respiratory_rate_dev",
+    }
+    assert workout == {
+        "workout_duration", "workout_intensity", "energy_intensity",
+        "high_zone_fraction",
+    }
+
+
 def test_daily_aggregate_hr_is_never_treated_as_same_day_readiness():
     from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS
 
@@ -1225,6 +1248,68 @@ def test_daily_insight_frame_masks_rolling_recovery_on_unmeasured_days():
     assert frame.loc["2026-01-01", "hrv_dev"] == pytest.approx(-2.0)
     assert pd.isna(frame.loc["2026-01-02", "rhr_dev"])
     assert pd.isna(frame.loc["2026-01-02", "hrv_dev"])
+
+
+def test_sleep_insight_eligibility_rejects_naps_stitched_spans_and_awake_only_rows():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_daily_insight_frame, sleep_insight_eligible
+
+    valid = {
+        "sleep_start": "2026-01-01T22:00:00Z",
+        "sleep_end": "2026-01-02T06:00:00Z",
+        "sleep_duration_min": 420.0,
+        "sleep_stages": {"core": 4.0, "deep": 1.0, "rem": 2.0, "awake": 1.0},
+    }
+    assert sleep_insight_eligible(valid) is True
+    assert sleep_insight_eligible({**valid, "sleep_duration_min": 120.0}) is False
+    assert sleep_insight_eligible({
+        **valid,
+        "sleep_start": "2026-01-01T14:00:00Z",
+    }) is False
+    assert sleep_insight_eligible({
+        **valid,
+        "sleep_stages": {"core": 0, "deep": 0, "rem": 0, "awake": 7.0},
+    }) is False
+
+    variants = [
+        valid,
+        {**valid, "sleep_duration_min": 120.0},
+        {**valid, "sleep_start": "2026-01-01T14:00:00Z"},
+        {**valid, "sleep_stages": {"core": 0, "deep": 0, "rem": 0, "awake": 7.0}},
+    ]
+    daily_metrics = [
+        {**row, "date": f"2026-01-0{index + 1}"}
+        for index, row in enumerate(variants)
+    ]
+    daily_rows = [
+        {
+            "date": row["date"], "rhr_dev": None, "hrv_dev": None,
+            "ctl": 0.0, "atl": 0.0, "trimp_total": 0.0,
+        }
+        for row in daily_metrics
+    ]
+    frame = build_daily_insight_frame(daily_metrics, daily_rows, ZoneInfo("UTC"))
+
+    assert frame.loc["2026-01-01", "sleep_duration"] == pytest.approx(420.0)
+    for day in ("2026-01-02", "2026-01-03", "2026-01-04"):
+        assert frame.loc[day, [
+            "sleep_duration", "sleep_midpoint", "sleep_awake_fraction",
+            "wake_hour", "wake_at_epoch",
+        ]].isna().all()
+
+
+def test_circular_sleep_deviation_treats_midnight_neighbors_as_close():
+    from metrics.insights import prior_rolling_circular_deviation
+
+    dates = pd.date_range("2026-01-01", periods=15, freq="D")
+    values = [23.5 if i % 2 == 0 else 0.5 for i in range(14)] + [1.5]
+    deviations = prior_rolling_circular_deviation(
+        pd.Series(values, index=dates), days=28, min_periods=14
+    )
+
+    assert deviations.iloc[-1] == pytest.approx(1.5, abs=0.05)
+    assert deviations.iloc[:-1].isna().sum() == 14
 
 
 def test_daily_insight_frame_uses_scale_free_prior_week_training_density():
@@ -1755,7 +1840,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [8, 13]
+    assert expected_versions == [9, 14]
 
 
 def test_persistence_state_never_crosses_model_versions():

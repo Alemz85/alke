@@ -3,11 +3,60 @@ import { scaleLinear } from 'd3-scale'
 import { addDays, todayYMD, toZonedYMD, ymdKey } from '../hooks/sessionsDate'
 
 const CORRELATION_WINDOW_DAYS = 180
+const MIN_SLEEP_INSIGHT_DURATION_MIN = 180
+const MAX_SLEEP_UNACCOUNTED_MIN = 180
+const MAX_SLEEP_DURATION_OVER_SPAN_MIN = 15
 
 export interface InsightScatterPoint {
   x: number
   y: number
   date: string
+}
+
+export interface SleepInsightInput {
+  sleepStart: string | null
+  sleepEnd: string | null
+  durationMinutes: number | null
+  stages: Record<string, unknown> | null
+}
+
+/** Keep naps, stitched episodes, and awake-only rows out of sleep inference. */
+export function sleepInsightEligible(input: SleepInsightInput): boolean {
+  const startMs = input.sleepStart ? Date.parse(input.sleepStart) : Number.NaN
+  const endMs = input.sleepEnd ? Date.parse(input.sleepEnd) : Number.NaN
+  const duration = input.durationMinutes
+  if (
+    duration === null ||
+    !Number.isFinite(duration) ||
+    duration < MIN_SLEEP_INSIGHT_DURATION_MIN ||
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    endMs <= startMs
+  ) {
+    return false
+  }
+  const spanMinutes = (endMs - startMs) / 60_000
+  if (
+    duration > spanMinutes + MAX_SLEEP_DURATION_OVER_SPAN_MIN ||
+    spanMinutes - duration > MAX_SLEEP_UNACCOUNTED_MIN
+  ) {
+    return false
+  }
+
+  const stages = input.stages
+  const knownStages = ['awake', 'core', 'deep', 'rem'] as const
+  if (!stages || !knownStages.some((name) => Object.hasOwn(stages, name))) return true
+  const parsed = new Map<string, number>()
+  for (const name of knownStages) {
+    if (!Object.hasOwn(stages, name)) {
+      parsed.set(name, 0)
+      continue
+    }
+    const value = Number(stages[name])
+    if (!Number.isFinite(value) || value < 0) return false
+    parsed.set(name, value)
+  }
+  return ['core', 'deep', 'rem'].reduce((sum, name) => sum + (parsed.get(name) ?? 0), 0) > 0
 }
 
 /**
@@ -165,6 +214,46 @@ export function rollingCalendarMedianDelta(
     const median =
       window.length % 2 ? window[middle] : (window[middle - 1] + window[middle]) / 2
     deviations.set(entries[i][0], entries[i][1] - median)
+  }
+  return deviations
+}
+
+function signedClockDelta(value: number, baseline: number): number {
+  return (((value - baseline + 12) % 24) + 24) % 24 - 12
+}
+
+/** Signed clock-hour deviation from a robust prior circular baseline. */
+export function rollingCalendarCircularDeviation(
+  values: Map<string, number>,
+  windowDays: number,
+  minPeriods: number
+): Map<string, number> {
+  const entries = [...values.entries()].sort(([left], [right]) => left.localeCompare(right))
+  const deviations = new Map<string, number>()
+  let left = 0
+  for (let i = 0; i < entries.length; i++) {
+    const currentMs = Date.parse(`${entries[i][0]}T00:00:00Z`)
+    while (
+      left < i &&
+      currentMs - Date.parse(`${entries[left][0]}T00:00:00Z`) >
+        windowDays * 86_400_000
+    ) {
+      left++
+    }
+    const prior = entries.slice(left, i).map(([, value]) => ((value % 24) + 24) % 24)
+    if (prior.length < minPeriods) continue
+    const angles = prior.map((hour) => (hour * 2 * Math.PI) / 24)
+    const meanSin = angles.reduce((sum, angle) => sum + Math.sin(angle), 0) / angles.length
+    const meanCos = angles.reduce((sum, angle) => sum + Math.cos(angle), 0) / angles.length
+    if (Math.hypot(meanSin, meanCos) <= 1e-9) continue
+    const center = ((((Math.atan2(meanSin, meanCos) * 24) / (2 * Math.PI)) % 24) + 24) % 24
+    const unwrapped = prior.map((hour) => center + signedClockDelta(hour, center)).sort((a, b) => a - b)
+    const middle = Math.floor(unwrapped.length / 2)
+    const baseline =
+      unwrapped.length % 2
+        ? unwrapped[middle]
+        : (unwrapped[middle - 1] + unwrapped[middle]) / 2
+    deviations.set(entries[i][0], signedClockDelta(entries[i][1], baseline))
   }
   return deviations
 }
