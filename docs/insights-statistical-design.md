@@ -90,6 +90,14 @@ separate workout observations, but they share the same morning recovery
 exposure and parts of the same daily environment. They therefore count as one
 date for minimum-information gates and as one cluster for uncertainty.
 
+Outcome eligibility does not erase event history. Every recorded workout,
+including a short or HR-sparse session that cannot supply a stable outcome,
+updates time since the previous workout and time since the previous workout of
+that modality. Any positive measured TRIMP from such a session also contributes
+to the load already accumulated before a later same-day outcome row. Previous-
+modality outcome controls remain restricted to eligible rows because a short
+session cannot supply a stable intensity ratio.
+
 The outcomes deliberately separate different questions:
 
 - total TRIMP: the scheduled dose chosen for the session;
@@ -194,7 +202,7 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 3 and workout model version 4 enforce the
+workout. Daily model version 3 and workout model version 5 enforce the
 prior-day rule above.
 
 ## Current data implications (audit 2026-08-02)
@@ -222,6 +230,10 @@ prior-day rule above.
   dormant. Acute-load and previous-workout-gap candidates have 101 sessions on
   72 dates. In the current data none of these clear multiplicity and stability
   gates; eligibility is not evidence of an effect.
+- Two short sessions in the current workout era are ineligible as outcomes but
+  remain in event history. This corrects two later recovery intervals; the
+  largest changed from 22.2 hours to 19 minutes, and the short session's 5.15
+  TRIMP now contributes to the later session's same-day prior load.
 - With the measurement-time correction, previous-day HRV candidates have 99
   sessions on 71 dates and show no clear relationship to duration or recorded
   intensity. The former same-day HRV-to-intensity raw signal disappears; it was

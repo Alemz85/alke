@@ -1185,7 +1185,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 4,
+            "model_version": 5,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1221,7 +1221,9 @@ def discover_workout_context_insights(
                 "Recorded intensity is TRIMP per minute; timing is adjusted for modality but may "
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
-                "context is included only when its recorded wake time precedes the workout."
+                "context is included only when its recorded wake time precedes the workout. "
+                "Recovery intervals and prior same-day load include workouts that are too short "
+                "or too sparsely measured to serve as outcome rows."
             ),
         },
     }

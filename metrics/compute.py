@@ -470,20 +470,54 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior",
     )
-    for workout in all_workouts:
+    last_workout_at = None
+    last_modality_at: dict[str, datetime] = {}
+    prior_load_by_day: dict[date, float] = defaultdict(float)
+    ordered_workouts = sorted(
+        all_workouts,
+        key=lambda workout: datetime.fromisoformat(
+            workout["start_at"].replace("Z", "+00:00")
+        ).timestamp(),
+    )
+    for workout in ordered_workouts:
         computed = perf_by_id.get(workout["id"]) or {}
+        start = datetime.fromisoformat(workout["start_at"].replace("Z", "+00:00")).astimezone(tz)
+        modality = workout_modality(workout.get("type"))
+        hours_since_prev_workout = (
+            (start - last_workout_at).total_seconds() / 3600.0
+            if last_workout_at is not None else np.nan
+        )
+        days_since_prev_modality = (
+            (start - last_modality_at[modality]).total_seconds() / 86_400.0
+            if modality in last_modality_at else np.nan
+        )
+        day = start.date()
+        same_day_prior_load = prior_load_by_day[day]
         try:
             trimp = float(computed.get("trimp"))
             duration_s = float(workout.get("duration_s"))
             zones = computed.get("time_in_zones") or {}
             zone_seconds = sum(float(zones.get(f"z{zone}") or 0.0) for zone in range(1, 6))
         except (TypeError, ValueError):
-            continue
+            trimp = np.nan
+            duration_s = np.nan
+            zones = {}
+            zone_seconds = 0.0
+
+        # Eligibility determines whether this workout can be an outcome row,
+        # not whether it existed. Every workout updates recency; every positive
+        # measured load updates the day's dose before later sessions.
+        last_workout_at = start
+        last_modality_at[modality] = start
+        if np.isfinite(trimp) and trimp > 0:
+            prior_load_by_day[day] += trimp
         # Tiny/zero-HR sessions make ratios unstable. Positive TRIMP also
         # excludes legacy workouts whose duration exists without measured HR.
-        if trimp <= 0 or duration_s <= 0 or zone_seconds < 300:
+        if (
+            not np.isfinite(trimp) or not np.isfinite(duration_s)
+            or trimp <= 0 or duration_s <= 0 or zone_seconds < 300
+        ):
             continue
-        start = datetime.fromisoformat(workout["start_at"].replace("Z", "+00:00")).astimezone(tz)
         day_key = pd.Timestamp(start.date())
         context = daily_frame.loc[day_key] if day_key in daily_frame.index else None
         hour = start.hour + start.minute / 60 + start.second / 3600
@@ -494,7 +528,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "start_hour": hour,
             "start_sin": math.sin(theta),
             "start_cos": math.cos(theta),
-            "modality": workout_modality(workout.get("type")),
+            "modality": modality,
             "workout_load": trimp,
             "workout_duration": duration_min,
             "log_duration": math.log(duration_min),
@@ -502,6 +536,9 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "high_zone_fraction": (
                 float(zones.get("z4") or 0.0) + float(zones.get("z5") or 0.0)
             ) / zone_seconds,
+            "hours_since_prev_workout": hours_since_prev_workout,
+            "days_since_prev_modality": days_since_prev_modality,
+            "same_day_prior_load": same_day_prior_load,
         }
         wake_hour = context.get("wake_hour") if context is not None else np.nan
         hours_since_wake = hour - wake_hour if pd.notna(wake_hour) else np.nan
@@ -523,17 +560,8 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         return pd.DataFrame()
 
     frame = pd.DataFrame(rows).sort_values("start_at").set_index("start_at")
-    timestamps = pd.Series(frame.index, index=frame.index)
-    frame["hours_since_prev_workout"] = timestamps.diff().dt.total_seconds() / 3600.0
-    frame["days_since_prev_modality"] = (
-        timestamps.groupby(frame["modality"], sort=False).diff().dt.total_seconds() / 86_400.0
-    )
     frame["log_hours_since_prev_workout"] = np.log1p(frame["hours_since_prev_workout"])
     frame["log_days_since_prev_modality"] = np.log1p(frame["days_since_prev_modality"])
-    local_days = pd.Series([stamp.date() for stamp in frame.index], index=frame.index)
-    frame["same_day_prior_load"] = (
-        frame.groupby(local_days, sort=False)["workout_load"].cumsum() - frame["workout_load"]
-    )
     for outcome, prior_name in (
         ("workout_load", "load_prev_modality"),
         ("workout_duration", "duration_prev_modality"),
@@ -603,7 +631,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=4)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=5)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

@@ -280,7 +280,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 4
+    assert model["diagnostics"]["model_version"] == 5
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1241,6 +1241,60 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["load_prev_modality"] == pytest.approx(20.0)
 
 
+def test_workout_frame_history_includes_sessions_too_short_for_outcomes():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    workouts = [
+        {
+            "id": "eligible-first",
+            "type": "rowing",
+            "start_at": "2026-01-01T08:00:00Z",
+            "duration_s": 1200,
+        },
+        {
+            "id": "short-history-only",
+            "type": "rowing",
+            "start_at": "2026-01-02T10:00:00Z",
+            "duration_s": 240,
+        },
+        {
+            "id": "eligible-second",
+            "type": "rowing",
+            "start_at": "2026-01-02T12:00:00Z",
+            "duration_s": 1200,
+        },
+    ]
+    computed = {
+        "eligible-first": {
+            "trimp": 20.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        },
+        "short-history-only": {
+            "trimp": 5.0,
+            "time_in_zones": {"z1": 175, "z2": 65, "z3": 0, "z4": 0, "z5": 0},
+        },
+        "eligible-second": {
+            "trimp": 30.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        },
+    }
+
+    frame = build_workout_insight_frame(
+        workouts, computed, pd.DataFrame(), ZoneInfo("UTC")
+    )
+
+    assert len(frame) == 2
+    second = frame.iloc[1]
+    assert second["hours_since_prev_workout"] == pytest.approx(2.0)
+    assert second["days_since_prev_modality"] == pytest.approx(2.0 / 24.0)
+    assert second["same_day_prior_load"] == pytest.approx(5.0)
+    # Outcome-history controls stay on eligible rows so a four-minute session
+    # cannot supply an unstable intensity ratio.
+    assert second["load_prev_modality"] == pytest.approx(20.0)
+
+
 def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
     from zoneinfo import ZoneInfo
 
@@ -1336,7 +1390,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [3, 4]
+    assert expected_versions == [3, 5]
 
 
 def test_persistence_state_never_crosses_model_versions():
