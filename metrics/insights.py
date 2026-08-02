@@ -177,7 +177,8 @@ WORKOUT_MODALITY_CONTROLS = [
     "modality_swim", "modality_walking",
 ]
 _WORKOUT_BASE_CONTROLS = [
-    "ctl_prior", "atl_prior", "trimp_prior", "same_day_prior_load",
+    "ctl_prior", "atl_prior", "trimp_prior", "log_same_day_prior_duration",
+    "same_day_prior_load",
     "log_hours_since_prev_workout", "log_days_since_prev_modality",
     *WORKOUT_MODALITY_CONTROLS,
 ]
@@ -1344,6 +1345,7 @@ def discover_workout_context_insights(
         "spec": (
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
+            "HR-independent same-day prior-duration control; "
             "recorded-offset local clock + instant elapsed-since-wake; "
             "wake-ordered sleep context; outcome-specific HR completeness gates; "
             "scale-free prior-week training-time distribution with total-duration adjustment; "
@@ -1355,7 +1357,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 12,
+            "model_version": 13,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1402,8 +1404,9 @@ def discover_workout_context_insights(
                 "for total seven-day duration, so it does not substitute frequency for volume. "
                 "Previous-day high-zone composition exists only when every workout on that day "
                 "passes HR coverage and is adjusted for total prior-day load. "
-                "Recovery intervals and prior same-day load include workouts that are too short "
-                "or too sparsely measured to serve as HR-derived outcome rows."
+                "Recovery intervals and prior same-day duration include workouts without usable "
+                "HR; positive measured load is accumulated separately. Both can include sessions "
+                "that are too short or sparse to serve as HR-derived outcome rows."
             ),
         },
     }

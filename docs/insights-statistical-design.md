@@ -138,8 +138,10 @@ Outcome eligibility does not erase event history. Every recorded workout,
 including a short or HR-sparse session that cannot supply a stable outcome,
 updates time since the previous workout and time since the previous workout of
 that modality. Any positive measured TRIMP from such a session also contributes
-to the load already accumulated before a later same-day outcome row. Previous-
-modality HR-outcome controls remain restricted to HR-eligible rows because a
+to the load already accumulated before a later same-day outcome row. Every
+positive-duration session likewise contributes to a separate same-day duration
+control, even when HR is absent. Previous-modality HR-outcome controls remain
+restricted to HR-eligible rows because a
 short or poorly covered session cannot supply a stable intensity ratio.
 Duration history, however, advances on every positive-duration workout.
 
@@ -185,10 +187,12 @@ training.
 Every workout fit controls chronic and acute load through the prior day,
 previous-day load, modality, time since the previous workout, time since the
 previous workout of that modality, and any load already accumulated earlier
-that day. A candidate is removed from its own control list. The same-day load
-control is essential: an evening session is more likely than a morning session
-to be a second session, and otherwise “time of day” could merely rediscover
-accumulated same-day fatigue.
+that day. It also controls the log of recorded workout minutes already
+completed that day, which remains available when HR-derived load does not. A
+candidate is removed from its own control list. These same-day controls are
+essential: an evening session is more likely than a morning session to be a
+second session, and otherwise “time of day” could merely rediscover accumulated
+same-day fatigue.
 
 Same-day sleep, timing, continuity, and respiratory context enters a workout
 row only when the recorded sleep end precedes the workout by no more than 20
@@ -265,7 +269,7 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 8 and workout model version 12 enforce the
+workout. Daily model version 8 and workout model version 13 enforce the
 prior-day rule above and preserve recorded local sleep time during travel.
 These versions also retain the fully measured,
 training-day-conditional high-zone composition exposure. Workout version 9
@@ -296,6 +300,10 @@ high-zone fraction as well as average HR-zone and energy intensity.
   90% coverage gate. The six failures are outdoor walks with only 60.5%–87.8%
   coverage; leaving the old denominator in place would have made those gaps
   look like low effort.
+- There are 27 multi-session dates and 34 later same-day sessions. Version 13
+  controls duration accumulated before each later session independently of HR
+  coverage; an unmeasured earlier workout can no longer masquerade as no prior
+  same-day work.
 - Complete waking-day timing frames currently contain 84 sessions on 56 dates
   for duration and 78 sessions on 53 dates for HR-derived intensity, so both
   remain dormant under the 60-date timing rule. Clock time and hours since
@@ -308,7 +316,7 @@ high-zone fraction as well as average HR-zone and energy intensity.
   boundary under the correction, and no model verdict changes.
 - All 281 stored sleep nights match an archived raw aggregate exactly. Seven
   Travel-week nights retained `+0100` while Berlin was `+0200`; the old
-  sleep-midpoint and wake-clock values were one hour late. Versions 8/12 use
+  sleep-midpoint and wake-clock values were one hour late. Versions 8/13 use
   the recorded sleep offset for local-clock features. Absolute sleep duration
   and wake-to-workout intervals were already correct.
 - Duration candidates now use measurements according to their own semantics:

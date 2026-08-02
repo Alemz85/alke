@@ -674,6 +674,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     last_workout_at = None
     last_modality_at: dict[str, datetime] = {}
     prior_load_by_day: dict[date, float] = defaultdict(float)
+    prior_duration_by_day: dict[date, float] = defaultdict(float)
     ordered_workouts = sorted(
         all_workouts,
         key=lambda workout: datetime.fromisoformat(
@@ -697,6 +698,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         )
         day = start.date()
         same_day_prior_load = prior_load_by_day[day]
+        same_day_prior_duration = prior_duration_by_day[day]
         try:
             duration_s = float(workout.get("duration_s"))
         except (TypeError, ValueError):
@@ -721,6 +723,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             prior_load_by_day[day] += trimp
         if not np.isfinite(duration_s) or duration_s <= 0:
             continue
+        prior_duration_by_day[day] += duration_s / 60.0
         hr_coverage = zone_seconds / duration_s
         hr_outcomes_valid = (
             np.isfinite(trimp)
@@ -754,6 +757,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "hours_since_prev_workout": hours_since_prev_workout,
             "days_since_prev_modality": days_since_prev_modality,
             "same_day_prior_load": same_day_prior_load,
+            "same_day_prior_duration": same_day_prior_duration,
         }
         wake_at_epoch = context.get("wake_at_epoch") if context is not None else np.nan
         wake_hour = context.get("wake_hour") if context is not None else np.nan
@@ -788,6 +792,9 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     )
     frame["log_hours_since_prev_workout"] = np.log1p(frame["hours_since_prev_workout"])
     frame["log_days_since_prev_modality"] = np.log1p(frame["days_since_prev_modality"])
+    frame["log_same_day_prior_duration"] = np.log1p(
+        frame["same_day_prior_duration"]
+    )
     for outcome, prior_name in (
         ("workout_load", "load_prev_modality"),
         ("workout_duration", "duration_prev_modality"),
@@ -873,7 +880,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=12)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=13)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

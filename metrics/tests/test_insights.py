@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 12
+    assert model["diagnostics"]["model_version"] == 13
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1060,6 +1060,7 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
     } <= names
     for spec in DEFAULT_WORKOUT_SPECS:
         assert "same_day_prior_load" in spec["controls"]
+        assert "log_same_day_prior_duration" in spec["controls"]
         assert "atl_prior" in spec["controls"] or spec.get("driver") == "atl_prior"
         assert (
             "log_hours_since_prev_workout" in spec["controls"]
@@ -1489,6 +1490,8 @@ def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
     # same-day dose, but cannot replace the previous valid outcome control.
     assert second["hours_since_prev_workout"] == pytest.approx(2.0)
     assert second["same_day_prior_load"] == pytest.approx(42.0)
+    assert second["same_day_prior_duration"] == pytest.approx(40.0)
+    assert second["log_same_day_prior_duration"] == pytest.approx(np.log1p(40.0))
     assert second["load_prev_modality"] == pytest.approx(27.0)
     assert second["intensity_prev_modality"] == pytest.approx(1.5)
     assert over_covered["hr_coverage_fraction"] == pytest.approx(1.1)
@@ -1528,6 +1531,8 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["hours_since_prev_workout"] == pytest.approx(8.0)
     assert second["days_since_prev_modality"] == pytest.approx(8.0 / 24.0)
     assert second["same_day_prior_load"] == pytest.approx(20.0)
+    assert second["same_day_prior_duration"] == pytest.approx(20.0)
+    assert second["log_same_day_prior_duration"] == pytest.approx(np.log1p(20.0))
     assert second["load_prev_modality"] == pytest.approx(20.0)
     assert second["high_zone_fraction_prior"] == pytest.approx(0.25)
     assert second["duration_7d_prior"] == pytest.approx(150.0)
@@ -1750,7 +1755,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [8, 12]
+    assert expected_versions == [8, 13]
 
 
 def test_persistence_state_never_crosses_model_versions():
