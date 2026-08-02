@@ -30,7 +30,11 @@ import {
   type PrefillSetRow
 } from '../../lib/gymLog'
 import { formatDurationHM } from '../../lib/format'
-import { formatLocalTime } from '../../hooks/sessionsDate'
+import {
+  formatLocalTime,
+  formatZonedDateTimeLocal,
+  zonedDateTimeLocalToIso
+} from '../../hooks/sessionsDate'
 import type { RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
 import { Dropdown } from '../../components/Dropdown'
 import { RecoveryRoutineTable } from '../../components/RecoveryPlanDetail'
@@ -641,8 +645,8 @@ export function SessionEditorModal({
   const [performedAt, setPerformedAt] = useState<string>(() => {
     if (restoredDraft) return restoredDraft.performedAt
     if (existingSession && !existingSession.workout_id)
-      return existingSession.performed_at.slice(0, 16)
-    return new Date().toISOString().slice(0, 16)
+      return formatZonedDateTimeLocal(existingSession.performed_at, timezone)
+    return formatZonedDateTimeLocal(new Date().toISOString(), timezone)
   })
   const [blocks, setBlocks] = useState<Block[]>(() =>
     restoredDraft
@@ -909,6 +913,15 @@ export function SessionEditorModal({
     // Derived display beats stored declaration: with sets, persist null so a
     // stale body-part list can never disagree with the actual sets.
     const patchBodyParts = sets.length > 0 || bodyParts.length === 0 ? null : bodyParts
+    let performedAtIso: string | null = null
+    if (showDateInput) {
+      try {
+        performedAtIso = zonedDateTimeLocalToIso(performedAt, timezone)
+      } catch {
+        setError('Choose a valid date and time in your configured time zone.')
+        return
+      }
+    }
 
     if (isEdit && existingSession) {
       try {
@@ -919,7 +932,8 @@ export function SessionEditorModal({
             notes: patchNotes,
             template_ids: templateIds,
             body_parts: patchBodyParts,
-            sets
+            sets,
+            ...(isUnlinkedEdit && performedAtIso !== null ? { performed_at: performedAtIso } : {})
           }
         })
         finishSave()
@@ -939,8 +953,11 @@ export function SessionEditorModal({
     if (linkedWorkout) {
       payload.workout_id = linkedWorkout.id
       payload.performed_at = linkedWorkout.start_at
+    } else if (performedAtIso !== null) {
+      payload.performed_at = performedAtIso
     } else {
-      payload.performed_at = new Date(performedAt).toISOString()
+      setError('Choose a valid date and time in your configured time zone.')
+      return
     }
 
     try {

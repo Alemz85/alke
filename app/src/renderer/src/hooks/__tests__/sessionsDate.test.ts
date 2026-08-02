@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addDays,
+  formatZonedDateTimeLocal,
   isoWeekKey,
   isoWeekStart,
   localDateKey,
@@ -9,7 +10,8 @@ import {
   ymdKey,
   ymdToIsoStart,
   ymdToZonedIsoEnd,
-  ymdToZonedIsoStart
+  ymdToZonedIsoStart,
+  zonedDateTimeLocalToIso
 } from '../sessionsDate'
 
 describe('isoWeekKey', () => {
@@ -156,5 +158,28 @@ describe('zoned day bounds', () => {
     const day = { year: 2026, month: 3, day: 29 }
     expect(ymdToZonedIsoStart(day, 'Europe/Berlin')).toBe('2026-03-28T23:00:00.000Z')
     expect(ymdToZonedIsoEnd(day, 'Europe/Berlin')).toBe('2026-03-29T21:59:59.999Z')
+  })
+})
+
+describe('datetime-local conversion', () => {
+  it('formats an instant as the athlete wall clock in summer and winter', () => {
+    expect(formatZonedDateTimeLocal('2026-07-15T10:30:00Z', 'Europe/Berlin')).toBe(
+      '2026-07-15T12:30'
+    )
+    expect(formatZonedDateTimeLocal('2026-01-15T10:30:00Z', 'Europe/Berlin')).toBe(
+      '2026-01-15T11:30'
+    )
+  })
+
+  it('converts an athlete wall-clock value back to its UTC instant', () => {
+    expect(zonedDateTimeLocalToIso('2026-07-15T12:30', 'Europe/Berlin')).toBe(
+      '2026-07-15T10:30:00.000Z'
+    )
+  })
+
+  it('rejects a wall-clock time that does not exist during the spring DST jump', () => {
+    expect(() => zonedDateTimeLocalToIso('2026-03-29T02:30', 'Europe/Berlin')).toThrow(
+      'does not exist'
+    )
   })
 })

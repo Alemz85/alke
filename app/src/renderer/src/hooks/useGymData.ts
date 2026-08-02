@@ -23,6 +23,7 @@ import {
 } from '../lib/optimisticGym'
 import {
   isQueuedWriteReceipt,
+  placeSessionInRange,
   removeById,
   replaceById,
   sessionFallsWithinQuery
@@ -379,17 +380,23 @@ export function useUpdateGymSession(sessionId: string) {
       await queryClient.cancelQueries({ queryKey })
       const previous = queryClient.getQueriesData<GymSession[]>({ queryKey }) as QuerySnapshot[]
       const exercises = cachedExercises(queryClient)
+      const original = previous
+        .flatMap(([, rows]) => (rows as GymSession[] | undefined) ?? [])
+        .find((session) => session.id === id)
+      if (!original) return { previous }
+      const optimistic = applyOptimisticSessionPatch(original, patch, exercises)
       for (const [rangeKey, rows] of previous as Array<[QueryKey, GymSession[] | undefined]>) {
-        queryClient.setQueryData<GymSession[]>(rangeKey, (rows ?? []).map((session) =>
-          session.id === id ? applyOptimisticSessionPatch(session, patch, exercises) : session
-        ))
+        queryClient.setQueryData<GymSession[]>(
+          rangeKey,
+          placeSessionInRange(rows ?? [], rangeKey, optimistic)
+        )
       }
       return { previous }
     },
-    onSuccess: (result, { id }) => {
+    onSuccess: (result) => {
       if (isQueuedWriteReceipt(result)) return
       for (const [rangeKey, rows] of queryClient.getQueriesData<GymSession[]>({ queryKey: ['health', 'gym', 'sessions'] })) {
-        queryClient.setQueryData(rangeKey, replaceById(rows ?? [], id, result))
+        queryClient.setQueryData(rangeKey, placeSessionInRange(rows ?? [], rangeKey, result))
       }
       invalidateWorkoutViews(queryClient)
     },

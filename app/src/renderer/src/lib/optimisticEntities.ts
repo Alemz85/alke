@@ -36,3 +36,14 @@ export function sessionFallsWithinQuery(queryKey: readonly unknown[], session: G
   }
   return session.performed_at >= queryKey[3] && session.performed_at <= queryKey[4]
 }
+
+/** Put one session in a range cache iff its (possibly edited) instant belongs there. */
+export function placeSessionInRange(
+  rows: GymSession[],
+  queryKey: readonly unknown[],
+  session: GymSession
+): GymSession[] {
+  const withoutSession = rows.filter((row) => row.id !== session.id)
+  if (!sessionFallsWithinQuery(queryKey, session)) return withoutSession
+  return [session, ...withoutSession].sort((a, b) => b.performed_at.localeCompare(a.performed_at))
+}

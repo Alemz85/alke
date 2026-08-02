@@ -41,6 +41,91 @@ export function formatLocalTime(iso: string, timezone: string | null | undefined
   }).format(new Date(iso))
 }
 
+function zonedDateTimeParts(
+  instant: string | number | Date,
+  timezone: string | null | undefined
+): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone || FALLBACK_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(instant instanceof Date ? instant : new Date(instant))
+  const part = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((candidate) => candidate.type === type)?.value)
+  return {
+    year: part('year'),
+    month: part('month'),
+    day: part('day'),
+    hour: part('hour'),
+    minute: part('minute')
+  }
+}
+
+/** Value for a datetime-local input, expressed in the athlete's timezone. */
+export function formatZonedDateTimeLocal(
+  iso: string,
+  timezone: string | null | undefined
+): string {
+  const { year, month, day, hour, minute } = zonedDateTimeParts(iso, timezone)
+  return `${ymdKey({ year, month, day })}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+}
+
+/**
+ * Convert a timezone-free datetime-local value to its real UTC instant.
+ * Nonexistent wall times during a DST jump are rejected instead of silently
+ * being shifted to a different hour.
+ */
+export function zonedDateTimeLocalToIso(
+  local: string,
+  timezone: string | null | undefined
+): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local)
+  if (!match) throw new Error('invalid local date and time')
+
+  const [, yearText, monthText, dayText, hourText, minuteText] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const targetLocalMs = Date.UTC(year, month - 1, day, hour, minute)
+  const normalized = new Date(targetLocalMs)
+  if (
+    normalized.getUTCFullYear() !== year ||
+    normalized.getUTCMonth() + 1 !== month ||
+    normalized.getUTCDate() !== day ||
+    normalized.getUTCHours() !== hour ||
+    normalized.getUTCMinutes() !== minute
+  ) {
+    throw new Error('invalid local date and time')
+  }
+
+  let instantMs = targetLocalMs
+  for (let i = 0; i < 6; i++) {
+    const represented = zonedDateTimeParts(instantMs, timezone)
+    const representedLocalMs = Date.UTC(
+      represented.year,
+      represented.month - 1,
+      represented.day,
+      represented.hour,
+      represented.minute
+    )
+    const correction = targetLocalMs - representedLocalMs
+    instantMs += correction
+    if (correction === 0) break
+  }
+
+  const result = new Date(instantMs).toISOString()
+  if (formatZonedDateTimeLocal(result, timezone) !== local) {
+    throw new Error(`local date and time ${local} does not exist in ${timezone || FALLBACK_TZ}`)
+  }
+  return result
+}
+
 /** A UTC-anchored "calendar day" Date object — safe for date arithmetic (no DST surprises). */
 function utcDate(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day))

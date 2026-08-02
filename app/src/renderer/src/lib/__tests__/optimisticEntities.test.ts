@@ -3,6 +3,7 @@ import type { GymSession } from '@shared/types'
 import {
   isQueuedWriteReceipt,
   patchById,
+  placeSessionInRange,
   removeById,
   replaceById,
   sessionFallsWithinQuery
@@ -37,5 +38,27 @@ describe('optimistic entity helpers', () => {
       ['health', 'gym', 'sessions', '2026-06-01T00:00:00.000Z', '2026-06-30T23:59:59.999Z'],
       session
     )).toBe(false)
+  })
+
+  it('moves an edited gym session out of its old cached range and into its new one', () => {
+    const original = { id: 'session', performed_at: '2026-07-31T22:30:00.000Z' } as GymSession
+    const moved = { ...original, performed_at: '2026-08-01T22:30:00.000Z' }
+    const julyKey = [
+      'health',
+      'gym',
+      'sessions',
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-31T23:59:59.999Z'
+    ]
+    const augustKey = [
+      'health',
+      'gym',
+      'sessions',
+      '2026-08-01T00:00:00.000Z',
+      '2026-08-31T23:59:59.999Z'
+    ]
+
+    expect(placeSessionInRange([original], julyKey, moved)).toEqual([])
+    expect(placeSessionInRange([], augustKey, moved)).toEqual([moved])
   })
 })

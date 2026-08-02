@@ -55,4 +55,14 @@ describe('offline write idempotency contracts', () => {
     expect(update).not.toContain(".from('gym_sets').delete()")
     expect(update).not.toContain('insertGymSets(id, patch.sets)')
   })
+
+  it('only moves unlinked gym sessions and rekeys their derived plan checks', () => {
+    const source = readFileSync(resolve(root, 'app/src/main/db.ts'), 'utf8')
+    const update = source.match(/export async function updateGymSession[\s\S]*?\n}\n\nexport async function deleteGymSession/)?.[0] ?? ''
+    expect(update).toContain("assertInstant(patch.performed_at, 'performed_at')")
+    expect(update).toContain("if (beforeDateMove.workout_id !== null)")
+    expect(update).toContain('row.performed_at = patch.performed_at')
+    expect(update).toContain('removeGymPlanChecksForSession(id, {')
+    expect(update).toContain('syncPlanChecksFromGymSets(saved.sets, saved.performed_at)')
+  })
 })

@@ -23,6 +23,18 @@ import { buildQuickSetRows, uniformPrefillDose } from '../../../lib/gymLog'
 // onFocus/onBlur draft handling or reintroduces stale useState fails loudly.
 const source = readFileSync(new URL('../SessionEditorModal.tsx', import.meta.url), 'utf8')
 
+describe('unlinked session date editing (source contract)', () => {
+  it('round-trips the datetime-local field through the configured timezone', () => {
+    expect(source).toContain('formatZonedDateTimeLocal(existingSession.performed_at, timezone)')
+    expect(source).toContain('formatZonedDateTimeLocal(new Date().toISOString(), timezone)')
+    expect(source).toContain('zonedDateTimeLocalToIso(performedAt, timezone)')
+  })
+
+  it('persists the converted instant when an existing unlinked session is edited', () => {
+    expect(source).toContain('performed_at: performedAtIso')
+  })
+})
+
 function makeSetRow(overrides: Partial<SetRow> = {}): SetRow {
   return {
     key: 'row-1',

@@ -427,6 +427,8 @@ export interface NewGymSession {
 // Editable subset of a logged session; `sets`, when present, replaces the
 // session's whole set list.
 export interface GymSessionPatch {
+  /** ISO instant; editable only for sessions not linked to a synced workout. */
+  performed_at?: string
   title?: string | null
   notes?: string | null
   template_id?: string | null

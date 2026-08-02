@@ -1696,7 +1696,7 @@ async function syncPlanChecksFromGymSets(
 }
 
 /**
- * Retracts the plan_item_checks a deleted session produced: for each active
+ * Retracts the plan_item_checks a deleted or date-moved session produced: for each active
  * plan item linked to an exercise the session logged, on the session's local
  * done_date, delete the source='gym' check for that (item, date) — but ONLY
  * if no OTHER still-existing session logs that same exercise on the same
@@ -1706,40 +1706,49 @@ async function syncPlanChecksFromGymSets(
  * does not block the session delete, matching syncPlanChecksFromGymSets'
  * never-fail posture (the delete is the primary action).
  *
- * No session_id on plan_item_checks, so this is derived from the deleted
- * session's own exercises + date rather than a direct join — see the
- * schema-level note where this is called.
+ * No session_id on plan_item_checks, so this is derived from the session's
+ * own exercises + previous date rather than a direct join. Date moves pass a
+ * pre-update snapshot because the stored session already has its new instant.
  */
-async function removeGymPlanChecksForSession(sessionId: string): Promise<void> {
+async function removeGymPlanChecksForSession(
+  sessionId: string,
+  snapshot?: { performedAtIso: string; exerciseIds: string[] }
+): Promise<void> {
   try {
     const supabase = getClient()
-    const { data: session, error: sessionError } = await supabase
-      .from('gym_sessions')
-      .select('id, performed_at')
-      .eq('id', sessionId)
-      .maybeSingle()
-    if (sessionError) throw new Error(sessionError.message)
-    if (!session) return // already gone
+    let performedAtIso = snapshot?.performedAtIso
+    let exerciseIds = [...new Set(snapshot?.exerciseIds ?? [])]
+    if (!snapshot) {
+      const { data: session, error: sessionError } = await supabase
+        .from('gym_sessions')
+        .select('id, performed_at')
+        .eq('id', sessionId)
+        .maybeSingle()
+      if (sessionError) throw new Error(sessionError.message)
+      if (!session) return // already gone
+      performedAtIso = session.performed_at
 
-    const { data: sets, error: setsError } = await supabase
-      .from('gym_sets')
-      .select('exercise_id')
-      .eq('session_id', sessionId)
-    if (setsError) throw new Error(setsError.message)
-    const exerciseIds = [...new Set((sets ?? []).map((s) => s.exercise_id))]
+      const { data: sets, error: setsError } = await supabase
+        .from('gym_sets')
+        .select('exercise_id')
+        .eq('session_id', sessionId)
+      if (setsError) throw new Error(setsError.message)
+      exerciseIds = [...new Set((sets ?? []).map((s) => s.exercise_id))]
+    }
+    if (!performedAtIso) return
     if (exerciseIds.length === 0) return
 
     const items = await activePlanItemsForExercises(exerciseIds)
     if (items.length === 0) return
 
     const timezone = (await getUserConfig()).timezone
-    const doneDate = dateKeyInTimeZone(session.performed_at, timezone)
+    const doneDate = dateKeyInTimeZone(performedAtIso, timezone)
 
     // Other sessions whose LOCAL date could match: a generous ±1 UTC-day
     // window around performed_at, precisely filtered below via
-    // localDateInTz — mirrors the same day-boundary handling used to
+    // dateKeyInTimeZone — mirrors the same day-boundary handling used to
     // compute doneDate itself.
-    const performedAt = new Date(session.performed_at)
+    const performedAt = new Date(performedAtIso)
     const rangeStart = new Date(performedAt.getTime() - 24 * 60 * 60 * 1000).toISOString()
     const rangeEnd = new Date(performedAt.getTime() + 24 * 60 * 60 * 1000).toISOString()
     const { data: nearbySessions, error: nearbyError } = await supabase
@@ -1907,6 +1916,15 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
   assertUuid(id, 'session_id')
 
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  let beforeDateMove: GymSession | null = null
+  if (patch.performed_at !== undefined) {
+    assertInstant(patch.performed_at, 'performed_at')
+    beforeDateMove = await getGymSessionById(id)
+    if (beforeDateMove.workout_id !== null) {
+      throw new Error('updateGymSession: performed_at is fixed by the linked workout')
+    }
+    row.performed_at = patch.performed_at
+  }
   if (patch.title !== undefined) {
     assertOptionalText(patch.title, 'title', 120)
     row.title = patch.title
@@ -1941,11 +1959,18 @@ export async function updateGymSession(id: string, patch: GymSessionPatch): Prom
 
   if (patch.sets !== undefined) {
     await replaceGymSetsAtomically(id, patch.sets)
-    const session = await getGymSessionById(id)
-    await syncPlanChecksFromGymSets(patch.sets, session.performed_at)
-    return session
   }
-  return getGymSessionById(id)
+  const saved = await getGymSessionById(id)
+  if (beforeDateMove) {
+    await removeGymPlanChecksForSession(id, {
+      performedAtIso: beforeDateMove.performed_at,
+      exerciseIds: beforeDateMove.sets.map((set) => set.exercise_id)
+    })
+    await syncPlanChecksFromGymSets(saved.sets, saved.performed_at)
+  } else if (patch.sets !== undefined) {
+    await syncPlanChecksFromGymSets(saved.sets, saved.performed_at)
+  }
+  return saved
 }
 
 export async function deleteGymSession(id: string): Promise<void> {
