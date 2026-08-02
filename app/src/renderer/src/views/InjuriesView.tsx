@@ -48,7 +48,12 @@ import { BadgeDomain } from '../components/BadgeDomain'
 import type { Domain } from '../components/domain'
 import { RecoveryPlanDetail } from '../components/RecoveryPlanDetail'
 import { useCardOrder } from '../hooks/useCardOrder'
-import { toZonedYMD, ymdKey } from '../hooks/sessionsDate'
+import {
+  toZonedYMD,
+  ymdKey,
+  ymdToZonedIsoEnd,
+  ymdToZonedIsoStart
+} from '../hooks/sessionsDate'
 import {
   adherencePct,
   adherenceRating,
@@ -435,11 +440,13 @@ function WeeklyAdherenceStrip({
 function FlareForm({
   injuryId,
   todayYMD,
+  timezone,
   onDone,
   onCancel
 }: {
   injuryId: string
   todayYMD: string
+  timezone: string | null
   onDone: () => void
   onCancel: () => void
 }): ReactElement {
@@ -453,8 +460,10 @@ function FlareForm({
       let workoutId: string | null = null
       // If the flare is tied to activity, attach the latest workout that day.
       if (contexts.includes('during_workout') || contexts.includes('post_workout')) {
-        const fromIso = `${todayYMD}T00:00:00.000Z`
-        const toIso = `${todayYMD}T23:59:59.999Z`
+        const [year, month, dayOfMonth] = todayYMD.split('-').map(Number)
+        const day = { year, month, day: dayOfMonth }
+        const fromIso = ymdToZonedIsoStart(day, timezone)
+        const toIso = ymdToZonedIsoEnd(day, timezone)
         const workouts = await window.api.getWorkouts(fromIso, toIso)
         if (workouts.length > 0) {
           const latest = [...workouts].sort((a, b) => (a.start_at < b.start_at ? 1 : -1))[0]
@@ -463,6 +472,7 @@ function FlareForm({
       }
       return window.api.addInjuryLog({
         injury_id: injuryId,
+        entry_date: todayYMD,
         note: note.trim() || 'Flare-up',
         pain_level: pain,
         context: contexts,
@@ -478,6 +488,7 @@ function FlareForm({
       const temporaryId = -Date.now()
       const input: NewInjuryLog = {
         injury_id: injuryId,
+        entry_date: todayYMD,
         note: note.trim() || 'Flare-up',
         pain_level: pain,
         context: contexts
@@ -594,7 +605,13 @@ function ActionRow({
 
   const fineMutation = useMutation({
     mutationFn: () =>
-      window.api.addInjuryLog({ injury_id: injury.id, note: 'Feeling fine', pain_level: 0, context: [] }),
+      window.api.addInjuryLog({
+        injury_id: injury.id,
+        entry_date: todayYMD,
+        note: 'Feeling fine',
+        pain_level: 0,
+        context: []
+      }),
     scope: { id: `injury-log:${injury.id}` },
     meta: { errorMessage: 'Couldn’t save the recovery note. It was removed from the log.' },
     onMutate: async () => {
@@ -603,7 +620,13 @@ function ActionRow({
       const previous = queryClient.getQueriesData<InjuryLogEntry[]>({ queryKey }) as InjuryQuerySnapshot[]
       const temporaryId = -Date.now()
       const temporary = makeOptimisticInjuryLog(
-        { injury_id: injury.id, note: 'Feeling fine', pain_level: 0, context: [] },
+        {
+          injury_id: injury.id,
+          entry_date: todayYMD,
+          note: 'Feeling fine',
+          pain_level: 0,
+          context: []
+        },
         temporaryId,
         todayYMD
       )
@@ -1797,11 +1820,13 @@ function ReorderHandle({
 function ActiveInjuryCard({
   injury,
   todayYMD,
+  timezone,
   onOpen,
   reorder
 }: {
   injury: Injury
   todayYMD: string
+  timezone: string | null
   onOpen: () => void
   reorder: {
     dragging: boolean
@@ -1875,6 +1900,7 @@ function ActiveInjuryCard({
             <FlareForm
               injuryId={injury.id}
               todayYMD={todayYMD}
+              timezone={timezone}
               onDone={() => setFlareOpen(false)}
               onCancel={() => setFlareOpen(false)}
             />
@@ -1900,11 +1926,13 @@ function ActiveInjuryCard({
 function InjuryFullView({
   injury,
   todayYMD,
+  timezone,
   readOnly,
   onBack
 }: {
   injury: Injury
   todayYMD: string
+  timezone: string | null
   readOnly: boolean
   onBack: () => void
 }): ReactElement {
@@ -1967,6 +1995,7 @@ function InjuryFullView({
             <FlareForm
               injuryId={injury.id}
               todayYMD={todayYMD}
+              timezone={timezone}
               onDone={() => setFlareOpen(false)}
               onCancel={() => setFlareOpen(false)}
             />
@@ -2099,6 +2128,7 @@ export function InjuriesView(): ReactElement {
         <InjuryFullView
           injury={selected}
           todayYMD={todayYMD}
+          timezone={timezone}
           readOnly={selected.status === 'resolved'}
           onBack={() => setSelectedInjuryId(null)}
         />
@@ -2145,6 +2175,7 @@ export function InjuriesView(): ReactElement {
                 key={injury.id}
                 injury={injury}
                 todayYMD={todayYMD}
+                timezone={timezone}
                 onOpen={() => setSelectedInjuryId(injury.id)}
                 reorder={{
                   dragging: draggedId === injury.id,

@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { dateKeyInTimeZone } from '@shared/localDate'
 
 // supabase-js requires a global WebSocket (native in Node 22+); Electron's
 // bundled Node may be older, so polyfill before the client is created.
@@ -424,6 +425,11 @@ export async function getUserConfig(): Promise<UserConfig> {
   return normalizeNumeric(data as UserConfig, USER_CONFIG_NUMERIC_KEYS)
 }
 
+async function currentUserDateKey(): Promise<string> {
+  const timezone = (await getUserConfig()).timezone
+  return dateKeyInTimeZone(new Date(), timezone)
+}
+
 export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConfig> {
   const supabase = getClient()
 
@@ -532,7 +538,9 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
     const birthdate = update.birthdate
     if (birthdate !== null) {
       assertDate(birthdate, 'birthdate')
-      const today = new Date().toISOString().slice(0, 10)
+      const timezone =
+        typeof update.timezone === 'string' ? update.timezone : (await getUserConfig()).timezone
+      const today = dateKeyInTimeZone(new Date(), timezone)
       if ((birthdate as string) > today) {
         throw new Error('updateUserConfig: birthdate cannot be in the future')
       }
@@ -557,7 +565,7 @@ export async function updateUserConfig(patch: UserConfigPatch): Promise<UserConf
 
 export async function getTodayFlags(): Promise<Flag[]> {
   const supabase = getClient()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = await currentUserDateKey()
 
   const { data, error } = await supabase
     .from('computed_daily')
@@ -698,7 +706,7 @@ export async function addInjuryLog(
   // no span). Chat-authored notes and period spans are exempt — they can share a
   // date with a quick log without being clobbered, matching the partial unique
   // index injury_notes_user_daily_unique.
-  const entryDate = entry.entry_date ?? new Date().toISOString().slice(0, 10)
+  const entryDate = entry.entry_date ?? (await currentUserDateKey())
   const { data: dayRow, error: dayError } = await supabase
     .from('injury_notes')
     .select(INJURY_LOG_COLUMNS)
@@ -833,7 +841,7 @@ export async function updateInjuryStatus(
   // Resolving stamps resolved_at (a date); reopening clears it.
   const row: Record<string, unknown> = {
     status,
-    resolved_at: status === 'resolved' ? new Date().toISOString().slice(0, 10) : null,
+    resolved_at: status === 'resolved' ? await currentUserDateKey() : null,
     updated_at: new Date().toISOString()
   }
 
@@ -1450,7 +1458,7 @@ export async function startGymTemplateRun(templateId: string): Promise<GymTempla
   if (openError) throw new Error(`startGymTemplateRun (open): ${openError.message}`)
   if (openOnThis) return openOnThis as GymTemplateRun
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = await currentUserDateKey()
   const familyIds = await familyTemplateIds((tpl as { family_id: string }).family_id)
   const { error: closeError } = await supabase
     .from('gym_template_runs')
@@ -1485,7 +1493,7 @@ export async function completeGymTemplateRun(
   const familyIds = await familyTemplateIds((tpl as { family_id: string }).family_id)
   const { data, error } = await supabase
     .from('gym_template_runs')
-    .update({ ended_at: new Date().toISOString().slice(0, 10) })
+    .update({ ended_at: await currentUserDateKey() })
     .in('template_id', familyIds)
     .is('ended_at', null)
     .select(GYM_TEMPLATE_RUN_COLUMNS)
@@ -1589,20 +1597,6 @@ async function getGymSessionTemplateIds(sessionIds: string[]): Promise<Map<strin
   return bySession
 }
 
-/** "2026-07-12" for an ISO instant in the user's timezone (falls back to the instant's UTC date). */
-function localDateInTz(iso: string, timezone: string | null): string {
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone ?? undefined,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date(iso))
-  } catch {
-    return iso.slice(0, 10)
-  }
-}
-
 /**
  * Active plan items (of a non-resolved injury) linked to any of the given
  * exercises — the shared match used both to auto-check on save
@@ -1687,7 +1681,7 @@ async function syncPlanChecksFromGymSets(
     if (items.length === 0) return
 
     const timezone = (await getUserConfig()).timezone
-    const doneDate = localDateInTz(performedAtIso, timezone)
+    const doneDate = dateKeyInTimeZone(performedAtIso, timezone)
     const { error: upsertError } = await getClient().from('plan_item_checks').upsert(
       items.map((item) => ({ item_id: item.id, done_date: doneDate, source: 'gym' })),
       { onConflict: 'item_id,done_date', ignoreDuplicates: true }
@@ -1739,7 +1733,7 @@ async function removeGymPlanChecksForSession(sessionId: string): Promise<void> {
     if (items.length === 0) return
 
     const timezone = (await getUserConfig()).timezone
-    const doneDate = localDateInTz(session.performed_at, timezone)
+    const doneDate = dateKeyInTimeZone(session.performed_at, timezone)
 
     // Other sessions whose LOCAL date could match: a generous ±1 UTC-day
     // window around performed_at, precisely filtered below via
@@ -1757,7 +1751,7 @@ async function removeGymPlanChecksForSession(sessionId: string): Promise<void> {
     if (nearbyError) throw new Error(nearbyError.message)
 
     const sameDaySessionIds = (nearbySessions ?? [])
-      .filter((s) => localDateInTz(s.performed_at, timezone) === doneDate)
+      .filter((s) => dateKeyInTimeZone(s.performed_at, timezone) === doneDate)
       .map((s) => s.id)
 
     let exercisesStillLogged = new Set<string>()

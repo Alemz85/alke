@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Lock, X } from 'lucide-react'
+import { dateKeyInTimeZone } from '@shared/localDate'
 import {
   Area,
   AreaChart,
@@ -796,16 +797,19 @@ function GoalDetailModal({
 
 interface GoalModalProps {
   goal: Goal | null
+  timezone: string | null | undefined
   onClose: () => void
 }
 
-function GoalModal({ goal, onClose }: GoalModalProps): ReactElement {
+function GoalModal({ goal, timezone, onClose }: GoalModalProps): ReactElement {
   const queryClient = useQueryClient()
   const isEdit = goal != null
 
   const [title, setTitle] = useState(goal?.title ?? '')
   const [description, setDescription] = useState(goal?.description ?? '')
-  const [startedAt, setStartedAt] = useState(goal?.started_at.slice(0, 10) ?? new Date().toISOString().slice(0, 10))
+  const [startedAt, setStartedAt] = useState(
+    goal?.started_at.slice(0, 10) ?? dateKeyInTimeZone(new Date(), timezone)
+  )
   const [durationWeeks, setDurationWeeks] = useState<string>(
     goal?.duration_days != null ? String(Math.round(goal.duration_days / 7)) : ''
   )
@@ -971,7 +975,15 @@ function GoalArchiveRow({ goal, now, onOpen }: { goal: Goal; now: Date; onOpen: 
   )
 }
 
-function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElement {
+function GoalsSection({
+  goals,
+  now,
+  timezone
+}: {
+  goals: Goal[]
+  now: Date
+  timezone: string | null | undefined
+}): ReactElement {
   const [tab, setTab] = useState<GoalTabKey>('active')
   const [modalGoal, setModalGoal] = useState<Goal | null | 'new'>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -1070,7 +1082,11 @@ function GoalsSection({ goals, now }: { goals: Goal[]; now: Date }): ReactElemen
       )}
 
       {modalGoal != null && (
-        <GoalModal goal={modalGoal === 'new' ? null : modalGoal} onClose={() => setModalGoal(null)} />
+        <GoalModal
+          goal={modalGoal === 'new' ? null : modalGoal}
+          timezone={timezone}
+          onClose={() => setModalGoal(null)}
+        />
       )}
     </section>
   )
@@ -1097,12 +1113,17 @@ export function ProfileView(): ReactElement {
     queryFn: () => window.api.getGoals(),
     staleTime: 60_000
   })
+  const configQuery = useQuery({
+    queryKey: ['userConfig'],
+    queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
 
   const workouts = workoutsQuery.data ?? []
   const goals = goalsQuery.data ?? []
 
-  const loading = workoutsQuery.isLoading || goalsQuery.isLoading
-  const error = workoutsQuery.isError || goalsQuery.isError
+  const loading = workoutsQuery.isLoading || goalsQuery.isLoading || configQuery.isLoading
+  const error = workoutsQuery.isError || goalsQuery.isError || configQuery.isError
 
   return (
     <div className="view">
@@ -1136,7 +1157,7 @@ export function ProfileView(): ReactElement {
       ) : section === 'goals' ? (
         <>
           <AboutMeSection />
-          <GoalsSection goals={goals} now={now} />
+          <GoalsSection goals={goals} now={now} timezone={configQuery.data?.timezone} />
         </>
       ) : (
         <>

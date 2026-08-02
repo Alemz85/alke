@@ -179,13 +179,13 @@ export function RecoveryView(): ReactElement {
 
   const userConfigQuery = useRecoveryUserConfig()
   const flagsQuery = useRecoveryTodayFlags()
+  const timezone = userConfigQuery.data?.timezone ?? undefined
 
   // Fetch the widest window any chart on this tab needs (1y for VO2max), then
   // slice client-side per chart's active range — avoids duplicate queries.
-  const dailyMetricsQuery = useRecoveryDailyMetrics(RANGE_DAYS['1y'])
-  const computedDailyQuery = useRecoveryComputedDaily(RANGE_DAYS['1y'])
+  const dailyMetricsQuery = useRecoveryDailyMetrics(RANGE_DAYS['1y'], timezone)
+  const computedDailyQuery = useRecoveryComputedDaily(RANGE_DAYS['1y'], timezone)
 
-  const timezone = userConfigQuery.data?.timezone ?? undefined
   const sleepGoalMinutes = userConfigQuery.data?.sleep_goal_min ?? 480
   const sleepGoalHours = sleepGoalMinutes / 60
   const sleepGoalLabel = sleepGoalMinutes % 60 === 0

@@ -6,8 +6,7 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ComputedDaily, DailyMetric, Flag, UserConfig } from '@shared/types'
 import type { ChipRange } from '../components'
-
-const DAY_MS = 24 * 60 * 60 * 1000
+import { addDays, todayYMD, ymdKey } from './sessionsDate'
 
 export const RANGE_DAYS: Record<ChipRange, number> = {
   '7d': 7,
@@ -16,19 +15,18 @@ export const RANGE_DAYS: Record<ChipRange, number> = {
   '1y': 365
 }
 
-function isoDateNDaysAgo(n: number): string {
-  const d = new Date(Date.now() - n * DAY_MS)
-  return d.toISOString().slice(0, 10)
+function isoDateNDaysAgo(n: number, timezone?: string | null): string {
+  return ymdKey(addDays(todayYMD(timezone), -n))
 }
 
-function isoDateToday(): string {
-  return new Date().toISOString().slice(0, 10)
+function isoDateToday(timezone?: string | null): string {
+  return ymdKey(todayYMD(timezone))
 }
 
 /** Daily metrics (RHR, HRV, sleep, steps, etc.) for the last N days. */
-export function useRecoveryDailyMetrics(days: number) {
-  const fromDate = isoDateNDaysAgo(days)
-  const toDate = isoDateToday()
+export function useRecoveryDailyMetrics(days: number, timezone?: string | null) {
+  const fromDate = isoDateNDaysAgo(days, timezone)
+  const toDate = isoDateToday(timezone)
   return useQuery<DailyMetric[]>({
     queryKey: ['recovery', 'dailyMetrics', fromDate, toDate],
     queryFn: () => window.api.getDailyMetrics(fromDate, toDate)
@@ -36,9 +34,9 @@ export function useRecoveryDailyMetrics(days: number) {
 }
 
 /** Computed daily rows (rhr_baseline_60d, hrv_baseline_60d, ...) for the last N days. Empty until the nightly job exists. */
-export function useRecoveryComputedDaily(days: number) {
-  const fromDate = isoDateNDaysAgo(days)
-  const toDate = isoDateToday()
+export function useRecoveryComputedDaily(days: number, timezone?: string | null) {
+  const fromDate = isoDateNDaysAgo(days, timezone)
+  const toDate = isoDateToday(timezone)
   return useQuery<ComputedDaily[]>({
     queryKey: ['recovery', 'computedDaily', fromDate, toDate],
     queryFn: () => window.api.getComputedDaily(fromDate, toDate)

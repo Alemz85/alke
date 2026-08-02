@@ -105,13 +105,13 @@ function StatSquare({ label, name, value, sub, domain, onClick }: StatSquareProp
 
 export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewProps): ReactElement {
   const userConfigQuery = useUserConfig()
+  const timezone = userConfigQuery.data?.timezone ?? undefined
   // A year of daily metrics feeds the RHR detail popup and the body-weight
   // pill's ~30-day-ago comparison; the pill/RHR calcs filter by date so the
   // wide pull is safe.
-  const dailyMetricsQuery = useDailyMetrics(365)
-  const recentWorkoutsQuery = useRecentWorkouts()
+  const dailyMetricsQuery = useDailyMetrics(365, timezone)
+  const recentWorkoutsQuery = useRecentWorkouts(timezone)
 
-  const timezone = userConfigQuery.data?.timezone ?? undefined
   const weeklyMinSessions = parseWeeklyMinSessions(userConfigQuery.data)
 
   // The ISO week window anchored to "today" in the USER's configured timezone.

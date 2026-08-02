@@ -13,7 +13,14 @@ import {
 import type { InsightCorrelation } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import { ChartCard, EmptyState } from '../components'
-import { localDateKey } from '../hooks/sessionsDate'
+import {
+  addDays,
+  localDateKey,
+  todayYMD,
+  ymdKey,
+  ymdToZonedIsoEnd,
+  ymdToZonedIsoStart
+} from '../hooks/sessionsDate'
 import './InsightsView.css'
 
 const DRIVERS = [
@@ -63,31 +70,35 @@ interface FinderCandidate {
 /** Rebuild the daily analysis series in the renderer so a clicked cell can
  * show its underlying scatter — mirrors metrics/compute.py's frame. */
 function useAnalysisSeries(): Record<string, Map<string, number>> {
-  const from = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 365)
-    return d.toISOString()
-  }, [])
-  const daily = useQuery({
-    queryKey: ['insights', 'dailyMetrics'],
-    queryFn: () =>
-      window.api.getDailyMetrics(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
-    staleTime: 60_000
-  })
-  const computed = useQuery({
-    queryKey: ['insights', 'computedDaily'],
-    queryFn: () =>
-      window.api.getComputedDaily(from.slice(0, 10), new Date().toISOString().slice(0, 10)),
-    staleTime: 60_000
-  })
-  const workouts = useQuery({
-    queryKey: ['insights', 'workouts'],
-    queryFn: () => window.api.getWorkouts(from, new Date().toISOString()),
-    staleTime: 60_000
-  })
   const config = useQuery({
     queryKey: ['insights', 'config'],
     queryFn: () => window.api.getUserConfig(),
+    staleTime: 60_000
+  })
+  const timezone = config.data?.timezone ?? null
+  const range = useMemo(() => {
+    const today = todayYMD(timezone)
+    const fromDay = addDays(today, -365)
+    return {
+      fromDate: ymdKey(fromDay),
+      toDate: ymdKey(today),
+      fromIso: ymdToZonedIsoStart(fromDay, timezone),
+      toIso: ymdToZonedIsoEnd(today, timezone)
+    }
+  }, [timezone])
+  const daily = useQuery({
+    queryKey: ['insights', 'dailyMetrics', range.fromDate, range.toDate],
+    queryFn: () => window.api.getDailyMetrics(range.fromDate, range.toDate),
+    staleTime: 60_000
+  })
+  const computed = useQuery({
+    queryKey: ['insights', 'computedDaily', range.fromDate, range.toDate],
+    queryFn: () => window.api.getComputedDaily(range.fromDate, range.toDate),
+    staleTime: 60_000
+  })
+  const workouts = useQuery({
+    queryKey: ['insights', 'workouts', range.fromIso, range.toIso],
+    queryFn: () => window.api.getWorkouts(range.fromIso, range.toIso),
     staleTime: 60_000
   })
 

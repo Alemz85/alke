@@ -4,9 +4,12 @@ import {
   isoWeekKey,
   isoWeekStart,
   localDateKey,
+  todayYMD,
   toZonedYMD,
   ymdKey,
-  ymdToIsoStart
+  ymdToIsoStart,
+  ymdToZonedIsoEnd,
+  ymdToZonedIsoStart
 } from '../sessionsDate'
 
 describe('isoWeekKey', () => {
@@ -104,6 +107,16 @@ describe('toZonedYMD', () => {
   })
 })
 
+describe('todayYMD', () => {
+  it('uses the configured timezone instead of the UTC calendar date near midnight', () => {
+    expect(todayYMD('Europe/Berlin', new Date('2026-01-15T23:30:00Z'))).toEqual({
+      year: 2026,
+      month: 1,
+      day: 16
+    })
+  })
+})
+
 describe('ymdKey', () => {
   it('zero-pads month and day', () => {
     expect(ymdKey({ year: 2026, month: 1, day: 5 })).toBe('2026-01-05')
@@ -135,5 +148,13 @@ describe('addDays', () => {
 describe('ymdToIsoStart', () => {
   it('produces a UTC midnight ISO instant for the given calendar date', () => {
     expect(ymdToIsoStart({ year: 2026, month: 3, day: 9 })).toBe('2026-03-09T00:00:00.000Z')
+  })
+})
+
+describe('zoned day bounds', () => {
+  it('maps a Berlin calendar day to its exact UTC start and inclusive end across spring DST', () => {
+    const day = { year: 2026, month: 3, day: 29 }
+    expect(ymdToZonedIsoStart(day, 'Europe/Berlin')).toBe('2026-03-28T23:00:00.000Z')
+    expect(ymdToZonedIsoEnd(day, 'Europe/Berlin')).toBe('2026-03-29T21:59:59.999Z')
   })
 })

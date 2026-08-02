@@ -4,6 +4,8 @@
 // Intl.DateTimeFormat, per DESIGN.md: "A workout belongs to the LOCAL
 // calendar date of its start_at in that timezone."
 
+import { dateKeyInTimeZone } from '@shared/localDate'
+
 /** Plain calendar date, no time component. Always y/m/d in SOME timezone (see call sites). */
 export interface YMD {
   year: number
@@ -15,17 +17,7 @@ const FALLBACK_TZ = 'UTC'
 
 /** Format an ISO instant into {year, month, day} in the given IANA timezone. */
 export function toZonedYMD(iso: string, timezone: string | null | undefined): YMD {
-  const tz = timezone || FALLBACK_TZ
-  const dt = new Date(iso)
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(dt)
-  const year = Number(parts.find((p) => p.type === 'year')?.value)
-  const month = Number(parts.find((p) => p.type === 'month')?.value)
-  const day = Number(parts.find((p) => p.type === 'day')?.value)
+  const [year, month, day] = dateKeyInTimeZone(iso, timezone).split('-').map(Number)
   return { year, month, day }
 }
 
@@ -81,8 +73,11 @@ export function isoWeekKey(ymd: YMD): string {
 }
 
 /** Today's YMD in the given timezone. */
-export function todayYMD(timezone: string | null | undefined): YMD {
-  return toZonedYMD(new Date().toISOString(), timezone)
+export function todayYMD(
+  timezone: string | null | undefined,
+  now: Date = new Date()
+): YMD {
+  return toZonedYMD(now.toISOString(), timezone)
 }
 
 /** Add N days to a YMD, returning a new YMD (UTC-anchored arithmetic). */
@@ -137,6 +132,15 @@ export function ymdToZonedIsoStart(
     if (correction === 0) break
   }
   return new Date(instantMs).toISOString()
+}
+
+/** Inclusive end instant for a local calendar day, including 23/25-hour DST days. */
+export function ymdToZonedIsoEnd(
+  ymd: YMD,
+  timezone: string | null | undefined
+): string {
+  const nextStartMs = new Date(ymdToZonedIsoStart(addDays(ymd, 1), timezone)).getTime()
+  return new Date(nextStartMs - 1).toISOString()
 }
 
 export const MONTH_NAMES = [

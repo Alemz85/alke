@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, X } from 'lucide-react'
+import { dateKeyInTimeZone } from '@shared/localDate'
 import { USER_SEXES, type UserConfig, type UserConfigPatch, type UserSex } from '@shared/types'
 import { isQueuedWriteReceipt } from '../lib/optimisticEntities'
 import { TabHeader } from './TabHeader'
@@ -228,7 +229,7 @@ export function SettingsView(): ReactElement {
       e.protein_target_g = 'Must be a whole number, 1–399 g.'
 
     if (draft.birthdate.trim() !== '') {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = dateKeyInTimeZone(new Date(), draft.timezone)
       if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.birthdate)) e.birthdate = 'Enter a valid date.'
       else if (draft.birthdate > today) e.birthdate = 'Cannot be in the future.'
     }

@@ -4,6 +4,15 @@ import { describe, expect, it } from 'vitest'
 const source = readFileSync(new URL('../InjuriesView.tsx', import.meta.url), 'utf8')
 
 describe('quick-log "Feeling fine" reflects logged-today state', () => {
+  it('pins both quick-log payloads to the clicked local date for offline replay', () => {
+    const flareForm = source.match(/function FlareForm\([\s\S]*?\n\/\/ ── action row/)?.[0] ?? ''
+    const actionRow = source.match(/function ActionRow\([\s\S]*?\n\/\/ ── recovery plan modal/)?.[0] ?? ''
+    expect(flareForm).toContain('entry_date: todayYMD')
+    expect(actionRow).toContain('entry_date: todayYMD')
+    expect(flareForm).toContain('ymdToZonedIsoStart(day, timezone)')
+    expect(flareForm).toContain('ymdToZonedIsoEnd(day, timezone)')
+  })
+
   it('derives loggedFineToday from the actual log via todayUserEntry, not a timer', () => {
     const actionRow = source.match(/function ActionRow\([\s\S]*?\n\/\/ ── recovery plan modal/)?.[0] ?? ''
     expect(actionRow).toContain('todayUserEntry(log, todayYMD)')

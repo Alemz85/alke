@@ -25,7 +25,15 @@ import {
   Zone2FitnessHeader
 } from '../components'
 import { Zone2HrZonesCard } from '../components/Zone2FitnessHeader'
-import { addDays, isoWeekKey, isoWeekStart, localDateKey, toZonedYMD } from '../hooks/sessionsDate'
+import {
+  addDays,
+  isoWeekKey,
+  isoWeekStart,
+  localDateKey,
+  todayYMD,
+  toZonedYMD,
+  ymdKey
+} from '../hooks/sessionsDate'
 import {
   CARDIO_MODALITIES,
   cardioModalityByKey,
@@ -512,19 +520,21 @@ export function Zone2View({ onOpenSessions }: Zone2ViewProps): ReactElement {
     queryFn: () => window.api.getUserConfig(),
     staleTime: 60_000
   })
+  const timezone = configQuery.data?.timezone ?? null
   // ~400 days: enough for the walking tab's 90d daily chart, 26-week chart,
   // and 30d baseline all with margin, plus a full trailing year for context.
-  const dailyMetricsFrom = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 400)
-    return d.toISOString().slice(0, 10)
-  }, [])
+  const dailyMetricsRange = useMemo(() => {
+    const today = todayYMD(timezone)
+    return {
+      from: ymdKey(addDays(today, -400)),
+      to: ymdKey(today)
+    }
+  }, [timezone])
   const dailyMetricsQuery = useQuery({
-    queryKey: ['zone2', 'dailyMetrics', dailyMetricsFrom],
-    queryFn: () => window.api.getDailyMetrics(dailyMetricsFrom, new Date().toISOString().slice(0, 10)),
+    queryKey: ['zone2', 'dailyMetrics', dailyMetricsRange.from, dailyMetricsRange.to],
+    queryFn: () => window.api.getDailyMetrics(dailyMetricsRange.from, dailyMetricsRange.to),
     staleTime: 60_000
   })
-  const timezone = configQuery.data?.timezone ?? null
   const weeklyTargetMin = configQuery.data?.zone2_weekly_target_min ?? 90
   const workouts = useMemo(() => workoutsQuery.data ?? [], [workoutsQuery.data])
   const dailyMetrics = useMemo(() => dailyMetricsQuery.data ?? [], [dailyMetricsQuery.data])
