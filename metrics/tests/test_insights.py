@@ -280,10 +280,12 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 3
+    assert model["diagnostics"]["model_version"] == 4
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
+    assert "wake-ordered sleep context" in model["spec"]
+    assert "wake time precedes" in model["diagnostics"]["caveat"]
     candidate = model["diagnostics"]["candidates"][0]
     assert candidate["status"] == "signal"
     assert candidate["q_value"] == pytest.approx(candidate["p_value"])
@@ -945,6 +947,14 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
 
     names = {spec["name"] for spec in DEFAULT_WORKOUT_SPECS}
     assert {
+        "sleep_awake_fraction_to_workout_duration",
+        "sleep_awake_fraction_to_workout_intensity",
+        "sleep_shortfall_3d_to_workout_duration",
+        "sleep_shortfall_3d_to_workout_intensity",
+        "atl_prior_to_workout_duration",
+        "atl_prior_to_workout_intensity",
+        "log_hours_since_prev_workout_to_workout_duration",
+        "log_hours_since_prev_workout_to_workout_intensity",
         "hours_awake_to_workout_duration",
         "hours_awake_to_workout_intensity",
         "workout_time_to_load",
@@ -952,8 +962,17 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
     } <= names
     for spec in DEFAULT_WORKOUT_SPECS:
         assert "same_day_prior_load" in spec["controls"]
-        assert "log_hours_since_prev_workout" in spec["controls"]
+        assert "atl_prior" in spec["controls"] or spec.get("driver") == "atl_prior"
+        assert (
+            "log_hours_since_prev_workout" in spec["controls"]
+            or spec.get("driver") == "log_hours_since_prev_workout"
+        )
         assert "log_days_since_prev_modality" in spec["controls"]
+        assert spec.get("driver") not in spec["controls"]
+
+    timing_specs = [spec for spec in DEFAULT_WORKOUT_SPECS if spec.get("kind") == "cyclic"]
+    assert timing_specs
+    assert all("hours_since_wake" in spec["controls"] for spec in timing_specs)
 
 
 def test_correlations_spearman_flags_outlier_driven_pair():
@@ -1080,6 +1099,7 @@ def test_daily_insight_frame_uses_only_pre_outcome_load_controls():
     assert row["ctl_pre_exposure"] == pytest.approx(117.0)
     assert row["trimp_prior"] == pytest.approx(18.0)
     assert row["sleep_shortfall"] == pytest.approx(60.0)
+    assert row["sleep_shortfall_3d"] == pytest.approx(20.0)
     assert row["sleep_awake_fraction"] == pytest.approx(0.5 / 8.0)
     assert row["wake_hour"] == pytest.approx(8.0)
 
@@ -1140,7 +1160,9 @@ def test_workout_insight_frame_filters_unmeasured_load_and_derives_context():
     daily = pd.DataFrame(
         {
             "ctl_prior": [10.0, 11.0, 12.0],
+            "atl_prior": [13.0, 14.0, 15.0],
             "trimp_prior": [1.0, 2.0, 3.0],
+            "wake_hour": [8.0, 8.0, 8.0],
             "sleep_shortfall": [0.0, 30.0, -20.0],
             "rhr_dev": [99.0, 99.0, 99.0],
             "hrv_dev": [99.0, 99.0, 99.0],
@@ -1219,6 +1241,60 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["load_prev_modality"] == pytest.approx(20.0)
 
 
+def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    daily = pd.DataFrame(
+        {
+            "wake_hour": [8.0],
+            "sleep_shortfall": [30.0],
+            "sleep_shortfall_3d": [20.0],
+            "sleep_midpoint_dev": [1.0],
+            "sleep_awake_fraction": [0.1],
+            "respiratory_rate_dev": [0.5],
+            "rhr_dev_prior": [2.0],
+            "hrv_dev_prior": [-3.0],
+            "ctl_prior": [10.0],
+            "atl_prior": [12.0],
+            "trimp_prior": [5.0],
+        },
+        index=pd.to_datetime(["2026-01-02"]),
+    )
+    workouts = [
+        {
+            "id": "before-wake",
+            "type": "rowing",
+            "start_at": "2026-01-02T04:00:00Z",
+            "duration_s": 1200,
+        }
+    ]
+    computed = {
+        "before-wake": {
+            "trimp": 20.0,
+            "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+        }
+    }
+
+    row = build_workout_insight_frame(
+        workouts, computed, daily, ZoneInfo("UTC")
+    ).iloc[0]
+
+    assert pd.isna(row["hours_since_wake"])
+    for column in (
+        "sleep_shortfall",
+        "sleep_shortfall_3d",
+        "sleep_midpoint_dev",
+        "sleep_awake_fraction",
+        "respiratory_rate_dev",
+    ):
+        assert pd.isna(row[column])
+    assert row["rhr_dev_prior"] == pytest.approx(2.0)
+    assert row["hrv_dev_prior"] == pytest.approx(-3.0)
+    assert row["atl_prior"] == pytest.approx(12.0)
+
+
 def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
     from zoneinfo import ZoneInfo
 
@@ -1260,7 +1336,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [3, 3]
+    assert expected_versions == [3, 4]
 
 
 def test_persistence_state_never_crosses_model_versions():
@@ -1290,3 +1366,15 @@ def test_sleep_midpoint_uses_actual_instant_on_local_clock_across_dst():
         "sleep_end": "2026-03-29T05:00:00Z",
     }
     assert sleep_midpoint_hours(row, ZoneInfo("Europe/Berlin")) == pytest.approx(3.5)
+
+
+def test_wake_hour_preserves_day_offset_from_daily_row():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import wake_clock_hours
+
+    row = {
+        "date": "2026-01-02",
+        "sleep_end": "2026-01-03T08:00:00Z",
+    }
+    assert wake_clock_hours(row, ZoneInfo("UTC")) == pytest.approx(32.0)

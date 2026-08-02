@@ -347,7 +347,9 @@ def wake_clock_hours(row: dict, tz) -> float | None:
     if not row.get("sleep_end"):
         return None
     wake = datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).astimezone(tz)
-    return wake.hour + wake.minute / 60 + wake.second / 3600
+    row_day = date.fromisoformat(row["date"])
+    day_offset = (wake.date() - row_day).days
+    return day_offset * 24 + wake.hour + wake.minute / 60 + wake.second / 3600
 
 
 def build_daily_insight_frame(daily_metrics, daily_rows, tz):
@@ -413,6 +415,12 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
     frame["hrv_dev_prior"] = frame["hrv_dev"].shift(1)
 
     frame["sleep_shortfall"] = -prior_rolling_deviation(frame["sleep_duration"])
+    # A separate cumulative exposure preserves the distinction between one
+    # short night and several consecutive short nights. Requiring all three
+    # calendar days avoids silently changing its meaning across sensor gaps.
+    frame["sleep_shortfall_3d"] = frame["sleep_shortfall"].rolling(
+        window=3, min_periods=3
+    ).mean()
     frame["sleep_midpoint_dev"] = prior_rolling_deviation(frame["sleep_midpoint"]).abs()
     frame["respiratory_rate_dev"] = prior_rolling_deviation(frame["respiratory_rate"])
 
@@ -452,8 +460,13 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     import pandas as pd
 
     rows: list[dict] = []
+    sleep_context_columns = {
+        "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
+        "sleep_awake_fraction", "respiratory_rate_dev",
+    }
     context_columns = (
-        "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
+        "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
+        "sleep_awake_fraction",
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior",
     )
@@ -490,14 +503,21 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
                 float(zones.get("z4") or 0.0) + float(zones.get("z5") or 0.0)
             ) / zone_seconds,
         }
-        for column in context_columns:
-            row[column] = context.get(column) if context is not None else np.nan
         wake_hour = context.get("wake_hour") if context is not None else np.nan
         hours_since_wake = hour - wake_hour if pd.notna(wake_hour) else np.nan
-        row["hours_since_wake"] = (
+        valid_hours_since_wake = (
             hours_since_wake if pd.notna(hours_since_wake) and 0 <= hours_since_wake <= 20
             else np.nan
         )
+        row["hours_since_wake"] = valid_hours_since_wake
+        for column in context_columns:
+            value = context.get(column) if context is not None else np.nan
+            # A daily sleep row is labelled by the local date on which sleep
+            # ended. For a workout before that wake time, those measurements
+            # are future information and must not enter the workout model.
+            if column in sleep_context_columns and pd.isna(valid_hours_since_wake):
+                value = np.nan
+            row[column] = value
         rows.append(row)
     if not rows:
         return pd.DataFrame()
@@ -583,7 +603,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=3)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=4)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

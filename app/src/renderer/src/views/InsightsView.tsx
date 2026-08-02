@@ -128,6 +128,9 @@ function candidateInterpretation(candidate: FinderCandidate): string {
   if (candidate.direction === 'prior-day-to-workout') {
     return "The previous day's finalized daily aggregate predates the workout; this is recorded behavior, not a capacity test."
   }
+  if (candidate.direction === 'pre-workout-state') {
+    return 'Accumulated load or recovery interval precedes the workout; this is recorded behavior, not a capacity test.'
+  }
   if (candidate.direction === 'same-day-context') {
     return 'Position in the waking day precedes the workout; still observational.'
   }
@@ -346,8 +349,8 @@ export function InsightsView(): ReactElement {
     {
       key: 'workout',
       title: 'Workout context',
-      detail: 'Readiness, waking-day position, and circular workout time',
-      expectedVersion: 3,
+      detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
+      expectedVersion: 4,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {

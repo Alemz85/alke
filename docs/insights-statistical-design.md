@@ -36,7 +36,7 @@ This creates the following legal ordering:
 ```
 load / ambient activity on t-1
         ↓
-sleep and morning recovery on t
+sleep-associated context on t
         ↓
 workout choice and recorded intensity later on t
 ```
@@ -103,16 +103,29 @@ would require a standardized task, pace/power, and preferably perceived
 exertion. They answer how hard the recorded session was, conditional on doing
 a workout.
 
-Workout readiness candidates relate sleep shortfall, sleep timing drift,
+Workout readiness candidates relate sleep shortfall, three-night mean
+shortfall, sleep timing drift, sleep awake fraction,
 previous-day finalized RHR/HRV, and sleep-associated respiratory-rate
-deviation to duration and TRIMP per minute. Hours since waking is screened
-separately because clock time and biological-day position are not the same
-exposure. They control prior load state, modality, time since the previous
-workout, time since the previous workout of that modality, and any load already
-accumulated earlier that day. The last control is essential: an evening session
-is more likely than a morning session to be a second session, and otherwise
-“time of day” could merely rediscover accumulated same-day fatigue. Missing
-measurements reduce a candidate's own sample; they do not cause imputation.
+deviation to duration and TRIMP per minute. The three-night exposure requires
+three complete consecutive calendar days; it is not imputed across a missing
+night. Prior acute load and time since the previous workout are also screened
+as pre-workout state candidates. Hours since waking is screened separately
+because clock time and biological-day position are not the same exposure.
+
+Every workout fit controls chronic and acute load through the prior day,
+previous-day load, modality, time since the previous workout, time since the
+previous workout of that modality, and any load already accumulated earlier
+that day. A candidate is removed from its own control list. The same-day load
+control is essential: an evening session is more likely than a morning session
+to be a second session, and otherwise “time of day” could merely rediscover
+accumulated same-day fatigue.
+
+Same-day sleep, timing, continuity, and respiratory context enters a workout
+row only when the recorded sleep end precedes the workout by no more than 20
+hours. This prevents a late-night or early-morning workout from borrowing a
+sleep episode that ends later. Previous-day finalized RHR/HRV and prior-load
+state do not depend on that gate. Other missing measurements reduce a
+candidate's own sample; they do not cause imputation.
 
 ### Workout time of day
 
@@ -126,11 +139,14 @@ freedom test reports:
 - bootstrap phase concentration, so a statistically non-zero but wandering
   peak does not surface.
 
-Modality fixed effects, weekday, secular trend, prior load state, and relevant
-duration are controls. This reduces—but cannot eliminate—confounding from a
-schedule such as “rowing happens in the evening, walking happens in the
-morning.” A result remains an association with recorded training behavior, not
-proof of a circadian mechanism or a recommendation to move every session.
+Modality fixed effects, weekday, secular trend, prior load state, hours since
+waking, and relevant duration are controls. Hours since waking is essential in
+this data: it correlates 0.91 with clock time, so a clock-only fit would mostly
+rediscover position in the waking day. These controls reduce—but cannot
+eliminate—confounding from a schedule such as “rowing happens in the evening,
+walking happens in the morning.” A result remains an association with recorded
+training behavior, not proof of a circadian mechanism or a recommendation to
+move every session.
 
 The secular trend is elapsed calendar time, not workout row number. Two
 sessions on one date receive the same trend value, and a week without training
@@ -178,7 +194,8 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Model version 3 enforces the prior-day rule above.
+workout. Daily model version 3 and workout model version 4 enforce the
+prior-day rule above.
 
 ## Current data implications (audit 2026-08-02)
 
@@ -188,13 +205,23 @@ workout. Model version 3 enforces the prior-day rule above.
   same-day readiness measurements.
 - Active energy has 25 days, weight 39, wrist temperature 0, protein 1, and
   detailed gym sessions 5: these remain dormant.
+- Workout temperature and humidity exist on 101 sessions across 70 dates, but
+  most are indoor strength, rowing, cycling, or pool sessions and the historic
+  running block lacks them. They are not treated as physiological ambient
+  exposure until the source semantics and outdoor coverage are trustworthy.
 - 108 workouts in the daily-data era have positive HR-derived load and at
   least five minutes of classified HR, but they come from 77 dates; 55 sessions
   lie on one of 24 multi-workout dates. The common complete-case timing frame
   currently has 82 sessions on 56 dates, so it remains dormant under the
-  60-date rule. HRV-context candidates have 100 sessions on 71 dates and can be
-  evaluated, while reliable modality-specific timing curves remain out of
-  reach.
+  60-date rule. Clock time and hours since waking correlate 0.91 in the observed
+  frame, reinforcing the need to wait for enough complete waking-day context.
+  HRV-context candidates have 99 sessions on 71 dates and can be evaluated,
+  while reliable modality-specific timing curves remain out of reach.
+- Sleep continuity candidates have 91 sessions on 62 dates and can be tested;
+  three-night sleep shortfall has only 69 sessions on 46 dates and remains
+  dormant. Acute-load and previous-workout-gap candidates have 101 sessions on
+  72 dates. In the current data none of these clear multiplicity and stability
+  gates; eligibility is not evidence of an effect.
 - With the measurement-time correction, previous-day HRV candidates have 99
   sessions on 71 dates and show no clear relationship to duration or recorded
   intensity. The former same-day HRV-to-intensity raw signal disappears; it was

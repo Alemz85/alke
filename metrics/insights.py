@@ -136,16 +136,22 @@ WORKOUT_MODALITY_CONTROLS = [
     "modality_swim", "modality_walking",
 ]
 _WORKOUT_BASE_CONTROLS = [
-    "ctl_prior", "trimp_prior", "same_day_prior_load",
+    "ctl_prior", "atl_prior", "trimp_prior", "same_day_prior_load",
     "log_hours_since_prev_workout", "log_days_since_prev_modality",
     *WORKOUT_MODALITY_CONTROLS,
 ]
 _WORKOUT_READINESS = (
     ("sleep_shortfall", "Sleep shortfall"),
+    ("sleep_shortfall_3d", "Three-night mean sleep shortfall"),
     ("sleep_midpoint_dev", "Sleep timing drift"),
+    ("sleep_awake_fraction", "Sleep awake fraction"),
     ("rhr_dev_prior", "Previous-day RHR deviation"),
     ("hrv_dev_prior", "Previous-day HRV deviation"),
     ("respiratory_rate_dev", "Respiratory-rate deviation"),
+)
+_WORKOUT_PRE_STATE = (
+    ("atl_prior", "Prior acute load"),
+    ("log_hours_since_prev_workout", "Time since previous workout"),
 )
 
 DEFAULT_WORKOUT_SPECS = [
@@ -162,6 +168,21 @@ DEFAULT_WORKOUT_SPECS = [
             "kind": "scalar",
         }
         for driver, label in _WORKOUT_READINESS
+    ],
+    *[
+        {
+            "name": f"{driver}_to_workout_duration",
+            "label": f"{label} → workout duration",
+            "driver": driver,
+            "outcome": "workout_duration",
+            "controls": [
+                *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
+                "duration_prev_modality",
+            ],
+            "direction": "pre-workout-state",
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_PRE_STATE
     ],
     {
         "name": "hours_awake_to_workout_duration",
@@ -194,23 +215,45 @@ DEFAULT_WORKOUT_SPECS = [
         }
         for driver, label in _WORKOUT_READINESS
     ],
+    *[
+        {
+            "name": f"{driver}_to_workout_intensity",
+            "label": f"{label} → recorded intensity",
+            "driver": driver,
+            "outcome": "workout_intensity",
+            "controls": [
+                *[control for control in _WORKOUT_BASE_CONTROLS if control != driver],
+                "log_duration",
+                "intensity_prev_modality",
+            ],
+            "direction": "pre-workout-state",
+            "kind": "scalar",
+        }
+        for driver, label in _WORKOUT_PRE_STATE
+    ],
     {
         "name": "workout_time_to_load", "label": "Workout time → scheduled load",
         "outcome": "workout_load",
-        "controls": [*_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "load_prev_modality"],
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake",
+            "load_prev_modality",
+        ],
         "direction": "circadian", "kind": "cyclic",
     },
     {
         "name": "workout_time_to_duration", "label": "Workout time → duration",
         "outcome": "workout_duration",
-        "controls": [*_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "duration_prev_modality"],
+        "controls": [
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake",
+            "duration_prev_modality",
+        ],
         "direction": "circadian", "kind": "cyclic",
     },
     {
         "name": "workout_time_to_intensity", "label": "Workout time → recorded intensity",
         "outcome": "workout_intensity",
         "controls": [
-            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake", "log_duration",
             "intensity_prev_modality",
         ],
         "direction": "circadian", "kind": "cyclic",
@@ -219,7 +262,7 @@ DEFAULT_WORKOUT_SPECS = [
         "name": "workout_time_to_high_zones", "label": "Workout time → high-zone fraction",
         "outcome": "high_zone_fraction",
         "controls": [
-            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "log_duration",
+            *_WORKOUT_BASE_CONTROLS, "sleep_shortfall", "hours_since_wake", "log_duration",
             "high_zone_prev_modality",
         ],
         "direction": "circadian", "kind": "cyclic",
@@ -1134,14 +1177,15 @@ def discover_workout_context_insights(
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "spec": (
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
-            "annual season + elapsed-day trend + prior-load controls; joint 24-hour sine/cosine timing tests; "
+            "annual season + elapsed-day trend + acute/chronic prior-load controls; "
+            "wake-ordered sleep context; joint 24-hour sine/cosine timing tests; "
             "conservative maximum of HAC and date-clustered uncertainty; effective-n floor; "
             "BH FDR; calendar-date block sign/phase stability; collinearity collapse; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 3,
+            "model_version": 4,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1176,7 +1220,8 @@ def discover_workout_context_insights(
                 "Workout-only single-person associations, not capacity tests or causal effects. "
                 "Recorded intensity is TRIMP per minute; timing is adjusted for modality but may "
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
-                "the previous day's finalized aggregate, never a same-day value."
+                "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
+                "context is included only when its recorded wake time precedes the workout."
             ),
         },
     }
