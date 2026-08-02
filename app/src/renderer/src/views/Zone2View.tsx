@@ -1008,7 +1008,9 @@ function ModalityView({
 
             <div className="zone2-section-heading chart-card--span-12">
               <h2>Aerobic response</h2>
-              <p>Heart-rate efficiency and stability from eligible steady swimming.</p>
+              <p>
+                Swim efficiency and heart-rate stability, kept separate from your Zone 2 level.
+              </p>
             </div>
 
             <ChartCard
@@ -1017,12 +1019,13 @@ function ModalityView({
               headerRight={<span className="zone2-chart-unit">90 days</span>}
             >
               {efPoints.length === 0 ? (
-                <EmptyState message="No eligible swims in the last 90 days — EF needs ≥20 min mostly in Z1–Z2." />
+                <EmptyState message="No eligible swims in the last 90 days. EF needs ≥20 active minutes, mostly in Z1–Z2." />
               ) : (
                 <>
                   <EfScatter data={efPoints} />
                   <p className="zone2-caption">
-                    Output per heartbeat. A rising median suggests more speed for the same effort.
+                    Output per heartbeat during active swimming. A rising median can reflect
+                    technique, aerobic fitness, or both; it does not set your Zone 2 level.
                   </p>
                 </>
               )}
@@ -1039,7 +1042,7 @@ function ModalityView({
                 <>
                   <DecouplingScatter data={decouplingPoints} />
                   <p className="zone2-caption">
-                    Inside the ±5% band means effort stayed aerobically steady.
+                    Inside the ±5% band means heart rate stayed steady across active swimming.
                   </p>
                 </>
               )}

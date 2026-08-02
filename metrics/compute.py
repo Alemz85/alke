@@ -632,8 +632,8 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     perf_by_id = {r["workout_id"]: r for r in db.fetch_computed_workouts(sb)}
     # Bike and RUN EF as two SEPARATE aerobic-specific signals (each its own
     # baseline/top/variance — running and cycling EF are incomparable units). Swim
-    # EF stays WITHHELD: whole-workout duration includes rests, and returning
-    # technique can dominate pace/HR even with a large N (docs §6). Both remain
+    # EF stays WITHHELD: active-set filtering removes rest bias, but returning
+    # technique can still dominate pace/HR even with a large N (docs §6). Both remain
     # fully wired whatever today's data holds — signals are built for data the user
     # may START producing, never trimmed to what currently exists: bike EF lights
     # up with the first outdoor GPS ride, run EF with the first ≥20-min HR-bearing
@@ -1008,8 +1008,8 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                     "rhr": 0.0,
                     "vo2max": round(1.0 / ests["vo2max"][1], 3) if "vo2max" in ests else 0.0,
                     "b_prior": round(1.0 / ests["b_prior"][1], 4),  # always present
-                    # Whole-workout swim EF is a technique/rest-structure readout,
-                    # not a durable level signal; keep its fusion weight at zero.
+                    # Active-set swim EF still blends technique and aerobic response;
+                    # it is not a durable level signal, so its fusion weight stays zero.
                     "swim_ef": 0.0,
                     "hrv": 0.0,      # weak corroborator; not in the durable calibration
                     "load": 1.0 if load_moved else 0.0,
