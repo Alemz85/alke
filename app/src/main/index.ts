@@ -125,6 +125,17 @@ function externalDisplayBounds(): { x: number; y: number } | null {
   return { x: x + Math.max(0, (width - 1440) / 2), y: y + Math.max(0, (height - 900) / 2) }
 }
 
+function openExternalHttp(url: string): void {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      void shell.openExternal(parsed.toString())
+    }
+  } catch {
+    // Malformed and non-http(s) targets stay blocked.
+  }
+}
+
 function createWindow(): void {
   const position = externalDisplayBounds()
   const mainWindow = new BrowserWindow({
@@ -163,11 +174,23 @@ function createWindow(): void {
     // Only ever hand off plain http(s) links to the OS browser — refuse
     // file:/javascript:/data: etc. so a malicious or malformed link can't
     // trigger a local file open or script execution via shell.openExternal.
-    if (/^https?:\/\//.test(details.url)) {
-      shell.openExternal(details.url)
-    }
+    openExternalHttp(details.url)
     return { action: 'deny' }
   })
+
+  // A same-window navigation would retain this BrowserWindow's preload bridge.
+  // Keep every untrusted page out of the privileged renderer and hand safe web
+  // links to the user's browser instead.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    openExternalHttp(url)
+  })
+
+  // The app does not require camera, microphone, geolocation, USB, notifications,
+  // or other Chromium-granted permissions. Default-deny any future page request.
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false)
+  )
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
