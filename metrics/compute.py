@@ -98,6 +98,12 @@ def rhr_recent_for(day: date, rhr_by_date: dict[date, float]) -> float:
     return 60.0
 
 
+def configured_float(config: dict, key: str, default: float) -> float:
+    """Read a numeric setting, defaulting only for a missing/NULL value."""
+    value = config.get(key)
+    return float(default if value is None else value)
+
+
 def run(full: bool) -> None:
     sb = db.client()
     config = db.fetch_user_config(sb)
@@ -134,9 +140,9 @@ def run(full: bool) -> None:
     window_workout_ids = [w["id"] for w in window_workouts]
     samples_by_workout = db.fetch_hr_samples(sb, window_workout_ids)
     swim_sets_by_workout = db.fetch_swim_sets(sb, window_workout_ids)
-    swim_offset = float(config.get("swim_hr_offset") or -10)
-    z2_low = float(config.get("zone2_low_frac") or 0.60)
-    z2_high = float(config.get("zone2_high_frac") or 0.70)
+    swim_offset = configured_float(config, "swim_hr_offset", -10)
+    z2_low = configured_float(config, "zone2_low_frac", 0.60)
+    z2_high = configured_float(config, "zone2_high_frac", 0.70)
 
     computed_rows = []
     for w in window_workouts:
