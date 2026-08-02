@@ -166,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 7
+    assert model["diagnostics"]["model_version"] == 8
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 11
+    assert model["diagnostics"]["model_version"] == 12
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -820,6 +820,29 @@ def test_correlations_attach_qvalue_across_sweep():
     assert all("q_value" in r and "n_eff" in r and "p_value_naive" in r for r in rows)
 
 
+def test_correlation_pipeline_coerces_numeric_objects_with_an_empty_series():
+    from metrics.insights import zscore_trailing
+
+    dates = pd.date_range("2026-01-01", periods=80, freq="D")
+    frame = pd.DataFrame(
+        {
+            "driver": pd.Series(np.arange(80, dtype=float), index=dates, dtype=object),
+            "performance": pd.Series(np.arange(80, dtype=float), index=dates, dtype=object),
+            "unavailable": [None] * 80,
+        },
+        index=dates,
+    )
+
+    standardized = zscore_trailing(frame)
+    rows = compute_correlations(
+        standardized, drivers=["driver"], perfs=["performance"], max_lag=0
+    )
+
+    assert standardized["driver"].dtype.kind == "f"
+    assert len(rows) == 1
+    assert rows[0]["r"] == pytest.approx(1.0)
+
+
 def test_default_inference_keeps_swim_ef_descriptive():
     from metrics.insights import DEFAULT_ADJUSTED_SPECS, PERFS
 
@@ -915,6 +938,40 @@ def test_default_specs_include_independent_stair_activity_candidates():
         {"trimp_prior", "steps_prior", "ctl_pre_exposure"} <= set(spec["controls"])
         for spec in flights_specs.values()
     )
+
+
+def test_default_specs_include_weekly_training_time_distribution_candidates():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS, DRIVERS
+
+    daily_specs = {
+        spec["name"]: spec
+        for spec in DEFAULT_ADJUSTED_SPECS
+        if spec["driver"] == "training_density_7d_prior"
+    }
+    assert "training_density_7d_prior" in DRIVERS
+    assert set(daily_specs) == {
+        "training_density_to_sleep",
+        "training_density_to_sleep_continuity",
+        "training_density_to_respiration",
+    }
+    assert all(
+        {"duration_7d_prior", "trimp_prior", "ctl_pre_exposure"}
+        <= set(spec["controls"])
+        for spec in daily_specs.values()
+    )
+
+    workout_specs = {
+        spec["outcome"]: spec
+        for spec in DEFAULT_WORKOUT_SPECS
+        if spec.get("driver") == "training_density_7d_prior"
+    }
+    assert set(workout_specs) == {
+        "workout_duration",
+        "workout_intensity",
+        "energy_intensity",
+        "high_zone_fraction",
+    }
+    assert all("duration_7d_prior" in spec["controls"] for spec in workout_specs.values())
 
 
 def test_adjusted_specs_never_control_same_day_load_state():
@@ -1169,6 +1226,51 @@ def test_daily_insight_frame_masks_rolling_recovery_on_unmeasured_days():
     assert pd.isna(frame.loc["2026-01-02", "hrv_dev"])
 
 
+def test_daily_insight_frame_uses_scale_free_prior_week_training_density():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_daily_insight_frame
+
+    dates = pd.date_range("2026-01-01", periods=16, freq="D")
+    durations_by_date = {
+        day.date(): duration
+        for day, duration in zip(
+            dates,
+            [10.0, 0.0, 10.0, 0.0, 10.0, 0.0, 10.0, *([0.0] * 9)],
+        )
+    }
+    daily_rows = [
+        {
+            "date": day.date().isoformat(),
+            "rhr_dev": None,
+            "hrv_dev": None,
+            "ctl": 0.0,
+            "atl": 0.0,
+            "trimp_total": 0.0,
+        }
+        for day in dates
+    ]
+
+    frame = build_daily_insight_frame(
+        [], daily_rows, ZoneInfo("UTC"), durations_by_date
+    )
+
+    # Jan 8 sees Jan 1–7 only: four equal-duration days = four effective days.
+    assert frame.loc["2026-01-08", "duration_7d_prior"] == pytest.approx(40.0)
+    assert frame.loc["2026-01-08", "training_density_7d_prior"] == pytest.approx(4.0)
+    assert frame.loc[:"2026-01-07", "training_density_7d_prior"].isna().all()
+    # A complete all-rest prior week has no training-time distribution to estimate.
+    assert pd.isna(frame.loc["2026-01-16", "training_density_7d_prior"])
+
+    scaled_durations = {
+        day: duration * 3.0 for day, duration in durations_by_date.items()
+    }
+    scaled_frame = build_daily_insight_frame(
+        [], daily_rows, ZoneInfo("UTC"), scaled_durations
+    )
+    assert scaled_frame.loc["2026-01-08", "training_density_7d_prior"] == pytest.approx(4.0)
+
+
 def test_daily_insight_frame_exposes_only_previous_day_finalized_hr_aggregates():
     from zoneinfo import ZoneInfo
 
@@ -1297,6 +1399,35 @@ def test_workout_recorded_start_prefers_only_a_verified_payload_offset():
     assert (fallback.date(), fallback.hour) == (date(2026, 6, 10), 12)
 
 
+def test_workout_duration_distribution_needs_no_hr_and_uses_recorded_date():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import workout_duration_by_date
+
+    workouts = [
+        {
+            "id": "travel-no-hr",
+            "start_at": "2026-06-10T22:30:00Z",
+            "duration_s": 1800,
+            "raw": {"start": "2026-06-10 23:30:00 +0100"},
+        },
+        {
+            "id": "same-day-no-hr",
+            "start_at": "2026-06-10T18:00:00Z",
+            "duration_s": 1200,
+        },
+        {
+            "id": "invalid-duration",
+            "start_at": "2026-06-11T08:00:00Z",
+            "duration_s": None,
+        },
+    ]
+
+    totals = workout_duration_by_date(workouts, ZoneInfo("Europe/Berlin"))
+
+    assert totals == {date(2026, 6, 10): pytest.approx(50.0)}
+
+
 def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
     from zoneinfo import ZoneInfo
 
@@ -1374,6 +1505,7 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
         {
             "wake_hour": [8.0], "ctl_prior": [10.0], "trimp_prior": [5.0],
             "high_zone_fraction_prior": [0.25],
+            "duration_7d_prior": [150.0], "training_density_7d_prior": [3.5],
         },
         index=pd.to_datetime(["2026-01-02"]),
     )
@@ -1398,6 +1530,8 @@ def test_workout_insight_frame_controls_prior_session_and_hours_awake():
     assert second["same_day_prior_load"] == pytest.approx(20.0)
     assert second["load_prev_modality"] == pytest.approx(20.0)
     assert second["high_zone_fraction_prior"] == pytest.approx(0.25)
+    assert second["duration_7d_prior"] == pytest.approx(150.0)
+    assert second["training_density_7d_prior"] == pytest.approx(3.5)
 
 
 def test_daily_high_zone_fraction_requires_complete_hr_coverage_for_every_session():
@@ -1616,7 +1750,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [7, 11]
+    assert expected_versions == [8, 12]
 
 
 def test_persistence_state_never_crosses_model_versions():

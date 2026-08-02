@@ -17,6 +17,7 @@ import {
   buildInsightScatter,
   insightAxis,
   insightWindowStart,
+  priorTrainingDensity,
   rollingCalendarMedianDeviation,
   rollingCalendarMedianDelta,
   rollingWeightTrend,
@@ -42,7 +43,8 @@ const DRIVERS = [
   { key: 'respiratory_rate_dev', label: 'Breathing-rate deviation' },
   { key: 'trimp_prior', label: 'Prior-day load' },
   { key: 'steps_prior', label: 'Prior-day steps' },
-  { key: 'flights_prior', label: 'Prior-day flights' }
+  { key: 'flights_prior', label: 'Prior-day flights' },
+  { key: 'training_density_7d_prior', label: 'Prior-week training-time spread' }
 ]
 const PERFS = [
   { key: 'decoupling', label: 'Decoupling' },
@@ -254,8 +256,16 @@ function useAnalysisSeries(): {
       decoupling: new Map(),
       hrr60: new Map()
     }
+    const trainingDurationByDate = new Map<string, number>()
     let workoutContextCount = 0
     for (const w of workouts.data ?? []) {
+      const day = localDateKey(w.start_at, tz)
+      if (w.duration_s !== null && w.duration_s > 0) {
+        trainingDurationByDate.set(
+          day,
+          (trainingDurationByDate.get(day) ?? 0) + w.duration_s / 60
+        )
+      }
       if (!w.computed) continue
       const zoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce(
         (sum, zone) => sum + Number(w.computed?.time_in_zones?.[zone] ?? 0),
@@ -271,7 +281,6 @@ function useAnalysisSeries(): {
       ) {
         workoutContextCount++
       }
-      const day = localDateKey(w.start_at, tz)
       const pairs: [string, number | null][] = [
         ['decoupling', w.computed.decoupling_pct],
         ['hrr60', w.computed.hrr60]
@@ -282,6 +291,14 @@ function useAnalysisSeries(): {
         list.push(value)
         perfAcc[name].set(day, list)
       }
+    }
+    for (const [date, density] of priorTrainingDensity(
+      computedRows.map((row) => ({
+        date: row.date,
+        value: trainingDurationByDate.get(row.date) ?? 0
+      }))
+    )) {
+      put('training_density_7d_prior', date, density)
     }
     for (const [name, byDay] of Object.entries(perfAcc)) {
       for (const [day, values] of byDay) {
@@ -316,7 +333,7 @@ export function InsightsView(): ReactElement {
       )
   )
   const correlationSchemaCurrent = storedCorrelations.some(
-    (correlation) => correlation.var_x === 'flights_prior'
+    (correlation) => correlation.var_x === 'training_density_7d_prior'
   )
   const correlations = (correlationSchemaCurrent ? storedCorrelations : []).filter((correlation) => {
     if (correlation.var_y !== 'trimp_total') return true
@@ -363,14 +380,14 @@ export function InsightsView(): ReactElement {
       key: 'daily',
       title: 'Daily physiology',
       detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
-      expectedVersion: 6,
+      expectedVersion: 8,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {
       key: 'workout',
       title: 'Workout context',
       detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
-      expectedVersion: 10,
+      expectedVersion: 12,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {

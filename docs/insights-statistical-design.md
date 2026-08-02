@@ -80,7 +80,14 @@ match the raw aggregate.
 ### Prior-day behavior to next sleep/recovery
 
 Exposures are prior-day TRIMP, prior-day steps, prior-day flights climbed, and
-prior-day high-zone fraction.
+prior-day high-zone fraction. A separate seven-day training-time distribution
+exposure uses `(sum daily duration)^2 / sum(daily duration^2)`: the effective
+number of equally sized training days in the preceding week. Duration is used
+instead of TRIMP so a workout with absent or incomplete HR cannot become a
+false rest day. The measure ranges from 1 (all weekly time on one day) to 7
+(evenly spread), is invariant to duration scale, is missing for an all-rest
+week, and always controls total seven-day training time, previous-day load, and
+pre-exposure chronic load.
 Flights add vertical activity that steps do not fully encode: in the current
 data their correlation is 0.66, while walking/running distance is effectively a
 duplicate of steps at 0.99. Outcomes are sleep shortfall relative to the prior
@@ -169,6 +176,12 @@ time since the previous workout are also screened as pre-workout state
 candidates. Hours since waking is screened separately because clock time and
 biological-day position are not the same exposure.
 
+The preceding week's effective training-day count is also screened against
+duration and each intensity outcome. Its candidate-specific controls include
+total seven-day training time, so it asks about distribution conditional on
+volume rather than treating “more training days” as automatically more
+training.
+
 Every workout fit controls chronic and acute load through the prior day,
 previous-day load, modality, time since the previous workout, time since the
 previous workout of that modality, and any load already accumulated earlier
@@ -252,7 +265,7 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 7 and workout model version 11 enforce the
+workout. Daily model version 8 and workout model version 12 enforce the
 prior-day rule above and preserve recorded local sleep time during travel.
 These versions also retain the fully measured,
 training-day-conditional high-zone composition exposure. Workout version 9
@@ -295,7 +308,7 @@ high-zone fraction as well as average HR-zone and energy intensity.
   boundary under the correction, and no model verdict changes.
 - All 281 stored sleep nights match an archived raw aggregate exactly. Seven
   Travel-week nights retained `+0100` while Berlin was `+0200`; the old
-  sleep-midpoint and wake-clock values were one hour late. Versions 7/11 use
+  sleep-midpoint and wake-clock values were one hour late. Versions 8/12 use
   the recorded sleep offset for local-clock features. Absolute sleep duration
   and wake-to-workout intervals were already correct.
 - Duration candidates now use measurements according to their own semantics:
@@ -317,6 +330,15 @@ high-zone fraction as well as average HR-zone and energy intensity.
   have 50–58 complete pairs; next-workout candidates have only 19 distinct
   dates. All six remain explicitly dormant under the fixed 60-observation/date
   gates rather than being padded with rest-day zeroes.
+- Prior-week training-time spread is defined on 730 historical dates (201 in
+  the recent year). Its daily recovery candidates have 135–163 complete
+  adjusted cases;
+  none clears the gates. Workout duration has 173/142 sessions/dates and Apple
+  energy intensity has 91/62, so both are testable; HR-zone outcomes remain
+  dormant at 84/59. The expanded daily family has 27 candidates (24 testable,
+  five raw signals still awaiting persistence; one of 66 shifted placebos
+  fires). The workout family has 53 candidates (17 testable, no raw signal;
+  zero of 53 shifted placebos fires).
 - Raw average HR exists for 110 recent sessions but correlates 0.83 with the
   measured-time zone-intensity outcome. It is not added as another hypothesis:
   it would duplicate that outcome while losing the swim HR offset applied by

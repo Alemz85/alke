@@ -24,7 +24,7 @@ MIN_ADJUSTED_N = 60
 DRIVERS = [
     "sleep_shortfall", "sleep_midpoint_dev", "sleep_awake_fraction",
     "rhr_dev", "hrv_dev", "respiratory_rate_dev", "trimp_prior", "steps_prior",
-    "flights_prior",
+    "flights_prior", "training_density_7d_prior",
 ]
 PERFS = ["decoupling", "hrr60", "trimp_total", "weight_7d_slope"]
 
@@ -68,6 +68,20 @@ DEFAULT_ADJUSTED_SPECS = [
             "label": f"Prior-day load → {label}",
             "driver": "trimp_prior", "outcome": outcome,
             "controls": [f"lag:{outcome}", "ctl_pre_exposure", "steps_prior"],
+            "direction": "lagged",
+        }
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
+    ],
+    *[
+        {
+            "name": f"training_density_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_shortfall')}",
+            "label": f"Prior-week training-time spread → {label}",
+            "driver": "training_density_7d_prior",
+            "outcome": outcome,
+            "controls": [
+                f"lag:{outcome}", "duration_7d_prior", "trimp_prior",
+                "ctl_pre_exposure",
+            ],
             "direction": "lagged",
         }
         for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
@@ -211,6 +225,28 @@ DEFAULT_WORKOUT_SPECS = [
             "kind": "scalar",
         }
         for driver, label in _WORKOUT_PRE_STATE
+    ],
+    *[
+        {
+            "name": f"training_density_to_{outcome}",
+            "label": f"Prior-week training-time spread → {label}",
+            "driver": "training_density_7d_prior",
+            "outcome": outcome,
+            "controls": [
+                *_WORKOUT_BASE_CONTROLS,
+                "duration_7d_prior",
+                prior_outcome,
+                *([] if outcome == "workout_duration" else ["log_duration"]),
+            ],
+            "direction": "pre-workout-state",
+            "kind": "scalar",
+        }
+        for outcome, label, prior_outcome in (
+            ("workout_duration", "workout duration", "duration_prev_modality"),
+            ("workout_intensity", "recorded intensity", "intensity_prev_modality"),
+            ("energy_intensity", "Apple energy intensity", "energy_intensity_prev_modality"),
+            ("high_zone_fraction", "high-zone fraction", "high_zone_prev_modality"),
+        )
     ],
     {
         "name": "hours_awake_to_workout_duration",
@@ -1125,13 +1161,14 @@ def discover_adjusted_insights(
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "spec": (
             "Predeclared partial associations; weekday + annual season + time trend + candidate-specific "
-            "prior-state/load controls; HAC (Newey-West) CI; effective-n floor; BH FDR; "
+            "prior-state/load controls; scale-free prior-week training-time distribution tests; "
+            "HAC (Newey-West) CI; effective-n floor; BH FDR; "
             "moving-block bootstrap sign stability; collinear-driver suppression; "
             f"{promote_after}-night persistence hysteresis; circular-shift placebo calibration"
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 7,
+            "model_version": 8,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1160,6 +1197,8 @@ def discover_adjusted_insights(
                 "finalized full-day aggregates, so same-date relationships are co-measured, "
                 "never pre-workout readiness. Local sleep-clock features use Apple's recorded "
                 "sleep offset when available, preventing travel from masquerading as timing drift. "
+                "Prior-week training-time spread is defined only when that week contains a "
+                "workout and is adjusted for the week's total recorded duration. "
                 "High-zone composition is defined only on training "
                 "days whose every workout passes HR coverage, with total load adjusted. "
                 "No result is promoted without multiplicity "
@@ -1307,6 +1346,7 @@ def discover_workout_context_insights(
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
             "recorded-offset local clock + instant elapsed-since-wake; "
             "wake-ordered sleep context; outcome-specific HR completeness gates; "
+            "scale-free prior-week training-time distribution with total-duration adjustment; "
             "measured-time HR intensity + Apple energy-intensity outcome; "
             "joint 24-hour sine/cosine timing tests; "
             "conservative maximum of HAC and date-clustered uncertainty; effective-n floor; "
@@ -1315,7 +1355,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 11,
+            "model_version": 12,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1358,6 +1398,8 @@ def discover_workout_context_insights(
                 "Clock time and calendar date use HAE's verified recorded offset when available, "
                 "while recovery intervals use absolute instants. Local sleep-clock features "
                 "likewise prefer the recorded sleep offset during travel. "
+                "Prior-week training-time spread is undefined for all-rest weeks and adjusted "
+                "for total seven-day duration, so it does not substitute frequency for volume. "
                 "Previous-day high-zone composition exists only when every workout on that day "
                 "passes HR coverage and is adjusted for total prior-day load. "
                 "Recovery intervals and prior same-day load include workouts that are too short "
@@ -1370,7 +1412,9 @@ def discover_workout_context_insights(
 def zscore_trailing(frame: pd.DataFrame, days: int = 180) -> pd.DataFrame:
     """Restrict to the trailing `days` rows by date and z-score each column
     within-person over that window. Zero-variance columns become NaN."""
-    window = frame.loc[frame.index >= frame.index.max() - pd.Timedelta(days=days - 1)]
+    window = frame.loc[
+        frame.index >= frame.index.max() - pd.Timedelta(days=days - 1)
+    ].apply(pd.to_numeric, errors="coerce")
     sd = window.std(ddof=0)
     return (window - window.mean()) / sd.mask(sd.eq(0), np.nan)
 
@@ -1490,7 +1534,12 @@ def compute_correlations(
                 # same-day pre-workout drivers.
                 if lag == 0 and x in FULL_DAY_AGGREGATE_DRIVERS:
                     continue
-                paired = pd.DataFrame({"x": frame[x].shift(lag), "y": frame[y]}).dropna()
+                paired = pd.DataFrame(
+                    {
+                        "x": pd.to_numeric(frame[x].shift(lag), errors="coerce"),
+                        "y": pd.to_numeric(frame[y], errors="coerce"),
+                    }
+                ).dropna()
                 if y == "trimp_total":
                     paired = paired.loc[paired["y"] > 0]
                 if len(paired) < MIN_CORR_N or paired["x"].std() == 0 or paired["y"].std() == 0:

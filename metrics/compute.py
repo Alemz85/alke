@@ -332,6 +332,20 @@ def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, li
     return perf_by_date
 
 
+def workout_duration_by_date(all_workouts, tz) -> dict[date, float]:
+    """Recorded workout minutes per local date, independent of HR coverage."""
+    totals: dict[date, float] = defaultdict(float)
+    for workout in all_workouts:
+        try:
+            duration_s = float(workout.get("duration_s"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not math.isfinite(duration_s) or duration_s <= 0:
+            continue
+        totals[workout_local_date(workout, tz)] += duration_s / 60.0
+    return dict(totals)
+
+
 SLEEP_END_OFFSET_KEY = "_sleep_end_timezone_offset_min"
 
 
@@ -419,7 +433,12 @@ def wake_epoch(row: dict) -> float | None:
         return None
 
 
-def build_daily_insight_frame(daily_metrics, daily_rows, tz):
+def build_daily_insight_frame(
+    daily_metrics,
+    daily_rows,
+    tz,
+    training_duration_by_date: dict[date, float] | None = None,
+):
     """Build the temporal-contract daily frame without database writes."""
     import pandas as pd
 
@@ -483,6 +502,27 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
     frame["ctl_prior"] = frame["ctl"].shift(1)
     frame["atl_prior"] = frame["atl"].shift(1)
     frame["ctl_pre_exposure"] = frame["ctl"].shift(2)
+    if training_duration_by_date is not None:
+        # Distribution is distinct from amount: for the same seven-day
+        # training time, (sum duration)^2 / sum(duration^2) is the effective
+        # number of equally sized training days (1 concentrated … 7 even).
+        # Duration is used rather than TRIMP so missing HR cannot turn a real
+        # workout into a false rest day. An all-rest week stays undefined.
+        daily_duration = pd.Series(
+            [float(training_duration_by_date.get(day, 0.0)) for day in index],
+            index=frame.index,
+            dtype=float,
+        )
+        prior_duration = daily_duration.shift(1)
+        frame["duration_7d_prior"] = prior_duration.rolling(
+            7, min_periods=7
+        ).sum()
+        prior_duration_squares = prior_duration.pow(2).rolling(
+            7, min_periods=7
+        ).sum()
+        frame["training_density_7d_prior"] = (
+            frame["duration_7d_prior"].pow(2) / prior_duration_squares
+        ).where(prior_duration_squares > 0)
     # HAE's midnight-stamped RHR/HRV values are finalized full-day aggregates:
     # later exports revise them after same-day workouts. Only yesterday's
     # finalized aggregate is temporally available before today's session.
@@ -629,6 +669,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         "sleep_awake_fraction",
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior", "high_zone_fraction_prior",
+        "duration_7d_prior", "training_density_7d_prior",
     )
     last_workout_at = None
     last_modality_at: dict[str, datetime] = {}
@@ -789,7 +830,12 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     perf_by_date = perf_series_by_date(all_workouts, perf_by_id, tz)
 
     index = [date.fromisoformat(row["date"]) for row in daily_rows]
-    frame = build_daily_insight_frame(daily_metrics, daily_rows, tz)
+    frame = build_daily_insight_frame(
+        daily_metrics,
+        daily_rows,
+        tz,
+        workout_duration_by_date(all_workouts, tz),
+    )
     high_zones_by_date = daily_high_zone_fraction(all_workouts, perf_by_id, tz)
     frame["high_zone_fraction_prior"] = pd.Series(
         [high_zones_by_date.get(day) for day in index],
@@ -814,7 +860,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=7)
+    prior_state = insight_prior_state(prior, expected_version=8)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -827,7 +873,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=11)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=12)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

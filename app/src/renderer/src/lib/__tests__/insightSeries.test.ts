@@ -5,10 +5,25 @@ import {
   insightWindowStart,
   rollingCalendarMedianDeviation,
   rollingCalendarMedianDelta,
+  priorTrainingDensity,
   rollingWeightTrend,
   sleepAwakeFraction,
   sleepMidpointHours
 } from '../insightSeries'
+
+describe('priorTrainingDensity', () => {
+  it('uses the preceding seven calendar days, is scale-free, and omits all-rest weeks', () => {
+    const rows = Array.from({ length: 16 }, (_, index) => ({
+      date: `2026-01-${String(index + 1).padStart(2, '0')}`,
+      value: [10, 0, 10, 0, 10, 0, 10][index] ?? 0
+    }))
+    const scaled = rows.map((row) => ({ ...row, value: row.value * 3 }))
+
+    expect(priorTrainingDensity(rows).get('2026-01-08')).toBeCloseTo(4)
+    expect(priorTrainingDensity(scaled).get('2026-01-08')).toBeCloseTo(4)
+    expect(priorTrainingDensity(rows).has('2026-01-16')).toBe(false)
+  })
+})
 
 describe('sleepMidpointHours', () => {
   it('measures the midpoint from wake-day midnight in the configured timezone', () => {

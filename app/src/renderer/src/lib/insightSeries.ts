@@ -183,6 +183,32 @@ export interface DatedNullableValue {
   value: number | null
 }
 
+/** Effective number of equally sized training days in the preceding week. */
+export function priorTrainingDensity(rows: DatedNullableValue[]): Map<string, number> {
+  const loadByDate = new Map(
+    rows
+      .filter((row) => row.value !== null && Number.isFinite(row.value) && row.value >= 0)
+      .map((row) => [row.date, row.value as number])
+  )
+  const density = new Map<string, number>()
+  for (const row of rows) {
+    const current = Date.parse(`${row.date}T00:00:00Z`)
+    if (!Number.isFinite(current)) continue
+    const priorLoads: number[] = []
+    for (let lag = 1; lag <= 7; lag++) {
+      const priorDate = new Date(current - lag * 86_400_000).toISOString().slice(0, 10)
+      const load = loadByDate.get(priorDate)
+      if (load === undefined) break
+      priorLoads.push(load)
+    }
+    if (priorLoads.length !== 7) continue
+    const total = priorLoads.reduce((sum, load) => sum + load, 0)
+    const sumSquares = priorLoads.reduce((sum, load) => sum + load * load, 0)
+    if (sumSquares > 0) density.set(row.date, (total * total) / sumSquares)
+  }
+  return density
+}
+
 /** Mirrors metrics.insights.weight_series over a complete daily calendar. */
 export function rollingWeightTrend(rows: DatedNullableValue[]): Map<string, number> {
   const sorted = [...rows].sort((left, right) => left.date.localeCompare(right.date))
