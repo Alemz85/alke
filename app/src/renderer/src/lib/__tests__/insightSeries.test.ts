@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildInsightScatter, insightWindowStart, sleepMidpointHours } from '../insightSeries'
+import {
+  buildInsightScatter,
+  insightWindowStart,
+  rollingCalendarMedianDeviation,
+  sleepMidpointHours
+} from '../insightSeries'
 
 describe('sleepMidpointHours', () => {
   it('measures the midpoint from wake-day midnight in the configured timezone', () => {
@@ -71,5 +76,27 @@ describe('insightWindowStart', () => {
     expect(insightWindowStart('2026-08-02T03:30:00Z', 'America/Los_Angeles')).toBe(
       '2026-02-03'
     )
+  })
+})
+
+describe('rollingCalendarMedianDeviation', () => {
+  it('uses calendar days rather than the last available observations across gaps', () => {
+    const midpoints = new Map([
+      ['2026-01-01', 1],
+      ['2026-01-02', 2],
+      ['2026-01-03', 3],
+      ['2026-01-04', 4],
+      ['2026-01-05', 5],
+      ['2026-01-20', 10],
+      ['2026-01-21', 11],
+      ['2026-01-22', 12],
+      ['2026-01-23', 13],
+      ['2026-01-24', 14]
+    ])
+
+    const deviations = rollingCalendarMedianDeviation(midpoints, 14, 5)
+
+    expect(deviations.has('2026-01-20')).toBe(false)
+    expect(deviations.get('2026-01-24')).toBe(2)
   })
 })

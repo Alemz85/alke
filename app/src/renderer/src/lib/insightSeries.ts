@@ -73,3 +73,34 @@ export function insightWindowStart(
   const throughDate = computedAt ? toZonedYMD(computedAt, timezone) : todayYMD(timezone, now)
   return ymdKey(addDays(throughDate, -(CORRELATION_WINDOW_DAYS - 1)))
 }
+
+/** Absolute deviation from a rolling median over calendar days, not observations. */
+export function rollingCalendarMedianDeviation(
+  values: Map<string, number>,
+  windowDays: number,
+  minPeriods: number
+): Map<string, number> {
+  const entries = [...values.entries()].sort(([left], [right]) => left.localeCompare(right))
+  const deviations = new Map<string, number>()
+  let left = 0
+  for (let i = 0; i < entries.length; i++) {
+    const currentMs = Date.parse(`${entries[i][0]}T00:00:00Z`)
+    while (
+      left < i &&
+      currentMs - Date.parse(`${entries[left][0]}T00:00:00Z`) >
+        (windowDays - 1) * 86_400_000
+    ) {
+      left++
+    }
+    const window = entries
+      .slice(left, i + 1)
+      .map(([, value]) => value)
+      .sort((a, b) => a - b)
+    if (window.length < minPeriods) continue
+    const middle = Math.floor(window.length / 2)
+    const median =
+      window.length % 2 ? window[middle] : (window[middle - 1] + window[middle]) / 2
+    deviations.set(entries[i][0], Math.abs(entries[i][1] - median))
+  }
+  return deviations
+}

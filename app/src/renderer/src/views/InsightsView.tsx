@@ -16,6 +16,7 @@ import { ChartCard, EmptyState } from '../components'
 import {
   buildInsightScatter,
   insightWindowStart,
+  rollingCalendarMedianDeviation,
   sleepMidpointHours
 } from '../lib/insightSeries'
 import {
@@ -132,15 +133,13 @@ function useAnalysisSeries(): {
       if (i > 0) put('trimp_prior', r.date, computedRows[i - 1].trimp_total)
     })
     // sleep_midpoint_dev: |midpoint − rolling 14d median| in hours
-    const mids = [...(series.sleep_midpoint ?? new Map()).entries()].sort()
-    mids.forEach(([date], i) => {
-      const window = mids.slice(Math.max(0, i - 13), i + 1).map(([, v]) => v)
-      if (window.length < 5) return
-      const sorted = [...window].sort((a, b) => a - b)
-      const m = Math.floor(sorted.length / 2)
-      const median = sorted.length % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2
-      put('sleep_midpoint_dev', date, Math.abs(mids[i][1] - median))
-    })
+    for (const [date, deviation] of rollingCalendarMedianDeviation(
+      series.sleep_midpoint ?? new Map(),
+      14,
+      5
+    )) {
+      put('sleep_midpoint_dev', date, deviation)
+    }
     // per-day workout performance means
     const perfAcc: Record<string, Map<string, number[]>> = {
       decoupling: new Map(),
