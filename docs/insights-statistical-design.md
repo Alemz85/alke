@@ -59,6 +59,14 @@ frame therefore exposes:
 Personal baselines also use history strictly before the current observation.
 Current sleep is not allowed to pull its own baseline toward itself.
 
+Workout time has two distinct representations. Absolute instants determine
+elapsed recovery time, hours since waking, and event order. Local clock and
+calendar questions use HAE's original timestamp offset retained in the compact
+workout `raw` summary, but only after verifying that it resolves to the same
+instant as normalized `start_at`; otherwise the configured timezone is the
+fallback. This prevents travel from moving a workout to the home-timezone hour
+while preserving exact elapsed durations across offsets and DST.
+
 ## Daily recovery families
 
 ### Prior-day behavior to next sleep/recovery
@@ -170,10 +178,11 @@ candidate's own sample; they do not cause imputation.
 
 ### Workout time of day
 
-Clock time is circular: 23:30 is close to 00:30, not 23 hours away. Timing is
-therefore modelled with a 24-hour cosinor (sine and cosine jointly), never as a
-raw linear hour or arbitrary morning/evening split. The joint two-degree-of-
-freedom test reports:
+Clock time is circular: 23:30 is close to 00:30, not 23 hours away. The clock
+comes from the verified offset recorded at the workout location, not the
+currently configured home timezone. Timing is therefore modelled with a
+24-hour cosinor (sine and cosine jointly), never as a raw linear hour or
+arbitrary morning/evening split. The joint two-degree-of-freedom test reports:
 
 - partial effect size after controls;
 - the fitted peak clock time when a stable curve exists;
@@ -235,7 +244,7 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 5 and workout model version 9 enforce the
+workout. Daily model version 6 and workout model version 10 enforce the
 prior-day rule above. These versions also add the fully measured,
 training-day-conditional high-zone composition exposure. Workout version 9
 separates duration from HR-outcome eligibility, normalizes HR intensity by
@@ -270,6 +279,11 @@ high-zone fraction as well as average HR-zone and energy intensity.
   remain dormant under the 60-date timing rule. Clock time and hours since
   waking correlate 0.91 in the observed frame, reinforcing the need for that
   control rather than a clock-only interpretation.
+- Five travel workouts retained a `+0100` recorded offset while the configured
+  Berlin timezone was `+0200`; their old clock values were one hour late. Version
+  10 uses the recorded local hour for those sessions, while exact hours since
+  waking and recovery gaps remain unchanged. No current workout crosses a date
+  boundary under the correction, and no model verdict changes.
 - Duration candidates now use measurements according to their own semantics:
   sleep continuity has 94 sessions on 63 dates, prior-day HRV has 103 on 72,
   and prior acute load / previous-workout gap have 217 on 184. Corresponding

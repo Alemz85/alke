@@ -58,6 +58,32 @@ def local_date(ts_iso: str, tz: ZoneInfo) -> date:
     return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone(tz).date()
 
 
+def workout_recorded_start(workout: dict, tz: ZoneInfo) -> datetime:
+    """Workout local wall time, preferring HAE's verified recorded offset.
+
+    ``start_at`` preserves the instant but Postgres normalizes its original
+    offset away. HAE's compact raw summary retains that offset, which is the
+    right clock for circadian/calendar analysis while travelling. A raw value
+    is trusted only when it resolves to the same instant as ``start_at``.
+    """
+    instant = datetime.fromisoformat(workout["start_at"].replace("Z", "+00:00"))
+    fallback = instant.astimezone(tz)
+    raw_start = (workout.get("raw") or {}).get("start")
+    if not isinstance(raw_start, str):
+        return fallback
+    try:
+        recorded = datetime.fromisoformat(raw_start)
+    except ValueError:
+        return fallback
+    if recorded.tzinfo is None or abs(recorded.timestamp() - instant.timestamp()) > 1.0:
+        return fallback
+    return recorded
+
+
+def workout_local_date(workout: dict, tz: ZoneInfo) -> date:
+    return workout_recorded_start(workout, tz).date()
+
+
 def goal_progress_rows(goal_id: str, result: list[dict]) -> list[dict]:
     """Normalize exec_readonly_sql output (agent-authored metric_sql, one row
     per day) into goal_progress upsert rows. Tolerant of schema drift: rows
@@ -152,7 +178,7 @@ def run(full: bool) -> None:
     computed_rows = []
     for w in window_workouts:
         samples = samples_by_workout.get(w["id"], [])
-        day = local_date(w["start_at"], tz)
+        day = workout_local_date(w, tz)
         bounds = zone_bounds(hr_max, rhr_recent_for(day, rhr_by_date), z2_low, z2_high)
         is_swim = bool(w["type"]) and "swim" in w["type"].lower()
         tiz = time_in_zones(samples, bounds, swim_hr_offset=swim_offset if is_swim else 0.0)
@@ -202,7 +228,7 @@ def run(full: bool) -> None:
     trimp_by_date: dict[date, float] = defaultdict(float)
     workouts_by_week: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for w in all_workouts:
-        day = local_date(w["start_at"], tz)
+        day = workout_local_date(w, tz)
         trimp_by_date[day] += trimp_by_id.get(w["id"], 0.0)
         iso = day.isocalendar()
         workouts_by_week[(iso.year, iso.week)].append(w)
@@ -298,7 +324,7 @@ def perf_series_by_date(all_workouts, perf_by_id, tz) -> dict[date, dict[str, li
         perf = perf_by_id.get(w["id"])
         if not perf:
             continue
-        day = local_date(w["start_at"], tz)
+        day = workout_local_date(w, tz)
         for key, col in (("decoupling_pct", "decoupling"), ("hrr60", "hrr60")):
             if perf[key] is None:
                 continue
@@ -352,6 +378,15 @@ def wake_clock_hours(row: dict, tz) -> float | None:
     return day_offset * 24 + wake.hour + wake.minute / 60 + wake.second / 3600
 
 
+def wake_epoch(row: dict) -> float | None:
+    if not row.get("sleep_end"):
+        return None
+    try:
+        return datetime.fromisoformat(row["sleep_end"].replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
+        return None
+
+
 def build_daily_insight_frame(daily_metrics, daily_rows, tz):
     """Build the temporal-contract daily frame without database writes."""
     import pandas as pd
@@ -375,6 +410,10 @@ def build_daily_insight_frame(daily_metrics, daily_rows, tz):
             ],
             "wake_hour": [
                 wake_clock_hours(dm_by_date[day], tz) if day in dm_by_date else None
+                for day in index
+            ],
+            "wake_at_epoch": [
+                wake_epoch(dm_by_date[day]) if day in dm_by_date else None
                 for day in index
             ],
             "respiratory_rate": [
@@ -501,7 +540,7 @@ def daily_high_zone_fraction(all_workouts, perf_by_id, tz) -> dict[date, float]:
         lambda: {"high": 0.0, "total": 0.0, "valid": True}
     )
     for workout in all_workouts:
-        day = local_date(workout["start_at"], tz)
+        day = workout_local_date(workout, tz)
         state = totals[day]
         computed = perf_by_id.get(workout["id"]) or {}
         try:
@@ -570,14 +609,17 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     )
     for workout in ordered_workouts:
         computed = perf_by_id.get(workout["id"]) or {}
-        start = datetime.fromisoformat(workout["start_at"].replace("Z", "+00:00")).astimezone(tz)
+        event_at = datetime.fromisoformat(
+            workout["start_at"].replace("Z", "+00:00")
+        )
+        start = workout_recorded_start(workout, tz)
         modality = workout_modality(workout.get("type"))
         hours_since_prev_workout = (
-            (start - last_workout_at).total_seconds() / 3600.0
+            (event_at - last_workout_at).total_seconds() / 3600.0
             if last_workout_at is not None else np.nan
         )
         days_since_prev_modality = (
-            (start - last_modality_at[modality]).total_seconds() / 86_400.0
+            (event_at - last_modality_at[modality]).total_seconds() / 86_400.0
             if modality in last_modality_at else np.nan
         )
         day = start.date()
@@ -600,8 +642,8 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         # Eligibility determines whether this workout can be an outcome row,
         # not whether it existed. Every workout updates recency; every positive
         # measured load updates the day's dose before later sessions.
-        last_workout_at = start
-        last_modality_at[modality] = start
+        last_workout_at = event_at
+        last_modality_at[modality] = event_at
         if np.isfinite(trimp) and trimp > 0:
             prior_load_by_day[day] += trimp
         if not np.isfinite(duration_s) or duration_s <= 0:
@@ -619,7 +661,8 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         theta = 2.0 * math.pi * hour / 24.0
         duration_min = duration_s / 60.0
         row = {
-            "start_at": pd.Timestamp(start),
+            "start_at": pd.Timestamp(start.replace(tzinfo=None)),
+            "_event_at": pd.Timestamp(event_at),
             "start_hour": hour,
             "start_sin": math.sin(theta),
             "start_cos": math.cos(theta),
@@ -639,8 +682,14 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             "days_since_prev_modality": days_since_prev_modality,
             "same_day_prior_load": same_day_prior_load,
         }
+        wake_at_epoch = context.get("wake_at_epoch") if context is not None else np.nan
         wake_hour = context.get("wake_hour") if context is not None else np.nan
-        hours_since_wake = hour - wake_hour if pd.notna(wake_hour) else np.nan
+        if pd.notna(wake_at_epoch):
+            hours_since_wake = (event_at.timestamp() - float(wake_at_epoch)) / 3600.0
+        else:
+            # Backward-compatible fallback for synthetic/legacy frames. The
+            # production frame always carries the exact wake instant.
+            hours_since_wake = hour - wake_hour if pd.notna(wake_hour) else np.nan
         valid_hours_since_wake = (
             hours_since_wake if pd.notna(hours_since_wake) and 0 <= hours_since_wake <= 20
             else np.nan
@@ -658,7 +707,12 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     if not rows:
         return pd.DataFrame()
 
-    frame = pd.DataFrame(rows).sort_values("start_at").set_index("start_at")
+    frame = (
+        pd.DataFrame(rows)
+        .sort_values("_event_at")
+        .drop(columns="_event_at")
+        .set_index("start_at")
+    )
     frame["log_hours_since_prev_workout"] = np.log1p(frame["hours_since_prev_workout"])
     frame["log_days_since_prev_modality"] = np.log1p(frame["days_since_prev_modality"])
     for outcome, prior_name in (
@@ -728,7 +782,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=5)
+    prior_state = insight_prior_state(prior, expected_version=6)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -741,7 +795,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=9)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=10)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )
@@ -881,7 +935,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         tiz = zones_by_id.get(wk["id"])
         if not tiz:
             continue
-        day = local_date(wk["start_at"], tz)
+        day = workout_local_date(wk, tz)
         w_by_date[day] += z2_trimp_from_zones(tiz)
         # INTENTIONAL weighting difference (F8, do-not-change): B's weekly minutes
         # (aerobic_sec) count z3 at FULL weight, whereas the graded stimulus w(t)
@@ -995,9 +1049,9 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
             continue
         wtype = (wk.get("type") or "").lower()
         if "cycl" in wtype or "bik" in wtype:
-            bike_ef_obs.append((local_date(wk["start_at"], tz), float(perf["ef"])))
+            bike_ef_obs.append((workout_local_date(wk, tz), float(perf["ef"])))
         elif "run" in wtype:
-            run_ef_obs.append((local_date(wk["start_at"], tz), float(perf["ef"])))
+            run_ef_obs.append((workout_local_date(wk, tz), float(perf["ef"])))
     bike_ef_obs.sort()
     run_ef_obs.sort()
 

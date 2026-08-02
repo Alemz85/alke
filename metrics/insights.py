@@ -1131,7 +1131,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 5,
+            "model_version": 6,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1303,6 +1303,7 @@ def discover_workout_context_insights(
         "spec": (
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
+            "recorded-offset local clock + instant elapsed-since-wake; "
             "wake-ordered sleep context; outcome-specific HR completeness gates; "
             "measured-time HR intensity + Apple energy-intensity outcome; "
             "joint 24-hour sine/cosine timing tests; "
@@ -1312,7 +1313,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 9,
+            "model_version": 10,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1351,7 +1352,9 @@ def discover_workout_context_insights(
                 "outcome, not measured power or fitness. Timing is adjusted for modality but may "
                 "still reflect scheduling and unmeasured workout intent. RHR and HRV context uses "
                 "the previous day's finalized aggregate, never a same-day value. Same-day sleep "
-                "context is included only when its recorded wake time precedes the workout. "
+                "context is included only when its recorded wake instant precedes the workout. "
+                "Clock time and calendar date use HAE's verified recorded offset when available, "
+                "while recovery intervals use absolute instants. "
                 "Previous-day high-zone composition exists only when every workout on that day "
                 "passes HR coverage and is adjusted for total prior-day load. "
                 "Recovery intervals and prior same-day load include workouts that are too short "

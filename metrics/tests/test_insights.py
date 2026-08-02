@@ -166,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 5
+    assert model["diagnostics"]["model_version"] == 6
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -282,12 +282,13 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 9
+    assert model["diagnostics"]["model_version"] == 10
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
     assert "wake-ordered sleep context" in model["spec"]
-    assert "wake time precedes" in model["diagnostics"]["caveat"]
+    assert "wake instant precedes" in model["diagnostics"]["caveat"]
+    assert "recorded offset" in model["diagnostics"]["caveat"]
     assert "measured HR minute" in model["diagnostics"]["caveat"]
     assert "90%" in model["diagnostics"]["caveat"]
     assert "Apple energy intensity" in model["diagnostics"]["caveat"]
@@ -1275,6 +1276,27 @@ def test_workout_energy_intensity_accepts_only_plausible_supported_units():
     assert workout_energy_intensity({}) is None
 
 
+def test_workout_recorded_start_prefers_only_a_verified_payload_offset():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import workout_recorded_start
+
+    tz = ZoneInfo("Europe/Berlin")
+    workout = {
+        "start_at": "2026-06-10T10:00:00Z",
+        "raw": {"start": "2026-06-10 11:00:00 +0100"},
+    }
+    recorded = workout_recorded_start(workout, tz)
+    assert (recorded.date(), recorded.hour) == (date(2026, 6, 10), 11)
+
+    mismatched = {
+        **workout,
+        "raw": {"start": "2026-06-10 11:00:00 +0200"},
+    }
+    fallback = workout_recorded_start(mismatched, tz)
+    assert (fallback.date(), fallback.hour) == (date(2026, 6, 10), 12)
+
+
 def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
     from zoneinfo import ZoneInfo
 
@@ -1521,6 +1543,38 @@ def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
     assert row["atl_prior"] == pytest.approx(12.0)
 
 
+def test_workout_frame_uses_recorded_clock_but_instant_elapsed_since_wake():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    daily = pd.DataFrame(
+        {
+            # Wake was 08:00 at the travel destination / 09:00 in configured Berlin time.
+            "wake_hour": [9.0],
+            "wake_at_epoch": [pd.Timestamp("2026-06-10T07:00:00Z").timestamp()],
+        },
+        index=pd.to_datetime(["2026-06-10"]),
+    )
+    workouts = [{
+        "id": "travel", "type": "outdoor_run",
+        "start_at": "2026-06-10T10:30:00Z", "duration_s": 1200,
+        "raw": {"start": "2026-06-10 11:30:00 +0100"},
+    }]
+    computed = {"travel": {
+        "trimp": 30.0,
+        "time_in_zones": {"z1": 300, "z2": 300, "z3": 300, "z4": 200, "z5": 100},
+    }}
+
+    row = build_workout_insight_frame(
+        workouts, computed, daily, ZoneInfo("Europe/Berlin")
+    ).iloc[0]
+
+    assert row["start_hour"] == pytest.approx(11.5)
+    assert row["hours_since_wake"] == pytest.approx(3.5)
+    assert row.name == pd.Timestamp("2026-06-10T11:30:00")
+
+
 def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
     from zoneinfo import ZoneInfo
 
@@ -1562,7 +1616,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [5, 9]
+    assert expected_versions == [6, 10]
 
 
 def test_persistence_state_never_crosses_model_versions():
