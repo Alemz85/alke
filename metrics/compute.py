@@ -26,6 +26,7 @@ from metrics.models import (
     hrr60,
     rolling_median,
     swim_active_ef,
+    swim_active_hr_drift_pct,
     time_in_zones,
     trimp_edwards,
     z2_trimp_from_zones,
@@ -145,19 +146,22 @@ def run(full: bool) -> None:
         tiz = time_in_zones(samples, bounds, swim_hr_offset=swim_offset if is_swim else 0.0)
         eligible = ef_eligibility(w["type"], tiz, w["duration_s"])
         efficiency = None
+        drift = None
         if eligible:
-            efficiency = (
-                swim_active_ef(swim_sets_by_workout.get(w["id"], []), samples)
-                if is_swim
-                else ef(w["distance_m"], w["duration_s"], w["avg_hr"])
-            )
+            if is_swim:
+                swim_sets = swim_sets_by_workout.get(w["id"], [])
+                efficiency = swim_active_ef(swim_sets, samples)
+                drift = swim_active_hr_drift_pct(swim_sets, samples)
+            else:
+                efficiency = ef(w["distance_m"], w["duration_s"], w["avg_hr"])
+                drift = hr_drift_pct(samples)
         computed_rows.append(
             {
                 "workout_id": w["id"],
                 "time_in_zones": {f"z{z}": s for z, s in tiz.items()},
                 "trimp": round(trimp_edwards(tiz), 2),
                 "ef": efficiency,
-                "decoupling_pct": hr_drift_pct(samples) if eligible else None,
+                "decoupling_pct": drift,
                 "hrr60": hrr60(samples, w["duration_s"]),
                 "computed_at": now.isoformat(),
             }

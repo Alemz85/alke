@@ -63,7 +63,14 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
     monkeypatch.setattr(db, "fetch_daily_metrics", lambda sb: [])
     # Real HR samples for the recent workout so its RECOMPUTE yields trimp>0 (the
     # overlay of fresh-over-stored must survive for the window workout).
-    recent_samples = [(s, 135) for s in range(0, 1800, 10)]
+    def recent_bpm(offset):
+        if offset < 300:
+            return 120
+        if 600 <= offset < 900:
+            return 132
+        return 80
+
+    recent_samples = [(s, recent_bpm(s)) for s in range(0, 1800, 10)]
 
     def fake_hr_samples(sb, ids):
         return {i: (recent_samples if i == recent_id else []) for i in ids}
@@ -74,7 +81,10 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
         db,
         "fetch_swim_sets",
         lambda sb, ids: {
-            i: ([{"start_offset_s": 0, "duration_s": 600, "distance_m": 500}]
+            i: ([
+                {"start_offset_s": 0, "duration_s": 300, "distance_m": 250},
+                {"start_offset_s": 600, "duration_s": 300, "distance_m": 250},
+            ]
                 if i == recent_id else [])
             for i in ids
         },
@@ -97,7 +107,8 @@ def test_incremental_chain_preserves_prewindow_trimp(monkeypatch):
     compute.run(full=False)
 
     recent = next(r for r in captured["computed"] if r["workout_id"] == recent_id)
-    assert recent["ef"] == pytest.approx((500 / (600 / 60)) / 135)
+    assert recent["ef"] == pytest.approx((500 / (600 / 60)) / 126)
+    assert recent["decoupling_pct"] == pytest.approx(10.0)
 
     by_date = {r["date"]: r for r in captured["daily"]}
     # The pre-window workout's day keeps its stored TRIMP (was 0.0 before the fix).

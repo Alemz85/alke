@@ -15,6 +15,7 @@ from metrics.models import (
     hr_drift_pct,
     hrr60,
     swim_active_ef,
+    swim_active_hr_drift_pct,
     time_in_zones,
     trimp_edwards,
     zone_bounds,
@@ -101,6 +102,26 @@ def test_swim_active_ef_ignores_invalid_sets():
     ]
 
     assert swim_active_ef(sets, [(i * 10, 120) for i in range(20)]) is None
+
+
+def test_swim_active_hr_drift_excludes_rest_and_splits_active_time():
+    sets = [
+        {"start_offset_s": 0, "duration_s": 60, "distance_m": 50},
+        {"start_offset_s": 120, "duration_s": 60, "distance_m": 50},
+    ]
+    samples = [
+        (0, 120), (20, 120), (40, 120),
+        (70, 60), (100, 60),
+        (120, 132), (140, 132), (160, 132),
+    ]
+
+    assert swim_active_hr_drift_pct(sets, samples) == pytest.approx(10.0)
+
+
+def test_swim_active_hr_drift_requires_four_active_samples():
+    sets = [{"start_offset_s": 0, "duration_s": 60, "distance_m": 50}]
+
+    assert swim_active_hr_drift_pct(sets, [(0, 120), (20, 120), (40, 120)]) is None
 
 
 def test_ef_eligibility_swims_bikes_and_runs_z1z2_70pct_20min():
