@@ -212,11 +212,11 @@ export function maintenanceMessage(row: Zone2Fitness | null | undefined): string
 export function evidenceReason(state: Zone2EvidenceState): string | null {
   switch (state) {
     case 'insufficient':
-      return 'Not enough valid sensor days yet to place a level — showing your last known value.'
+      return 'Too few corroborating signals to place this level confidently. The estimate remains load-driven; use the range.'
     case 'ambiguous':
-      return 'Signals disagree (likely a technique or modality-specific move) — holding the level until they corroborate.'
+      return 'Signals disagree, possibly from technique or a modality-specific move. Use the range, not the point estimate.'
     case 'low_confidence':
-      return 'Only your watch VO2max moved — holding until RHR/EF corroborate.'
+      return 'Watch VO2max is the only measured level signal. The load-driven estimate remains provisional; use the range.'
     case 'ok':
     default:
       return null

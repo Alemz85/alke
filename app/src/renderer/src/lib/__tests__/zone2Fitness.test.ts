@@ -144,11 +144,17 @@ describe('hasMaintenanceFlag / maintenanceMessage', () => {
 })
 
 describe('evidenceReason', () => {
-  it('returns null for ok, a reason otherwise', () => {
+  it('describes uncertainty without claiming the continuously computed level is frozen', () => {
     expect(evidenceReason('ok')).toBeNull()
-    expect(evidenceReason('insufficient')).toContain('valid sensor days')
-    expect(evidenceReason('ambiguous')).toContain('disagree')
-    expect(evidenceReason('low_confidence')).toContain('VO2max')
+    expect(evidenceReason('insufficient')).toBe(
+      'Too few corroborating signals to place this level confidently. The estimate remains load-driven; use the range.'
+    )
+    expect(evidenceReason('ambiguous')).toBe(
+      'Signals disagree, possibly from technique or a modality-specific move. Use the range, not the point estimate.'
+    )
+    expect(evidenceReason('low_confidence')).toBe(
+      'Watch VO2max is the only measured level signal. The load-driven estimate remains provisional; use the range.'
+    )
   })
 })
 
