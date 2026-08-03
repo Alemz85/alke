@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -741,6 +741,9 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     last_modality_at: dict[str, datetime] = {}
     prior_load_by_day: dict[date, float] = defaultdict(float)
     prior_duration_by_day: dict[date, float] = defaultdict(float)
+    prior_duration_by_modality: dict[
+        str, deque[tuple[datetime, float]]
+    ] = defaultdict(deque)
     ordered_workouts = sorted(
         all_workouts,
         key=lambda workout: datetime.fromisoformat(
@@ -789,7 +792,16 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             prior_load_by_day[day] += trimp
         if not np.isfinite(duration_s) or duration_s <= 0:
             continue
-        prior_duration_by_day[day] += duration_s / 60.0
+        duration_min = duration_s / 60.0
+        modality_history = prior_duration_by_modality[modality]
+        modality_cutoff = event_at - timedelta(days=28)
+        while modality_history and modality_history[0][0] < modality_cutoff:
+            modality_history.popleft()
+        modality_duration_28d_prior = sum(
+            prior_duration for _, prior_duration in modality_history
+        )
+        prior_duration_by_day[day] += duration_min
+        modality_history.append((event_at, duration_min))
         hr_coverage = zone_seconds / duration_s
         hr_outcomes_valid = (
             np.isfinite(trimp)
@@ -801,7 +813,6 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         context = daily_frame.loc[day_key] if day_key in daily_frame.index else None
         hour = start.hour + start.minute / 60 + start.second / 3600
         theta = 2.0 * math.pi * hour / 24.0
-        duration_min = duration_s / 60.0
         row = {
             "start_at": pd.Timestamp(start.replace(tzinfo=None)),
             "_event_at": pd.Timestamp(event_at),
@@ -822,6 +833,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
             ) / zone_seconds if hr_outcomes_valid else np.nan,
             "hours_since_prev_workout": hours_since_prev_workout,
             "days_since_prev_modality": days_since_prev_modality,
+            "modality_duration_28d_prior": modality_duration_28d_prior,
             "same_day_prior_load": same_day_prior_load,
             "same_day_prior_duration": same_day_prior_duration,
         }
@@ -858,6 +870,9 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
     )
     frame["log_hours_since_prev_workout"] = np.log1p(frame["hours_since_prev_workout"])
     frame["log_days_since_prev_modality"] = np.log1p(frame["days_since_prev_modality"])
+    frame["log_modality_duration_28d_prior"] = np.log1p(
+        frame["modality_duration_28d_prior"]
+    )
     frame["log_same_day_prior_duration"] = np.log1p(
         frame["same_day_prior_duration"]
     )
@@ -946,7 +961,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=14)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=15)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )

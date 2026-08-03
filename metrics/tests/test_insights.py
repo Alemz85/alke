@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 14
+    assert model["diagnostics"]["model_version"] == 15
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1090,6 +1090,7 @@ def test_workout_specs_control_session_sequence_and_include_wake_alignment():
             or spec.get("driver") == "log_hours_since_prev_workout"
         )
         assert "log_days_since_prev_modality" in spec["controls"]
+        assert "log_modality_duration_28d_prior" in spec["controls"]
         assert spec.get("driver") not in spec["controls"]
 
     timing_specs = [spec for spec in DEFAULT_WORKOUT_SPECS if spec.get("kind") == "cyclic"]
@@ -1514,6 +1515,40 @@ def test_workout_duration_distribution_needs_no_hr_and_uses_recorded_date():
     assert totals == {date(2026, 6, 10): pytest.approx(50.0)}
 
 
+def test_workout_frame_controls_prior_28_day_duration_in_same_modality():
+    from zoneinfo import ZoneInfo
+
+    from metrics.compute import build_workout_insight_frame
+
+    workouts = [
+        {
+            "id": "old-row", "type": "rowing", "start_at": "2026-01-01T08:00:00Z",
+            "duration_s": 3600,
+        },
+        {
+            "id": "other-sport", "type": "indoor_cycling",
+            "start_at": "2026-01-10T07:00:00Z", "duration_s": 1200,
+        },
+        {
+            "id": "recent-row", "type": "rowing", "start_at": "2026-01-10T08:00:00Z",
+            "duration_s": 1800,
+        },
+        {
+            "id": "current-row", "type": "rowing", "start_at": "2026-01-30T08:00:00Z",
+            "duration_s": 2400,
+        },
+    ]
+
+    frame = build_workout_insight_frame(workouts, {}, pd.DataFrame(), ZoneInfo("UTC"))
+
+    assert frame["modality_duration_28d_prior"].tolist() == pytest.approx(
+        [0.0, 0.0, 60.0, 30.0]
+    )
+    assert frame["log_modality_duration_28d_prior"].tolist() == pytest.approx(
+        np.log1p([0.0, 0.0, 60.0, 30.0])
+    )
+
+
 def test_workout_hr_outcomes_require_coverage_and_use_measured_time():
     from zoneinfo import ZoneInfo
 
@@ -1840,7 +1875,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [9, 14]
+    assert expected_versions == [9, 15]
 
 
 def test_persistence_state_never_crosses_model_versions():

@@ -198,6 +198,7 @@ _WORKOUT_BASE_CONTROLS = [
     "ctl_prior", "atl_prior", "trimp_prior", "log_same_day_prior_duration",
     "same_day_prior_load",
     "log_hours_since_prev_workout", "log_days_since_prev_modality",
+    "log_modality_duration_28d_prior",
     *WORKOUT_MODALITY_CONTROLS,
 ]
 _WORKOUT_READINESS = (
@@ -1404,7 +1405,7 @@ def discover_workout_context_insights(
         "spec": (
             f"Predeclared workout-only associations; at least {min_n} distinct workout dates; modality + weekday + "
             "annual season + elapsed-day trend + acute/chronic prior-load controls; "
-            "HR-independent same-day prior-duration control; "
+            "HR-independent same-day and prior-28-day modality-duration controls; "
             "recorded-offset local clock + instant elapsed-since-wake; "
             "wake-ordered sleep context with main-sleep eligibility; outcome-specific HR completeness gates; "
             "scale-free prior-week training-time distribution with total-duration adjustment; "
@@ -1416,7 +1417,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 14,
+            "model_version": 15,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),
@@ -1467,7 +1468,8 @@ def discover_workout_context_insights(
                 "passes HR coverage and is adjusted for total prior-day load. "
                 "Recovery intervals and prior same-day duration include workouts without usable "
                 "HR; positive measured load is accumulated separately. Both can include sessions "
-                "that are too short or sparse to serve as HR-derived outcome rows."
+                "that are too short or sparse to serve as HR-derived outcome rows. Prior-28-day "
+                "same-modality duration additionally controls recent sport-specific exposure."
             ),
         },
     }

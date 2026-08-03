@@ -38,7 +38,7 @@ describe('Insights inference policy', () => {
     expect(source).toContain('Null calibration:')
     expect(source).toContain('insightAxis(')
     expect(source).toMatch(/key: 'daily'[\s\S]*?expectedVersion: 9/)
-    expect(source).toMatch(/key: 'workout'[\s\S]*?expectedVersion: 14/)
+    expect(source).toMatch(/key: 'workout'[\s\S]*?expectedVersion: 15/)
     expect(source).toContain('candidate.n_days')
     expect(source).toContain('sessions / dates')
     expect(source).toContain('60 distinct workout dates')

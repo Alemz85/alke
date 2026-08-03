@@ -203,11 +203,16 @@ Every workout fit controls chronic and acute load through the prior day,
 previous-day load, modality, time since the previous workout, time since the
 previous workout of that modality, and any load already accumulated earlier
 that day. It also controls the log of recorded workout minutes already
-completed that day, which remains available when HR-derived load does not. A
-candidate is removed from its own control list. These same-day controls are
-essential: an evening session is more likely than a morning session to be a
-second session, and otherwise “time of day” could merely rediscover accumulated
-same-day fatigue.
+completed that day and the log of positive-duration minutes in the same
+modality during the preceding 28 days. Both remain available when HR-derived
+load does not. Modality recency and recent modality exposure are related but
+not equivalent: a one-day gap can occur near the start of a return block or
+after a dense month. The latter control reduces sport-specific reacclimation,
+practice, and training-block confounding; it does not claim to measure
+technique. A candidate is removed from its own control list. The same-day
+controls are essential: an evening session is more likely than a morning
+session to be a second session, and otherwise “time of day” could merely
+rediscover accumulated same-day fatigue.
 
 Same-day sleep, timing, continuity, and respiratory context enters a workout
 row only when the recorded sleep end precedes the workout by no more than 20
@@ -284,7 +289,7 @@ and RHR on 14 of 22. On eight workout dates, an HRV value had already been
 exported before the workout and was revised by a later export. The ingest merge
 correctly retains the latest non-null aggregate for display, but that final
 value cannot be used retrospectively as if it had been observed before the
-workout. Daily model version 9 and workout model version 14 enforce the
+workout. Daily model version 9 and workout model version 15 enforce the
 prior-day rule above, preserve recorded local sleep time during travel, reject
 non-main-sleep aggregates, and use circular signed/absolute timing baselines.
 These versions also retain the fully measured,
@@ -317,10 +322,11 @@ high-zone fraction as well as average HR-zone and energy intensity.
   90% coverage gate. The six failures are outdoor walks with only 60.5%–87.8%
   coverage; leaving the old denominator in place would have made those gaps
   look like low effort.
-- There are 27 multi-session dates and 34 later same-day sessions. Version 14
+- There are 27 multi-session dates and 34 later same-day sessions. Version 15
   controls duration accumulated before each later session independently of HR
   coverage; an unmeasured earlier workout can no longer masquerade as no prior
-  same-day work.
+  same-day work. It also adjusts every workout fit for prior-28-day duration in
+  that workout's modality.
 - Complete waking-day timing frames currently contain 84 sessions on 56 dates
   for duration and 78 sessions on 53 dates for HR-derived intensity, so both
   remain dormant under the 60-date timing rule. Clock time and hours since
@@ -338,7 +344,7 @@ high-zone fraction as well as average HR-zone and energy intensity.
   contribute duration, midpoint, continuity, wake-time, or readiness values.
   A different set of seven
   Travel-week nights retained `+0100` while Berlin was `+0200`; the old
-  sleep-midpoint and wake-clock values were one hour late. Versions 9/14 use
+  sleep-midpoint and wake-clock values were one hour late. Versions 9/15 use
   the recorded sleep offset for local-clock features. Absolute sleep duration
   and wake-to-workout intervals were already correct.
 - Duration candidates now use measurements according to their own semantics:
@@ -375,6 +381,12 @@ high-zone fraction as well as average HR-zone and energy intensity.
   after FDR (q = 0.31–0.69). Workout duration and Apple energy candidates have
   82 sessions on 55 dates, while HR-zone outcomes have 76 on 52; all remain
   dormant under the fixed 60-date rule.
+- Prior-28-day same-modality exposure is zero for 29 workout rows, has a median
+  of 102 minutes, and reaches 457 minutes. For the 16 swim sessions, four start
+  with no prior-month swim volume; log exposure and log time since the prior
+  swim correlate -0.81, strong but not redundant. The new control is retained
+  in all 17 testable workout fits. The complete 57-candidate replay remains at
+  zero raw signals or watches and zero of 56 shifted-placebo fires.
 - Raw average HR exists for 110 recent sessions but correlates 0.83 with the
   measured-time zone-intensity outcome. It is not added as another hypothesis:
   it would duplicate that outcome while losing the swim HR offset applied by
