@@ -1,5 +1,6 @@
 .metric-card {
   background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   display: flex;

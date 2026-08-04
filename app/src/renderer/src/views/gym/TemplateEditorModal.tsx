@@ -1,6 +1,7 @@
 // Template create/edit modal: name, notes, an ordered item list (exercise +
 // optional targets), and an archive toggle for existing templates.
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useState, type DragEvent, type ReactElement } from 'react'
+import { ChevronDown, ChevronUp, GripVertical } from 'lucide-react'
 import { GYM_BODY_PARTS, type Exercise, type GymBodyPart, type GymTemplate, type NewGymTemplateItem } from '@shared/types'
 import { useAddGymTemplate, useCreateGymTemplateVersion, useExercises, useUpdateGymTemplate } from '../../hooks/useGymData'
 import { Dropdown } from '../../components/Dropdown'
@@ -71,6 +72,41 @@ export function itemsFromTemplate(template: GymTemplate, exercisesById: Map<stri
     }))
 }
 
+/**
+ * Moves the item with `key` one slot up or down. Clamped at both ends (a no-op
+ * past either edge returns the SAME array reference, so a repeat click on a
+ * boundary row skips the re-render). Mirrors SessionEditorModal's `moveBlock`
+ * so the two gym editors reorder by identical rules.
+ */
+export function moveTemplateItem(items: ItemRow[], key: string, direction: 'up' | 'down'): ItemRow[] {
+  const index = items.findIndex((it) => it.key === key)
+  const nextIndex = direction === 'up' ? index - 1 : index + 1
+  if (index < 0 || nextIndex < 0 || nextIndex >= items.length) return items
+  const next = [...items]
+  ;[next[index], next[nextIndex]] = [next[nextIndex], next[index]]
+  return next
+}
+
+/**
+ * Drag-and-drop landing rule: the dragged row TAKES the target row's slot, and
+ * everything between them shifts by one. Deliberately not useCardOrder's
+ * "insert before the target" rule — that one is direction-blind, so in a single
+ * COLUMN dragging a row onto the row directly below it is a visible no-op
+ * (remove, then re-insert in front of the same neighbour). Taking the target's
+ * index reads correctly in both directions. Dropping a row on itself, or either
+ * key being absent, is a no-op returning the same array reference.
+ */
+export function moveTemplateItemTo(items: ItemRow[], key: string, targetKey: string): ItemRow[] {
+  if (key === targetKey) return items
+  const from = items.findIndex((it) => it.key === key)
+  const to = items.findIndex((it) => it.key === targetKey)
+  if (from < 0 || to < 0) return items
+  const next = [...items]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  return next
+}
+
 /** Clamp/round to the 0–3600s rest range, or null when blank/invalid. */
 function toNullableRestSeconds(s: string): number | null {
   const n = toNullableInt(s)
@@ -92,20 +128,105 @@ function toNullableFloat(s: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * Reorder affordance for one editor row: a drag grip plus an up/down keyboard
+ * fallback, so the list is reorderable by pointer AND by keyboard. Same control
+ * set as the templates grid's handle, but rendered INLINE (the editor row is a
+ * flex line, not an absolutely-positioned card) and always visible — a form row
+ * has no hover-reveal affordance to lean on.
+ */
+function ItemReorderHandle({
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onMoveUp,
+  onMoveDown,
+  disableUp,
+  disableDown
+}: {
+  dragging: boolean
+  onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+  onDragEnd: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  disableUp: boolean
+  disableDown: boolean
+}): ReactElement {
+  return (
+    <span className={`reorder-handle reorder-handle--inline${dragging ? ' reorder-handle--dragging' : ''}`}>
+      <span
+        className="reorder-grip"
+        draggable
+        role="button"
+        tabIndex={-1}
+        aria-hidden="true"
+        title="Drag to reorder"
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        <GripVertical size={14} strokeWidth={1.75} />
+      </span>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move exercise up"
+        disabled={disableUp}
+        onClick={onMoveUp}
+      >
+        <ChevronUp size={13} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className="reorder-step"
+        aria-label="Move exercise down"
+        disabled={disableDown}
+        onClick={onMoveDown}
+      >
+        <ChevronDown size={13} strokeWidth={2} />
+      </button>
+    </span>
+  )
+}
+
 function TemplateItemEditor({
   item,
   defaultRestSeconds,
+  reorder,
   onChange,
   onRemove
 }: {
   item: ItemRow
   defaultRestSeconds: number | null
+  reorder: {
+    dragging: boolean
+    isFirst: boolean
+    isLast: boolean
+    onDragStart: (e: DragEvent<HTMLSpanElement>) => void
+    onDragEnd: () => void
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void
+    onDrop: (e: DragEvent<HTMLDivElement>) => void
+    onMoveUp: () => void
+    onMoveDown: () => void
+  }
   onChange: (patch: Partial<ItemRow>) => void
   onRemove: () => void
 }): ReactElement {
   const restPlaceholder = defaultRestSeconds != null ? `${formatRest(defaultRestSeconds)} (default)` : 'default'
   return (
-    <div className="gym-template-item-row">
+    <div
+      className={`gym-template-item-row${reorder.dragging ? ' gym-template-item-row--dragging' : ''}`}
+      onDragOver={reorder.onDragOver}
+      onDrop={reorder.onDrop}
+    >
+      <ItemReorderHandle
+        dragging={reorder.dragging}
+        onDragStart={reorder.onDragStart}
+        onDragEnd={reorder.onDragEnd}
+        onMoveUp={reorder.onMoveUp}
+        onMoveDown={reorder.onMoveDown}
+        disableUp={reorder.isFirst}
+        disableDown={reorder.isLast}
+      />
       <div className="gym-template-bodypart">
         <Dropdown
           ariaLabel="Filter by body part"
@@ -187,6 +308,9 @@ export function TemplateEditorModal({
     template?.default_rest_s != null ? String(template.default_rest_s) : ''
   )
   const [error, setError] = useState<string | null>(null)
+  // Key of the row currently being dragged, or null. Local to the open modal —
+  // item order is the array order and is only persisted (as `position`) on save.
+  const [draggedKey, setDraggedKey] = useState<string | null>(null)
 
   const addMutation = useAddGymTemplate()
   const updateMutation = useUpdateGymTemplate()
@@ -222,6 +346,10 @@ export function TemplateEditorModal({
   const updateItem = (key: string, patch: Partial<ItemRow>): void =>
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)))
   const removeItem = (key: string): void => setItems((prev) => prev.filter((it) => it.key !== key))
+  const moveItem = (key: string, direction: 'up' | 'down'): void =>
+    setItems((prev) => moveTemplateItem(prev, key, direction))
+  const dropItemOn = (key: string, targetKey: string): void =>
+    setItems((prev) => moveTemplateItemTo(prev, key, targetKey))
 
   /** Validates the form and builds the shared NewGymTemplate payload, or returns null on error. */
   const buildPayload = (): { name: string; notes: string | null; default_rest_s: number | null; items: NewGymTemplateItem[] } | null => {
@@ -235,6 +363,9 @@ export function TemplateEditorModal({
       setError('Finish or remove the exercise row without a name.')
       return null
     }
+    // Array order IS the saved order: the main process stamps `position` from
+    // the array index (db.ts insertTemplateItems), so a reorder here persists
+    // through both Save and Save-as-new-version with no extra plumbing.
     const newItems: NewGymTemplateItem[] = items.map((it) => ({
       exercise_id: it.exerciseId as string,
       target_sets: toNullableInt(it.targetSets),
@@ -329,11 +460,34 @@ export function TemplateEditorModal({
 
           <h4 className="gym-modal-section-title">Exercises</h4>
           <div className="gym-template-items">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <TemplateItemEditor
                 key={item.key}
                 item={item}
                 defaultRestSeconds={toNullableRestSeconds(defaultRestSeconds)}
+                reorder={{
+                  dragging: draggedKey === item.key,
+                  isFirst: index === 0,
+                  isLast: index === items.length - 1,
+                  onDragStart: (e) => {
+                    setDraggedKey(item.key)
+                    e.dataTransfer.effectAllowed = 'move'
+                  },
+                  onDragEnd: () => setDraggedKey(null),
+                  onDragOver: (e) => {
+                    if (draggedKey == null || draggedKey === item.key) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  },
+                  onDrop: (e) => {
+                    e.preventDefault()
+                    if (draggedKey == null || draggedKey === item.key) return
+                    dropItemOn(draggedKey, item.key)
+                    setDraggedKey(null)
+                  },
+                  onMoveUp: () => moveItem(item.key, 'up'),
+                  onMoveDown: () => moveItem(item.key, 'down')
+                }}
                 onChange={(patch) => updateItem(item.key, patch)}
                 onRemove={() => removeItem(item.key)}
               />

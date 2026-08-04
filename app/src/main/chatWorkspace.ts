@@ -75,6 +75,6 @@ export async function resolveChatWorkspace(
   }
 
   throw new Error(
-    'Sports app repository not connected. Set ALKE_REPO_ROOT to its absolute path.'
+    'Alke repository not connected. Set ALKE_REPO_ROOT to its absolute path.'
   )
 }

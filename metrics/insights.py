@@ -23,7 +23,7 @@ MIN_ADJUSTED_N = 60
 
 DRIVERS = [
     "sleep_shortfall", "sleep_midpoint_dev", "sleep_midpoint_shift",
-    "sleep_awake_fraction",
+    "sleep_timing_variability_7d_prior", "sleep_awake_fraction",
     "rhr_dev", "hrv_dev", "respiratory_rate_dev", "trimp_prior", "steps_prior",
     "flights_prior", "training_density_7d_prior",
 ]
@@ -125,6 +125,17 @@ DEFAULT_ADJUSTED_SPECS = [
     ],
     *[
         {
+            "name": f"prior_sleep_timing_variability_to_{'sleep_continuity' if outcome == 'sleep_awake_fraction' else 'respiration' if outcome == 'respiratory_rate_dev' else 'sleep'}",
+            "label": f"Prior-week sleep timing variability → {label}",
+            "driver": "sleep_timing_variability_7d_prior",
+            "outcome": outcome,
+            "controls": [f"lag:{outcome}", "atl_prior"],
+            "direction": "lagged",
+        }
+        for outcome, label in _PRE_WORKOUT_RECOVERY_OUTCOMES
+    ],
+    *[
+        {
             "name": f"sleep_shortfall_to_{'respiration' if outcome == 'respiratory_rate_dev' else outcome.removesuffix('_dev')}",
             "label": f"Sleep shortfall ↔ {label}",
             "driver": "sleep_shortfall", "outcome": outcome,
@@ -206,6 +217,7 @@ _WORKOUT_READINESS = (
     ("sleep_shortfall_3d", "Three-night mean sleep shortfall"),
     ("sleep_midpoint_dev", "Sleep timing drift"),
     ("sleep_midpoint_shift", "Later sleep timing"),
+    ("sleep_timing_variability_7d_prior", "Prior-week sleep timing variability"),
     ("sleep_awake_fraction", "Sleep awake fraction"),
     ("rhr_dev_prior", "Previous-day RHR deviation"),
     ("hrv_dev_prior", "Previous-day HRV deviation"),
@@ -225,7 +237,9 @@ DEFAULT_WORKOUT_SPECS = [
             "driver": driver, "outcome": "workout_duration",
             "controls": [*_WORKOUT_BASE_CONTROLS, "duration_prev_modality"],
             "direction": (
-                "prior-day-to-workout" if driver.endswith("_prior")
+                "prior-window-to-workout"
+                if driver == "sleep_timing_variability_7d_prior"
+                else "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
             ),
             "kind": "scalar",
@@ -313,7 +327,9 @@ DEFAULT_WORKOUT_SPECS = [
             "driver": driver, "outcome": "workout_intensity",
             "controls": [*_WORKOUT_BASE_CONTROLS, "log_duration", "intensity_prev_modality"],
             "direction": (
-                "prior-day-to-workout" if driver.endswith("_prior")
+                "prior-window-to-workout"
+                if driver == "sleep_timing_variability_7d_prior"
+                else "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
             ),
             "kind": "scalar",
@@ -329,7 +345,9 @@ DEFAULT_WORKOUT_SPECS = [
                 *_WORKOUT_BASE_CONTROLS, "log_duration", "high_zone_prev_modality",
             ],
             "direction": (
-                "prior-day-to-workout" if driver.endswith("_prior")
+                "prior-window-to-workout"
+                if driver == "sleep_timing_variability_7d_prior"
+                else "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
             ),
             "kind": "scalar",
@@ -346,7 +364,9 @@ DEFAULT_WORKOUT_SPECS = [
                 "energy_intensity_prev_modality",
             ],
             "direction": (
-                "prior-day-to-workout" if driver.endswith("_prior")
+                "prior-window-to-workout"
+                if driver == "sleep_timing_variability_7d_prior"
+                else "prior-day-to-workout" if driver.endswith("_prior")
                 else "morning-to-workout"
             ),
             "kind": "scalar",
@@ -500,6 +520,41 @@ def prior_rolling_circular_deviation(
         unwrapped = center + ((hours - center + 12.0) % 24.0 - 12.0)
         baseline = float(np.median(unwrapped))
         result.iloc[position] = (float(current) - baseline + 12.0) % 24.0 - 12.0
+    return result
+
+
+def prior_rolling_circular_mad(
+    series: pd.Series,
+    days: int = 7,
+    min_periods: int = 7,
+) -> pd.Series:
+    """Median circular clock dispersion over a strictly prior calendar window.
+
+    The current night's midpoint is excluded. With a complete daily index,
+    seven required observations in a seven-day window means seven consecutive
+    prior nights; a missing night leaves the exposure undefined rather than
+    silently converting it into an observation-count window.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    result = pd.Series(np.nan, index=numeric.index, dtype=float)
+    for position, timestamp in enumerate(numeric.index):
+        window_start = timestamp - pd.Timedelta(days=days)
+        prior = numeric.loc[
+            (numeric.index >= window_start) & (numeric.index < timestamp)
+        ].dropna()
+        if len(prior) < min_periods:
+            continue
+        hours = np.mod(prior.to_numpy(dtype=float), 24.0)
+        angles = hours * 2.0 * math.pi / 24.0
+        mean_sin = float(np.mean(np.sin(angles)))
+        mean_cos = float(np.mean(np.cos(angles)))
+        if math.hypot(mean_sin, mean_cos) <= 1e-9:
+            continue
+        center = (math.atan2(mean_sin, mean_cos) % (2.0 * math.pi)) * 24.0 / (
+            2.0 * math.pi
+        )
+        distances = np.abs((hours - center + 12.0) % 24.0 - 12.0)
+        result.iloc[position] = float(np.median(distances))
     return result
 
 
@@ -1227,7 +1282,7 @@ def discover_adjusted_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 9,
+            "model_version": 10,
             "n": max((result.get("n", 0) for result in results), default=0),
             "candidate_count": len(results),
             "signal_count": sum(result.get("status") == "signal" for result in results),
@@ -1417,7 +1472,7 @@ def discover_workout_context_insights(
         ),
         "coefficients": coefficients,
         "diagnostics": {
-            "model_version": 15,
+            "model_version": 16,
             "n": max((result.get("n", 0) for result in results), default=0),
             "n_days": max((result.get("n_days", 0) for result in results), default=0),
             "candidate_count": len(results),

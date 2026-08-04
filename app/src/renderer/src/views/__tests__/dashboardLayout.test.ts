@@ -5,16 +5,27 @@ const source = readFileSync(new URL('../DashboardView.tsx', import.meta.url), 'u
 const styles = readFileSync(new URL('../DashboardView.css', import.meta.url), 'utf8')
 
 describe('Dashboard card layout', () => {
-  it('groups the glance and 12-column grids in a card stack before the calendar', () => {
-    const stack =
-      source.match(
-        /<div className="dashboard-card-stack">([\s\S]*?)\n {6}<\/div>\n\n {6}\{\/\* Calendar \+ period summaries/
-      )?.[1] ?? ''
+  it('leads the card stack with the hero metric, then the glance row', () => {
+    const stackStart = source.indexOf('<div className="dashboard-card-stack">')
+    const recentStart = source.indexOf('<RecentSessionsBox')
+    const stack = source.slice(stackStart, recentStart)
 
+    expect(stackStart).toBeGreaterThan(-1)
+    expect(stack).toContain('<div className="dashboard-hero-card">')
     expect(stack).toContain('<div className="dashboard-glance-grid">')
-    expect(stack).toContain('<div className="dashboard-grid">')
-    expect(stack.indexOf('dashboard-glance-grid')).toBeLessThan(stack.indexOf('dashboard-grid'))
+    // The one hero number owns the top of the view; the standing figures follow.
+    expect(stack.indexOf('dashboard-hero-card')).toBeLessThan(
+      stack.indexOf('dashboard-glance-grid')
+    )
     expect(stack).not.toContain('dashboard-calendar-grid')
+  })
+
+  it('places recent sessions between the card stack and the calendar', () => {
+    const recentStart = source.indexOf('<RecentSessionsBox')
+    const calendarStart = source.indexOf('<div className="dashboard-calendar-grid">')
+
+    expect(recentStart).toBeGreaterThan(-1)
+    expect(calendarStart).toBeGreaterThan(recentStart)
   })
 
   it('spaces the grouped card grids with the dashboard spacing token', () => {
@@ -23,5 +34,41 @@ describe('Dashboard card layout', () => {
     expect(rule).toMatch(/display:\s*flex;/)
     expect(rule).toMatch(/flex-direction:\s*column;/)
     expect(rule).toMatch(/gap:\s*var\(--space-md\);/)
+  })
+
+  it('gives the hero card the reserved hero padding and the shared card edge', () => {
+    const rule = styles.match(/\.dashboard-hero-card\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+
+    // DESIGN.md reserves 32px padding for hero-metric cards; everything else is 24px.
+    expect(rule).toContain('padding: var(--space-xl)')
+    expect(rule).toContain('background: var(--color-surface-elevated)')
+    expect(rule).toContain('border: 1px solid var(--card-border)')
+    expect(rule).toContain('border-radius: var(--radius-lg)')
+  })
+
+  it('runs the glance row three-up at desktop widths', () => {
+    const rule = styles.match(/\.dashboard-glance-grid\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+
+    expect(rule).toContain('repeat(3, minmax(0, 1fr))')
+    expect(rule).toContain('gap: var(--space-md)')
+  })
+
+  it('splits the lead row 8/4 between the hero card and the RHR tile', () => {
+    const leadRow = source.slice(
+      source.indexOf('<div className="dashboard-grid">'),
+      source.indexOf('dashboard-glance-grid')
+    )
+
+    expect(leadRow).toContain('dashboard-grid--span-8')
+    expect(leadRow).toContain('dashboard-grid--span-4')
+    expect(leadRow.indexOf('dashboard-hero-card')).toBeLessThan(leadRow.indexOf('StatSquare'))
+  })
+
+  it('keeps the adherence bar on the sessions accent, never the flag colour', () => {
+    const rule = styles.match(/\.dashboard-sessions-bar-fill\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+
+    // Missing a weekly minimum is information, not a warning.
+    expect(rule).toContain('var(--color-sessions)')
+    expect(rule).not.toContain('flag')
   })
 })

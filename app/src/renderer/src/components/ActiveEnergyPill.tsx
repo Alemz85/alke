@@ -8,13 +8,16 @@
 // dashboardUtils.ts (unit-tested); this component only formats + renders.
 import type { ReactElement } from 'react'
 import type { ActiveEnergySummary } from '../views/dashboardUtils'
+import { Sparkline, type SparklinePoint } from './Sparkline'
 import './ActiveEnergyPill.css'
 
 export interface ActiveEnergyPillProps {
   summary: ActiveEnergySummary
+  /** Recent daily totals behind the headline number, oldest first. Optional. */
+  trend?: SparklinePoint[]
 }
 
-export function ActiveEnergyPill({ summary }: ActiveEnergyPillProps): ReactElement {
+export function ActiveEnergyPill({ summary, trend = [] }: ActiveEnergyPillProps): ReactElement {
   const { todayKcal, weekAvgKcal, hasAnyData } = summary
 
   // Quiet empty state — active energy has never synced (it only started
@@ -43,6 +46,7 @@ export function ActiveEnergyPill({ summary }: ActiveEnergyPillProps): ReactEleme
           </span>
         )}
       </div>
+      <Sparkline points={trend} domain="load" ariaLabel="Active energy over the last two weeks" />
       <span className="activeenergy-pill-meta">
         {todayKcal === null ? 'No sync yet today' : 'So far today'}
         {weekAvgKcal !== null ? ` · 7-day avg ${Math.round(weekAvgKcal)} kcal` : ''}

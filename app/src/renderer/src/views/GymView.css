@@ -995,6 +995,13 @@ select.gym-input {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
+/* Drag source: de-emphasized while it's in flight, so the row under the
+   pointer is what reads as the active drop target (same rule as the cards). */
+.gym-template-item-row--dragging {
+  opacity: 0.5;
 }
 
 .gym-template-target-input {
@@ -1800,6 +1807,18 @@ select.gym-input {
 }
 
 .reorder-handle--dragging {
+  opacity: 1;
+}
+
+/* Inline variant for form rows (template editor): the row is a flex line, not
+   a positioned card, and a form control must not be hover-revealed — an editor
+   surface has no "hover the card to discover it" affordance to lean on.
+   Deliberately scoped to the row (two classes) rather than left as a bare
+   modifier: InjuriesView.css ships its own `.reorder-handle` base at equal
+   specificity, so a single-class modifier would win or lose on bundle order. */
+.gym-template-item-row .reorder-handle--inline {
+  position: static;
+  flex: 0 0 auto;
   opacity: 1;
 }
 

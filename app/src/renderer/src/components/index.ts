@@ -1,6 +1,7 @@
 export * from './domain'
 export * from './HeroMetric'
 export * from './MetricCard'
+export * from './Sparkline'
 export * from './ChartCard'
 export * from './StatTable'
 export * from './BadgeDomain'

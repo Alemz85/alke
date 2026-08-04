@@ -13,6 +13,8 @@ Subcommands:
   add        --name ... [options]          create an injury, prints its id
   update     <id> [options]                patch an injury (only given fields)
   note       <injury_id> --note ... [opts] append a dated (or spanned) progress note
+  note-update <note_id> --note ...         replace an existing progress note's text
+  note-remove <note_id>                    hard-delete an existing progress note
   notes      <injury_id>                   list an injury's notes, newest first
   plan-list  <injury_id>                   list an injury's recovery plan items
   plan-apply <injury_id> --file plan.json  validate and idempotently apply a complete plan
@@ -46,6 +48,16 @@ VALID_PRECISIONS = ("day", "month", "year")
 # points with their own argparse/main, and importing one write-helper module
 # from the other for a single tuple isn't worth the coupling.
 BODY_PARTS = ("chest", "back", "shoulders", "arms", "legs", "core", "full body")
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return parsed
 
 
 def parse_ymd(value: str, label: str) -> str:
@@ -218,27 +230,54 @@ def cmd_note(args) -> None:
         body["context"] = tags
     if args.workout is not None:
         body["workout_id"] = args.workout
-    _request("POST", "injury_notes", body=body, prefer="return=minimal")
+    rows = _request("POST", "injury_notes", body=body, prefer="return=representation")
+    if not rows:
+        sys.exit(f"note creation failed for injury {args.injury_id}: no row returned")
     span = f" ({start} → {end})" if end is not None else ""
-    print(f"logged note on injury {args.injury_id}{span}")
+    print(f"logged note {rows[0]['id']} on injury {args.injury_id}{span}")
+
+
+def cmd_note_update(args) -> None:
+    rows = _request(
+        "PATCH",
+        "injury_notes",
+        params={"id": f"eq.{args.note_id}"},
+        body={"note": args.note},
+        prefer="return=representation",
+    )
+    if not rows:
+        sys.exit(f"note {args.note_id} not found")
+    print(f"updated note {args.note_id}")
+
+
+def cmd_note_remove(args) -> None:
+    rows = _request(
+        "DELETE",
+        "injury_notes",
+        params={"id": f"eq.{args.note_id}"},
+        prefer="return=representation",
+    )
+    if not rows:
+        sys.exit(f"note {args.note_id} not found")
+    print(f"removed note {args.note_id}")
 
 
 def cmd_notes(args) -> None:
     rows = _request("GET", "injury_notes", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "entry_date,entry_end_date,date_precision,source,pain_level,note",
+        "select": "id,entry_date,entry_end_date,date_precision,source,pain_level,note",
         "order": "entry_date.desc,noted_at.desc",
     })
     if not rows:
         print("_no notes_")
         return
-    print("| when | source | pain | note |")
-    print("| --- | --- | --- | --- |")
+    print("| id | when | source | pain | note |")
+    print("| --- | --- | --- | --- | --- |")
     for r in rows:
         pain = "" if r.get("pain_level") is None else r["pain_level"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
         when = format_period(r.get("entry_date"), r.get("entry_end_date"), r.get("date_precision"))
-        print(f"| {when} | {r.get('source') or ''} | {pain} | {note} |")
+        print(f"| {r.get('id') or ''} | {when} | {r.get('source') or ''} | {pain} | {note} |")
 
 
 def cmd_show(args) -> None:
@@ -254,7 +293,7 @@ def cmd_show(args) -> None:
     plan_week = current_plan_week(injury.get("plan_started_at"), user_today())
     notes = _request("GET", "injury_notes", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "entry_date,entry_end_date,date_precision,source,pain_level,note",
+        "select": "id,entry_date,entry_end_date,date_precision,source,pain_level,note",
         "order": "entry_date.desc,noted_at.desc",
     })
     items = _request("GET", "recovery_plan_items", params={
@@ -277,13 +316,13 @@ def cmd_show(args) -> None:
     if not notes:
         print("_no notes_")
     else:
-        print("| when | source | pain | note |")
-        print("| --- | --- | --- | --- |")
+        print("| id | when | source | pain | note |")
+        print("| --- | --- | --- | --- | --- |")
         for row in notes:
             pain = "" if row.get("pain_level") is None else row["pain_level"]
             note = (row.get("note") or "").replace("|", "\\|").replace("\n", " ")
             when = format_period(row.get("entry_date"), row.get("entry_end_date"), row.get("date_precision"))
-            print(f"| {when} | {row.get('source') or ''} | {pain} | {note} |")
+            print(f"| {row.get('id') or ''} | {when} | {row.get('source') or ''} | {pain} | {note} |")
 
     print("\n## Recovery plan items")
     if not items:
@@ -686,6 +725,15 @@ def main() -> None:
     p_note.add_argument("--context", help="comma-separated: " + ",".join(VALID_CONTEXTS))
     p_note.add_argument("--workout", help="workout id this note relates to")
     p_note.set_defaults(func=cmd_note)
+
+    p_note_upd = sub.add_parser("note-update", help="Replace a progress note's text")
+    p_note_upd.add_argument("note_id", type=positive_int)
+    p_note_upd.add_argument("--note", required=True)
+    p_note_upd.set_defaults(func=cmd_note_update)
+
+    p_note_rm = sub.add_parser("note-remove", help="Hard-delete a progress note")
+    p_note_rm.add_argument("note_id", type=positive_int)
+    p_note_rm.set_defaults(func=cmd_note_remove)
 
     p_notes = sub.add_parser("notes", help="List an injury's notes")
     p_notes.add_argument("injury_id")

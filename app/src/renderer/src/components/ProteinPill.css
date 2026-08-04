@@ -12,14 +12,19 @@
   box-sizing: border-box;
   padding: var(--space-lg);
   background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
 }
 
+/* Shared glance-pill skeleton — see BodyWeightPill.css. This head is the one
+   that sets the 32px row height (the inline add sits in it), so it declares the
+   same min-height explicitly rather than relying on the input to supply it. */
 .protein-pill-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
+  min-height: 32px;
 }
 
 .protein-pill-eyebrow {
@@ -161,6 +166,7 @@
 }
 
 .protein-pill-meta {
+  margin-top: auto;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line-height);

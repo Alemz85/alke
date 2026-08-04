@@ -20,6 +20,7 @@ import {
   buildGoalClaudeArgs,
   buildStreamingClaudeArgs,
   closeChildStdin,
+  extractClaudeCliFailure,
   type ChatPolicyPaths
 } from './chatPolicy'
 import { ChatRuntimeStore } from './chatRuntime'
@@ -197,7 +198,7 @@ async function resolvePolicyPaths(attachments: ChatAttachment[]): Promise<ChatPo
     configuredRoot: process.env.ALKE_REPO_ROOT,
     sourceChatctxDir: app.isPackaged ? undefined : CHATCTX_DIR,
     packaged: app.isPackaged,
-    ownerFallback: join(homeRoot, 'Projects/Github/Sports app')
+    ownerFallback: join(homeRoot, 'Projects/Github/Alke')
   })
   return {
     repoRoot: workspace.repoRoot,
@@ -314,6 +315,7 @@ export async function sendMessage(
   let stderr = ''
   let buffer = ''
   let spawnError: string | null = null
+  let cliFailure: string | null = null
   const seenToolIds = new Set<string>()
   let thinkingNoted = false
 
@@ -329,6 +331,7 @@ export async function sendMessage(
   }
 
   function handleCliEvent(event: Record<string, unknown>): void {
+    cliFailure = extractClaudeCliFailure(event) ?? cliFailure
     const type = event.type
     if (type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
       session!.claude_session_id = event.session_id
@@ -422,7 +425,8 @@ export async function sendMessage(
         if (code === 0 || stopped) {
           emitEnvelope(window, runtime.complete())
         } else {
-          const message = spawnError || stderr.trim() || `claude exited with code ${code}`
+          const message =
+            spawnError || cliFailure || stderr.trim() || `claude exited with code ${code}`
           emitEnvelope(window, runtime.fail(message))
         }
       } catch (error) {

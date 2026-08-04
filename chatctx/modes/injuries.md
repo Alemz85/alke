@@ -15,6 +15,8 @@ python3 injuries.py show <injury_id>
 python3 injuries.py add --name ".." [--body-area ".."] [--status active|recovering|resolved] [--severity mild|moderate|severe] [--started YYYY-MM-DD] [--summary ".."] [--recovery-plan ".."]
 python3 injuries.py update <id> [--status ..] [--severity ..] [--started YYYY-MM-DD] [--resolved YYYY-MM-DD] [--plan-started YYYY-MM-DD] [--recovery-plan ".."] [--summary ".."] [--name ".."] [--body-area ".."]
 python3 injuries.py note <injury_id> --note ".." [--pain 0-10] [--date YYYY-MM-DD] [--until YYYY-MM-DD] [--precision day|month|year] [--context during_workout,post_workout] [--workout <workout_id>]
+python3 injuries.py note-update <note_id> --note ".."
+python3 injuries.py note-remove <note_id>
 python3 injuries.py notes <injury_id>
 python3 injuries.py plan-list <injury_id>
 node recovery_plan_contract.mjs template > /tmp/recovery-plan.json
@@ -49,15 +51,16 @@ When the user narrates a history, DECOMPOSE it into the log rather than dumping 
 
 Worked example — a wrist-pain entry whose summary had swallowed a year of history decomposes to a timeless summary (where it is, what reproduces/relieves it, what it excludes, "working hypothesis, not clinically confirmed") plus four log rows: a `2024 → early 2025` entry at `--precision year` for the recurring pattern, a `2025-03-10` flare entry, a `2025-03-14` "≈50% better, no longer tender" entry, and a `2025-03-14 → today` span at `--pain 0` for "no recurrence since". `started_at` = 2024.
 
-### `note` is append-journal, not the app's same-day merge — there is no edit/delete verb
+### `note` is append-journal, not the app's same-day merge — correct rows by exact ID
 
 `injuries.py note` always **appends** a new `injury_notes` row (a plain `POST`); it is intentionally NOT the app's quick-log behavior, which merges same-day entries. Multiple dated (or spanned) entries on the same day are normal and expected here — that is how a history decomposes into the log (see above), not a bug to avoid.
 
-This means `injuries.py` has **no verb that edits or removes an existing note** — `note`/`notes` are the only note-facing subcommands (append, list). There is no `note-update` or `note-remove`, unlike the plan-item side (`plan-update`, `plan-remove`). Do not invent one or call a nonexistent flag.
+Every successful `note` command prints the created note ID. `notes` and `show` also display each note's ID, so corrections are always targeted at one explicit row rather than inferred from the date or text.
 
 Consequences for CORRECTING (not adding to) a same-day entry:
 
-- If you logged something wrong moments ago in the same session (typo, wrong pain level, wrong context) and no other note has been added since, the practical fix is to re-run `injuries.py list`/`show`/`notes` to confirm exactly what's there, then tell the user directly that `injury_notes` has no row-level edit/delete path from this CLI — a correction requires a manual DB statement (out of this tool's scope; flag it rather than silently working around it).
+- First run `injuries.py show <injury_id>` or `injuries.py notes <injury_id>` and identify the exact note ID. Never infer a target from a matching date: multiple real events can share a date.
+- For a wrong note text, run `injuries.py note-update <note_id> --note "corrected text"`. For a wholly mistaken note, run `injuries.py note-remove <note_id>`. Both commands fail if that exact row is absent; re-list rather than guessing another ID.
 - Do NOT paper over a wrong entry by logging a second, near-duplicate note for the same day that merely restates the corrected value — that leaves both the wrong and the right entry sitting side by side, indistinguishable from a real two-events-same-day case, and defeats the append-log's whole premise (most-recent-entry-is-the-current-picture) for that day.
 - A genuinely NEW fact for the same day (a second event, a follow-up observation) is not a correction and should be logged as its own note — that's the append-journal working as intended, not a near-duplicate.
 

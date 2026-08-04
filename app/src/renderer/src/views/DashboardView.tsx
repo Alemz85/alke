@@ -4,9 +4,12 @@ import type { DailyMetric, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import {
   EmptyState,
+  HeroMetric,
   MetricDetailModal,
+  Sparkline,
   type MetricDetailConfig,
-  type MetricDetailPoint
+  type MetricDetailPoint,
+  type SparklinePoint
 } from '../components'
 import { ActiveEnergyPill } from '../components/ActiveEnergyPill'
 import { BodyWeightPill } from '../components/BodyWeightPill'
@@ -71,6 +74,35 @@ function toDetailSeries<T>(
   })
 }
 
+/** Days since the epoch for a "YYYY-MM-DD" key — the sparklines' time axis. */
+function dayIndex(ymd: string): number {
+  return Math.round(Date.parse(`${ymd}T00:00:00Z`) / 86_400_000)
+}
+
+/**
+ * Builds sparkline points from daily-metric rows, dropping days the metric
+ * never synced and positioning each reading on a real day axis rather than by
+ * index — a sparse metric (weigh-ins land weeks apart) must not be drawn as an
+ * evenly-spaced series.
+ */
+function trendPoints(
+  rowsAsc: DailyMetric[],
+  pick: (row: DailyMetric) => number | null,
+  windowDays: number,
+  todayKey: string
+): SparklinePoint[] {
+  const cutoff = dayIndex(todayKey) - windowDays
+  const out: SparklinePoint[] = []
+  for (const row of rowsAsc) {
+    const value = pick(row)
+    if (value === null) continue
+    const x = dayIndex(row.date)
+    if (x < cutoff) continue
+    out.push({ x, y: value })
+  }
+  return out
+}
+
 interface StatSquareProps {
   label: string
   /** Full name spelled out under the acronym, e.g. "Resting HR". */
@@ -78,11 +110,21 @@ interface StatSquareProps {
   value: string
   sub?: string
   domain: 'load' | 'recovery'
+  /** Recent history drawn under the value. Optional — the tile stands without it. */
+  trend?: SparklinePoint[]
   onClick: () => void
 }
 
 /** A small clickable stat tile (RHR) that opens its metric popup. */
-function StatSquare({ label, name, value, sub, domain, onClick }: StatSquareProps): ReactElement {
+function StatSquare({
+  label,
+  name,
+  value,
+  sub,
+  domain,
+  trend = [],
+  onClick
+}: StatSquareProps): ReactElement {
   return (
     <button
       type="button"
@@ -97,6 +139,7 @@ function StatSquare({ label, name, value, sub, domain, onClick }: StatSquareProp
       </span>
       <span className="stat-square-figure">
         <span className="stat-square-value tabular-nums">{value}</span>
+        <Sparkline points={trend} domain={domain} ariaLabel={`${name} over the last month`} />
         {sub && <span className="stat-square-sub">{sub}</span>}
       </span>
     </button>
@@ -233,9 +276,48 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
   const latestRhrRow = [...sortedMetrics].reverse().find((m) => m.resting_hr !== null)
   const latestRhr = latestRhrRow?.resting_hr ?? null
 
+  // Trend shapes under each glance figure. The windows differ because the
+  // metrics do: weigh-ins are sparse enough to need half a year to show a
+  // direction, active energy is daily, and RHR reads against a monthly baseline.
+  const todayYmdKey = ymdKey(todayYmd)
+  const weightTrend = useMemo(
+    () => trendPoints(sortedMetrics, (m) => m.weight_kg, 180, todayYmdKey),
+    [sortedMetrics, todayYmdKey]
+  )
+  const energyTrend = useMemo(
+    () => trendPoints(sortedMetrics, (m) => m.active_energy_kcal, 14, todayYmdKey),
+    [sortedMetrics, todayYmdKey]
+  )
+  const rhrTrend = useMemo(
+    () => trendPoints(sortedMetrics, (m) => m.resting_hr, 30, todayYmdKey),
+    [sortedMetrics, todayYmdKey]
+  )
+
   // --- Sessions this week vs weekly_min_sessions ---
   const workoutsThisWeek = workoutsThisWeekQuery.data ?? []
   const minSessionEntries = Object.entries(weeklyMinSessions)
+
+  // The hero figure. Done/target are the SUMS of the per-modality rows printed
+  // directly beneath, so the headline always reconciles with the breakdown a
+  // reader can check by eye. With no minimums configured there is nothing to
+  // score against, so it falls back to a plain count of this week's sessions.
+  const goalRows = minSessionEntries.map(([type, min]) => ({
+    type,
+    min,
+    done: countSessionsForGoal(workoutsThisWeek, type)
+  }))
+  const hasGoals = goalRows.length > 0
+  const sessionsDone = hasGoals
+    ? goalRows.reduce((sum, r) => sum + r.done, 0)
+    : workoutsThisWeek.length
+  const sessionsTarget = goalRows.reduce((sum, r) => sum + r.min, 0)
+  const sessionsRemaining = Math.max(0, sessionsTarget - sessionsDone)
+  const minimumMet = hasGoals && sessionsRemaining === 0
+  const heroDelta = !hasGoals
+    ? 'No weekly minimums set yet — add them in Profile'
+    : minimumMet
+      ? 'Weekly minimum met'
+      : `${sessionsRemaining} to go`
 
   // --- Recent sessions: last 4 workouts as a 2×2 grid ---
   const recentWorkouts = [...(recentWorkoutsQuery.data ?? [])]
@@ -279,36 +361,45 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
       <TabHeader eyebrow="Overview" title="Dashboard" />
 
       <div className="dashboard-card-stack">
-        {/* Top glance row: body weight + protein + active energy (compact pills). */}
-        <div className="dashboard-glance-grid">
-          <BodyWeightPill summary={weightSummary} />
-          <ProteinPill timezone={timezone} />
-          <ActiveEnergyPill summary={energySummary} />
-        </div>
-
-        {/* Sessions this week + a compact RHR readiness tile, then recent sessions. */}
+        {/* Lead row: the tab's one hero metric (DESIGN.md allows exactly one) —
+            weekly session adherence, the number this overview exists to answer,
+            with the per-modality breakdown beside it as supporting evidence —
+            and the RHR readiness tile alongside on the 8/4 split. */}
         <div className="dashboard-grid">
           <div className="dashboard-grid--span-8">
-            <div className="metric-card dashboard-sessions-card">
-              <div className="metric-card-eyebrow">Sessions this week</div>
-              {minSessionEntries.length === 0 ? (
-                <div className="metric-card-value metric-card-value--sessions tabular-nums">
-                  {EM_DASH}
-                </div>
-              ) : (
+            <div className="dashboard-hero-card">
+              <HeroMetric
+                eyebrow="Sessions · this week"
+                value={sessionsDone.toString()}
+                unit={hasGoals ? `of ${sessionsTarget}` : 'logged'}
+                delta={heroDelta}
+                deltaPositive={minimumMet}
+                domain="sessions"
+              />
+              {hasGoals && (
                 <div className="dashboard-sessions-list">
-                  {minSessionEntries.map(([type, min]) => (
+                  {goalRows.map(({ type, min, done }) => (
                     <div className="dashboard-sessions-row" key={type}>
-                      <span
-                        className="dashboard-sessions-pill"
-                        style={{ color: activityEnvironmentAccent(type) }}
-                      >
-                        <ModalityIcon type={type} size={14} />
-                        <ActivityBadge type={type} label={humanizeWorkoutType(type)} />
-                      </span>
-                      <span className="dashboard-sessions-row-value tabular-nums">
-                        {countSessionsForGoal(workoutsThisWeek, type)} of {min}
-                      </span>
+                      <div className="dashboard-sessions-row-head">
+                        <span
+                          className="dashboard-sessions-pill"
+                          style={{ color: activityEnvironmentAccent(type) }}
+                        >
+                          <ModalityIcon type={type} size={14} />
+                          <ActivityBadge type={type} label={humanizeWorkoutType(type)} />
+                        </span>
+                        <span className="dashboard-sessions-row-value tabular-nums">
+                          {done} of {min}
+                        </span>
+                      </div>
+                      {/* Capped at 100% so an extra session reads as "done"
+                          rather than overflowing the track. */}
+                      <div className="dashboard-sessions-bar">
+                        <div
+                          className="dashboard-sessions-bar-fill"
+                          style={{ width: `${min > 0 ? Math.min(100, (done / min) * 100) : 0}%` }}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -323,20 +414,29 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
               value={latestRhr === null ? EM_DASH : Math.round(latestRhr).toString()}
               sub={latestRhr === null ? 'no data' : 'bpm · last night'}
               domain="recovery"
+              trend={rhrTrend}
               onClick={() => setRhrOpen(true)}
             />
           </div>
+        </div>
 
-          <div className="dashboard-grid--span-12">
-            <RecentSessionsBox
-              workouts={recentWorkouts}
-              timezone={timezone}
-              onOpenSessions={onOpenSessions}
-              onSelectWorkout={setRecentWorkout}
-            />
-          </div>
+        {/* Glance row: the three standing figures, each with its trend shape. */}
+        <div className="dashboard-glance-grid">
+          <BodyWeightPill summary={weightSummary} trend={weightTrend} />
+          <ProteinPill timezone={timezone} />
+          <ActiveEnergyPill summary={energySummary} trend={energyTrend} />
         </div>
       </div>
+
+      {/* Its own section (heading on the canvas, tiles carrying the surface) —
+          so it sits at the same rhythm as Goals rather than inside the card
+          stack's tighter grid gap. */}
+      <RecentSessionsBox
+        workouts={recentWorkouts}
+        timezone={timezone}
+        onOpenSessions={onOpenSessions}
+        onSelectWorkout={setRecentWorkout}
+      />
 
       {/* Calendar + period summaries (calendar left, month/year tables right). */}
       <div className="dashboard-calendar-grid">
@@ -393,11 +493,11 @@ interface RecentSessionsBoxProps {
 }
 
 /**
- * Full-width "Recent sessions" box: the last 4 workouts as a row of mini-tiles.
- * Each tile is a button that opens that ONE workout in the day drawer, with a
- * clear hover cue; a separate "All sessions →" link in the header navigates to
- * the full Sessions view. The box itself is no longer a giant button — that had
- * made per-tile hover indistinguishable from the box.
+ * Full-width "Recent sessions" section: a heading on the canvas above the last 4
+ * workouts as a row of tiles. Each tile is a button that opens that ONE workout
+ * in the day drawer, with a clear hover cue; a separate "All sessions →" link in
+ * the header navigates to the full Sessions view. Neither the section nor the
+ * header is clickable, so a tile's hover reads unambiguously.
  */
 function RecentSessionsBox({
   workouts,

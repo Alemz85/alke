@@ -8,6 +8,13 @@
   gap: var(--space-md);
 }
 
+.goal-strip-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
 .goal-strip-section-title {
   font-family: var(--font-display);
   font-size: var(--type-heading-md-size);
@@ -18,17 +25,46 @@
   margin: 0;
 }
 
+/* Matches the "All sessions →" link on the Recent sessions section directly
+   above, so the two canvas-level sections share one header vocabulary. */
+.goal-strip-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  color: var(--color-text-secondary);
+  transition: color var(--motion-hover);
+}
+
+.goal-strip-all:hover {
+  color: var(--color-text);
+}
+
 /* Goal summaries stay compact and glanceable: four metric cards across the
    standard dashboard width, following the 12-column dashboard rhythm. */
+/* auto-fit rather than a fixed 4 tracks: with three goals a fixed grid leaves a
+   quarter-width hole on the right, which reads as a missing card. auto-fit
+   collapses the empty track so however many goals exist fill the row, and still
+   wraps to a second row past four. */
 .goal-strip-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--space-md);
 }
 
 .goal-strip-card {
   background: var(--color-surface-elevated);
-  border: 1px solid var(--color-hairline);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   width: 100%;
@@ -120,39 +156,59 @@
   color: var(--color-text-secondary);
 }
 
+/* Context beside the percentage, deliberately quieter than it. */
 .goal-strip-metric-range {
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.goal-strip-footer {
+/* The whole progress block sits at the card's bottom edge, so a goal with a
+   target and one without still resolve on the same baseline instead of one
+   card's number floating in an empty box. */
+.goal-strip-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.goal-strip-progress-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-sm);
-  margin-top: auto;
 }
 
+/* The percentage is the readout the card exists to give, so it takes the goal
+   accent and display type — the one place this card carries colour. */
 .goal-strip-progress-value {
   flex-shrink: 0;
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  line-height: var(--type-caption-line-height);
-  letter-spacing: var(--type-caption-letter-spacing);
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  line-height: var(--type-heading-sm-line-height);
+  color: var(--color-load-text);
+}
+
+/* Nothing logged against the target yet — stays neutral until it has something
+   to say. */
+.goal-strip-progress-value--zero {
   color: var(--color-text-tertiary);
 }
 
 .goal-strip-delta {
   flex-shrink: 0;
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
 }
 
 .goal-strip-delta--neutral {
@@ -167,11 +223,16 @@
   color: var(--color-text-tertiary);
 }
 
+/* The track was a 3px band of --color-divider-soft (6% white) on an already
+   dark card — at 0% fill it was effectively invisible, so the card looked like
+   it had a stray hairline rather than a progress meter. --color-surface is a
+   real step down from the card in both themes, so the empty track reads as an
+   empty track. */
 .goal-strip-bar {
   width: 100%;
-  height: 3px;
+  height: 6px;
   border-radius: var(--radius-full);
-  background: var(--color-divider-soft);
+  background: var(--color-surface);
   overflow: hidden;
 }
 
@@ -188,10 +249,13 @@
   }
 }
 
+/* Stands in for the progress block when there is nothing honest to plot. */
 .goal-strip-empty {
   margin: 0;
   font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
   color: var(--color-text-tertiary);
 }
 

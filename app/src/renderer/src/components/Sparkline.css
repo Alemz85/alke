@@ -1,0 +1,26 @@
+/* The domain class sets `color` only; the line stroke and the gradient stops
+   both read `currentColor`, so one variable drives the whole mark. Chart
+   GEOMETRY keeps the base accent (never the -text variant) per DESIGN.md —
+   these sit on a card surface, not on raw white, and need to stay vivid. */
+.sparkline {
+  display: block;
+  width: 100%;
+  /* Height comes from the `height` prop so the SVG user space and the CSS box
+     always agree; without that the non-uniform scale would distort the fill. */
+}
+
+.sparkline--aerobic {
+  color: var(--color-aerobic);
+}
+.sparkline--load {
+  color: var(--color-load);
+}
+.sparkline--recovery {
+  color: var(--color-recovery);
+}
+.sparkline--sessions {
+  color: var(--color-sessions);
+}
+.sparkline--flag {
+  color: var(--color-flag);
+}

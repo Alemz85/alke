@@ -14,7 +14,7 @@ export const CHAT_ALLOWED_TOOLS = [
 
 export const CLAUDE_STREAM_STDIO: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe']
 
-const CHAT_MODEL_ARGS = ['--model', 'opus', '--effort', 'high']
+const CHAT_MODEL_ARGS = ['--model', 'claude-opus-5', '--effort', 'high']
 
 export interface ChatPolicyPaths {
   repoRoot: string
@@ -164,4 +164,20 @@ export function buildGoalClaudeArgs(prompt: string): string[] {
 
 export function closeChildStdin(child: Pick<ChildProcess, 'stdin'>): void {
   child.stdin?.end()
+}
+
+/** Read user-facing failures that Claude emits as stream JSON instead of stderr. */
+export function extractClaudeCliFailure(event: Record<string, unknown>): string | null {
+  if (event.type === 'assistant' && typeof event.error === 'string') {
+    const content = (event.message as { content?: unknown[] } | undefined)?.content ?? []
+    for (const block of content as Record<string, unknown>[]) {
+      if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        return block.text.trim()
+      }
+    }
+  }
+  if (event.type === 'result' && event.is_error === true && typeof event.result === 'string') {
+    return event.result.trim() || null
+  }
+  return null
 }

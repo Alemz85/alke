@@ -3,6 +3,7 @@ import {
   buildInsightScatter,
   insightAxis,
   insightWindowStart,
+  priorSleepTimingVariability,
   rollingCalendarCircularDeviation,
   rollingCalendarMedianDeviation,
   rollingCalendarMedianDelta,
@@ -47,6 +48,20 @@ describe('rollingCalendarCircularDeviation', () => {
       1.5,
       1
     )
+  })
+})
+
+describe('priorSleepTimingVariability', () => {
+  it('requires seven complete prior dates and treats midnight neighbors as close', () => {
+    const rows = Array.from({ length: 9 }, (_, index) => ({
+      date: `2026-01-${String(index + 1).padStart(2, '0')}`,
+      value:
+        index < 6 ? (index % 2 === 0 ? 23.5 : 0.5) : index === 6 ? 0 : index === 7 ? null : 1
+    }))
+    const variability = priorSleepTimingVariability(rows)
+
+    expect(variability.get('2026-01-08')).toBeCloseTo(0.5)
+    expect(variability.has('2026-01-09')).toBe(false)
   })
 })
 

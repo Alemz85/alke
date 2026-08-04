@@ -17,14 +17,21 @@ from zoneinfo import ZoneInfo
 from metrics import db
 from metrics.models import (
     acwr,
+    adaptation_threshold_bpm,
+    ambient_daily_load,
+    calibrate_kcal_per_km,
     classify_zone,
     ctl_atl_series,
+    easy_aerobic_seconds,
     ef,
+    estimated_active_kcal,
     ef_eligibility,
     flags_for_day,
     hr_drift_pct,
     hrr60,
+    is_ambulatory_modality,
     rolling_median,
+    sedentary_ambient_baseline,
     swim_active_ef,
     swim_active_hr_drift_pct,
     swim_ef_eligibility,
@@ -124,6 +131,17 @@ def rhr_recent_for(day: date, rhr_by_date: dict[date, float]) -> float:
     return 60.0
 
 
+def vo2max_as_of(day: date, vo2max_by_date: dict[date, float]) -> float | None:
+    """Most recent watch VO2max on or before `day`, or None when nothing precedes
+    it. CAUSAL by construction — the adaptation threshold it feeds must reflect
+    the fitness the user actually had that day, never a later reading (the v3
+    "no fictional history" contract)."""
+    candidates = [d for d in vo2max_by_date if d <= day]
+    if not candidates:
+        return None
+    return vo2max_by_date[max(candidates)]
+
+
 def configured_float(config: dict, key: str, default: float) -> float:
     """Read a numeric setting, defaulting only for a missing/NULL value."""
     value = config.get(key)
@@ -146,6 +164,13 @@ def run(full: bool) -> None:
         date.fromisoformat(r["date"]): float(r["hrv_sdnn_ms"])
         for r in daily_metrics
         if r["hrv_sdnn_ms"] is not None
+    }
+    # Feeds the v5 per-workout adaptation threshold (models.adaptation_threshold_bpm):
+    # how easy a session can be and still build scales with current fitness.
+    vo2max_by_date = {
+        date.fromisoformat(r["date"]): float(r["vo2max"])
+        for r in daily_metrics
+        if r.get("vo2max") is not None
     }
 
     # ---- hr_max: init from observed history, raise when exceeded ----
@@ -182,6 +207,17 @@ def run(full: bool) -> None:
         bounds = zone_bounds(hr_max, rhr_recent_for(day, rhr_by_date), z2_low, z2_high)
         is_swim = bool(w["type"]) and "swim" in w["type"].lower()
         tiz = time_in_zones(samples, bounds, swim_hr_offset=swim_offset if is_swim else 0.0)
+        # v5: the easy-aerobic band below the Z2 floor but above the fitness-scaled
+        # adaptation threshold. Stored alongside the 1..5 buckets as an extra jsonb
+        # key (no migration); pre-v5 rows simply lack it until a --full recompute.
+        easy_sec = easy_aerobic_seconds(
+            samples,
+            adaptation_threshold_bpm(
+                hr_max, rhr_recent_for(day, rhr_by_date), vo2max_as_of(day, vo2max_by_date)
+            ),
+            bounds[0],
+            swim_hr_offset=swim_offset if is_swim else 0.0,
+        )
         swim_sets = swim_sets_by_workout.get(w["id"], []) if is_swim else []
         eligible = (
             swim_ef_eligibility(w["type"], swim_sets, samples, bounds, swim_offset)
@@ -200,7 +236,7 @@ def run(full: bool) -> None:
         computed_rows.append(
             {
                 "workout_id": w["id"],
-                "time_in_zones": {f"z{z}": s for z, s in tiz.items()},
+                "time_in_zones": {**{f"z{z}": s for z, s in tiz.items()}, "z1b": easy_sec},
                 "trimp": round(trimp_edwards(tiz), 2),
                 "ef": efficiency,
                 "decoupling_pct": drift,
@@ -492,6 +528,7 @@ def build_daily_insight_frame(
 
     from metrics.insights import (
         prior_rolling_circular_deviation,
+        prior_rolling_circular_mad,
         prior_rolling_deviation,
         weight_series,
     )
@@ -601,6 +638,9 @@ def build_daily_insight_frame(
         frame["sleep_midpoint"]
     )
     frame["sleep_midpoint_dev"] = frame["sleep_midpoint_shift"].abs()
+    frame["sleep_timing_variability_7d_prior"] = prior_rolling_circular_mad(
+        frame["sleep_midpoint"]
+    )
     frame["respiratory_rate_dev"] = prior_rolling_deviation(frame["respiratory_rate"])
 
     if any("weight_kg" in (row or {}) for row in daily_metrics):
@@ -733,6 +773,7 @@ def build_workout_insight_frame(all_workouts, perf_by_id, daily_frame, tz):
         "sleep_shortfall", "sleep_shortfall_3d", "sleep_midpoint_dev",
         "sleep_midpoint_shift",
         "sleep_awake_fraction",
+        "sleep_timing_variability_7d_prior",
         "rhr_dev_prior", "hrv_dev_prior", "respiratory_rate_dev",
         "ctl_prior", "atl_prior", "trimp_prior", "high_zone_fraction_prior",
         "duration_7d_prior", "training_density_7d_prior",
@@ -948,7 +989,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
     # The finder's persistence hysteresis (promotion needs N consecutive raw-signal
     # nights) round-trips its state through the previous night's diagnostics.
     prior = db.fetch_insight_model(sb, "daily_adjusted_finder")
-    prior_state = insight_prior_state(prior, expected_version=9)
+    prior_state = insight_prior_state(prior, expected_version=10)
     finder = discover_adjusted_insights(frame, prior_state=prior_state)
     db.upsert_insight_model(sb, finder)
     diag = finder["diagnostics"]
@@ -961,7 +1002,7 @@ def run_insights(sb, all_workouts, daily_metrics, daily_rows, tz) -> None:
 
     workout_frame = build_workout_insight_frame(all_workouts, perf_by_id, frame, tz)
     workout_prior = db.fetch_insight_model(sb, "workout_context_finder")
-    workout_prior_state = insight_prior_state(workout_prior, expected_version=15)
+    workout_prior_state = insight_prior_state(workout_prior, expected_version=16)
     workout_finder = discover_workout_context_insights(
         workout_frame, prior_state=workout_prior_state
     )
@@ -1095,8 +1136,23 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # intensity-correct Z2 session dates for maintenance accounting (spec §1/§5a)
     z2_session_dates: dict[date, int] = defaultdict(int)
     weekly_z2_min: dict[tuple[int, int], float] = defaultdict(float)
+    logged_kcal_by_date: dict[date, float] = defaultdict(float)
     for wk in all_workouts:
+        # Every logged workout's energy is subtracted from the day's active energy
+        # below, ambulatory or not — the ambient channel must credit only what the
+        # workout channel did NOT already see.
+        energy = wk.get("energy_kcal")
+        if energy is not None:
+            logged_kcal_by_date[workout_local_date(wk, tz)] += float(energy)
         if not models.is_aerobic_modality(wk.get("type")):
+            continue
+        # v5 (TODO.md §6 Part A step 5): walk/hike are excluded from the WORKOUT
+        # channel entirely — not because they don't build, but because their energy
+        # is already inside daily active_energy_kcal and the ambient channel below
+        # credits it from data that exists whether or not a workout was started.
+        # Counting both would double-count, AND would make the index depend on
+        # whether the user pressed "start" — the exact defect this task fixes.
+        if models.is_ambulatory_modality(wk.get("type")):
             continue
         tiz = zones_by_id.get(wk["id"])
         if not tiz:
@@ -1120,7 +1176,44 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         iso = day.isocalendar()
         weekly_z2_min[(iso.year, iso.week)] += aerobic_sec / 60.0
 
-    daily_z2_load = [w_by_date.get(d, 0.0) for d in days]
+    # ---- v5 ambulatory AMBIENT channel (TODO.md §6 Part A). Daily active energy
+    # is logging-invariant; whatever it holds beyond what logged workouts account
+    # for is unlogged activity — overwhelmingly walking. Clamped at 0 because a
+    # partially-ingested day can leave logged energy exceeding the day's running
+    # total. The sedentary baseline is a low
+    # percentile of the user's OWN ambient series, so "an inactive day" is their
+    # number, not a constant. ----
+    # Where `active_energy` is missing (HAE only began sending it partway through
+    # this history, while distance is present throughout), fall back to a day-level
+    # estimate from walking+running distance, using a kcal/km ratio fitted to the
+    # user's own days that carry BOTH readings. Days with neither stay absent and
+    # contribute nothing.
+    kcal_per_km = calibrate_kcal_per_km(
+        [
+            (float(r["active_energy_kcal"]), float(r["walking_running_distance_m"]))
+            for r in daily_metrics
+            if r.get("active_energy_kcal") is not None
+            and r.get("walking_running_distance_m") is not None
+        ]
+    )
+    ambient_by_date: dict[date, float] = {}
+    for r in daily_metrics:
+        raw = r.get("active_energy_kcal")
+        active = (
+            float(raw)
+            if raw is not None
+            else estimated_active_kcal(r.get("walking_running_distance_m"), kcal_per_km)
+        )
+        if active is None:
+            continue
+        d = date.fromisoformat(r["date"])
+        ambient_by_date[d] = max(0.0, active - logged_kcal_by_date.get(d, 0.0))
+    sedentary_kcal = sedentary_ambient_baseline(list(ambient_by_date.values()))
+
+    daily_z2_load = [
+        w_by_date.get(d, 0.0) + ambient_daily_load(ambient_by_date.get(d), sedentary_kcal)
+        for d in days
+    ]
 
     # ---- per-day CAUSAL B_t, τ_slow_t, floor_t (spec §3 + v3) over the FULL
     # weekly axis: every ISO week in range contributes (0.0 when workout-free) so

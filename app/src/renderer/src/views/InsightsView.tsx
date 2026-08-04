@@ -17,6 +17,7 @@ import {
   buildInsightScatter,
   insightAxis,
   insightWindowStart,
+  priorSleepTimingVariability,
   priorTrainingDensity,
   rollingCalendarCircularDeviation,
   rollingCalendarMedianDelta,
@@ -39,6 +40,7 @@ const DRIVERS = [
   { key: 'sleep_shortfall', label: 'Sleep shortfall' },
   { key: 'sleep_midpoint_dev', label: 'Sleep timing drift' },
   { key: 'sleep_midpoint_shift', label: 'Sleep timing shift' },
+  { key: 'sleep_timing_variability_7d_prior', label: 'Prior-week timing variability' },
   { key: 'sleep_awake_fraction', label: 'Sleep awake fraction' },
   { key: 'rhr_dev', label: 'RHR deviation' },
   { key: 'hrv_dev', label: 'HRV deviation' },
@@ -132,6 +134,9 @@ function candidateInterpretation(candidate: FinderCandidate): string {
   }
   if (candidate.direction === 'prior-day-to-workout') {
     return "The previous day's finalized daily aggregate predates the workout; this is recorded behavior, not a capacity test."
+  }
+  if (candidate.direction === 'prior-window-to-workout') {
+    return 'The complete prior seven-night window predates the workout; this is recorded behavior, not a capacity test.'
   }
   if (candidate.direction === 'pre-workout-state') {
     return 'Accumulated load or recovery interval precedes the workout; this is recorded behavior, not a capacity test.'
@@ -248,6 +253,14 @@ function useAnalysisSeries(): {
       put('sleep_midpoint_shift', date, shift)
       put('sleep_midpoint_dev', date, Math.abs(shift))
     }
+    for (const [date, variability] of priorSleepTimingVariability(
+      dailyRows.map((row) => ({
+        date: row.date,
+        value: series.sleep_midpoint?.get(row.date) ?? null
+      }))
+    )) {
+      put('sleep_timing_variability_7d_prior', date, variability)
+    }
     for (const [date, delta] of rollingCalendarMedianDelta(
       series.respiratory_rate ?? new Map(),
       28,
@@ -342,7 +355,7 @@ export function InsightsView(): ReactElement {
       )
   )
   const correlationSchemaCurrent = storedCorrelations.some(
-    (correlation) => correlation.var_x === 'sleep_midpoint_shift'
+    (correlation) => correlation.var_x === 'sleep_timing_variability_7d_prior'
   )
   const correlations = (correlationSchemaCurrent ? storedCorrelations : []).filter((correlation) => {
     if (correlation.var_y !== 'trimp_total') return true
@@ -389,14 +402,14 @@ export function InsightsView(): ReactElement {
       key: 'daily',
       title: 'Daily physiology',
       detail: 'Prior-day behavior, sleep, and finalized daily aggregates',
-      expectedVersion: 9,
+      expectedVersion: 10,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'daily_adjusted_finder')
     },
     {
       key: 'workout',
       title: 'Workout context',
       detail: 'Sleep, finalized prior-day physiology, accumulated load, and workout timing',
-      expectedVersion: 15,
+      expectedVersion: 16,
       model: (modelsQuery.data ?? []).find((model) => model.name === 'workout_context_finder')
     }
   ].map((family) => {

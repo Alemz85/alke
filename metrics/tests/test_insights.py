@@ -166,7 +166,7 @@ def test_adjusted_finder_does_not_promote_random_noise():
     }]
     model = discover_adjusted_insights(frame, specs=specs, min_n=60, boot_reps=40, run_placebos=False)
     candidate = model["diagnostics"]["candidates"][0]
-    assert model["diagnostics"]["model_version"] == 9
+    assert model["diagnostics"]["model_version"] == 10
     assert "finalized" in model["diagnostics"]["caveat"]
     assert candidate["raw_status"] == "no_clear_signal"
     assert candidate["status"] == "no_clear_signal"
@@ -282,7 +282,7 @@ def test_workout_context_finder_uses_own_model_name_and_multiplicity_pool():
     )
 
     assert model["name"] == "workout_context_finder"
-    assert model["diagnostics"]["model_version"] == 15
+    assert model["diagnostics"]["model_version"] == 16
     assert "finalized" in model["diagnostics"]["caveat"]
     assert "date-clustered" in model["spec"]
     assert "calendar-date block" in model["spec"]
@@ -1023,6 +1023,24 @@ def test_default_specs_distinguish_signed_sleep_phase_from_irregularity():
     }
 
 
+def test_default_specs_predeclare_prior_week_sleep_timing_variability():
+    from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS, DRIVERS
+
+    driver = "sleep_timing_variability_7d_prior"
+    assert driver in DRIVERS
+    assert {
+        spec["outcome"] for spec in DEFAULT_ADJUSTED_SPECS
+        if spec.get("driver") == driver
+    } == {"sleep_shortfall", "sleep_awake_fraction", "respiratory_rate_dev"}
+    assert {
+        spec["outcome"] for spec in DEFAULT_WORKOUT_SPECS
+        if spec.get("driver") == driver
+    } == {
+        "workout_duration", "workout_intensity", "energy_intensity",
+        "high_zone_fraction",
+    }
+
+
 def test_daily_aggregate_hr_is_never_treated_as_same_day_readiness():
     from metrics.insights import DEFAULT_ADJUSTED_SPECS, DEFAULT_WORKOUT_SPECS
 
@@ -1311,6 +1329,19 @@ def test_circular_sleep_deviation_treats_midnight_neighbors_as_close():
 
     assert deviations.iloc[-1] == pytest.approx(1.5, abs=0.05)
     assert deviations.iloc[:-1].isna().sum() == 14
+
+
+def test_prior_sleep_timing_variability_requires_complete_midnight_safe_week():
+    from metrics.insights import prior_rolling_circular_mad
+
+    dates = pd.date_range("2026-01-01", periods=9, freq="D")
+    values = [23.5 if i % 2 == 0 else 0.5 for i in range(6)] + [0.0, np.nan, 1.0]
+    variability = prior_rolling_circular_mad(
+        pd.Series(values, index=dates), days=7, min_periods=7
+    )
+
+    assert variability.loc["2026-01-08"] == pytest.approx(0.5)
+    assert pd.isna(variability.loc["2026-01-09"])
 
 
 def test_daily_insight_frame_uses_scale_free_prior_week_training_density():
@@ -1759,6 +1790,8 @@ def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
             "sleep_shortfall": [30.0],
             "sleep_shortfall_3d": [20.0],
             "sleep_midpoint_dev": [1.0],
+            "sleep_midpoint_shift": [-1.0],
+            "sleep_timing_variability_7d_prior": [0.5],
             "sleep_awake_fraction": [0.1],
             "respiratory_rate_dev": [0.5],
             "rhr_dev_prior": [2.0],
@@ -1793,10 +1826,12 @@ def test_workout_frame_never_attaches_sleep_that_ends_after_the_workout():
         "sleep_shortfall",
         "sleep_shortfall_3d",
         "sleep_midpoint_dev",
+        "sleep_midpoint_shift",
         "sleep_awake_fraction",
         "respiratory_rate_dev",
     ):
         assert pd.isna(row[column])
+    assert row["sleep_timing_variability_7d_prior"] == pytest.approx(0.5)
     assert row["rhr_dev_prior"] == pytest.approx(2.0)
     assert row["hrv_dev_prior"] == pytest.approx(-3.0)
     assert row["atl_prior"] == pytest.approx(12.0)
@@ -1875,7 +1910,7 @@ def test_nightly_insights_retires_legacy_ef_model(monkeypatch):
         "workout_context_finder",
     ]
     assert deleted_models == ["ef_on_sleep_dlm"]
-    assert expected_versions == [9, 15]
+    assert expected_versions == [10, 16]
 
 
 def test_persistence_state_never_crosses_model_versions():

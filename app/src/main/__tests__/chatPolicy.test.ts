@@ -8,6 +8,7 @@ import {
   buildInteractiveSettings,
   buildStreamingClaudeArgs,
   closeChildStdin,
+  extractClaudeCliFailure,
   type ChatPolicyPaths
 } from '../chatPolicy'
 
@@ -23,9 +24,9 @@ const EXPECTED_HEALTH_HELPERS = [
 ]
 
 const PACKAGED_PATHS: ChatPolicyPaths = {
-  repoRoot: '/Users/owner/Projects/Github/Sports app',
-  appRoot: '/Users/owner/Projects/Github/Sports app/app',
-  gitRoot: '/Users/owner/Projects/Github/Sports app/.git',
+  repoRoot: '/Users/owner/Projects/Github/Alke',
+  appRoot: '/Users/owner/Projects/Github/Alke/app',
+  gitRoot: '/Users/owner/Projects/Github/Alke/.git',
   runtimeRoot: '/Applications/Alke.app/Contents/Resources/chatctx',
   homeRoot: '/Users/owner',
   attachmentPaths: ['/Users/owner/Desktop/plan.pdf']
@@ -65,7 +66,7 @@ describe('interactive Claude policy', () => {
       '--verbose',
       '--include-partial-messages',
       '--model',
-      'opus',
+      'claude-opus-5',
       '--effort',
       'high',
       '--resume',
@@ -78,8 +79,12 @@ describe('interactive Claude policy', () => {
     const streaming = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
     const goal = buildGoalClaudeArgs('build it')
 
-    expect(streaming).toEqual(expect.arrayContaining(['--model', 'opus', '--effort', 'high']))
-    expect(goal).toEqual(expect.arrayContaining(['--model', 'opus', '--effort', 'high']))
+    expect(streaming).toEqual(
+      expect.arrayContaining(['--model', 'claude-opus-5', '--effort', 'high'])
+    )
+    expect(goal).toEqual(
+      expect.arrayContaining(['--model', 'claude-opus-5', '--effort', 'high'])
+    )
   })
 
   it('duplicates app, git, env, and packaged-runtime denies across tool and OS layers', () => {
@@ -89,13 +94,13 @@ describe('interactive Claude policy', () => {
 
     expect(deny).toEqual(
       expect.arrayContaining([
-        'Edit(//Users/owner/Projects/Github/Sports app/app/**)',
-        'Write(//Users/owner/Projects/Github/Sports app/app/**)',
-        'Edit(//Users/owner/Projects/Github/Sports app/.git/**)',
-        'Write(//Users/owner/Projects/Github/Sports app/.git/**)',
-        'Read(//Users/owner/Projects/Github/Sports app/**/.env*)',
-        'Edit(//Users/owner/Projects/Github/Sports app/**/.env*)',
-        'Write(//Users/owner/Projects/Github/Sports app/**/.env*)'
+        'Edit(//Users/owner/Projects/Github/Alke/app/**)',
+        'Write(//Users/owner/Projects/Github/Alke/app/**)',
+        'Edit(//Users/owner/Projects/Github/Alke/.git/**)',
+        'Write(//Users/owner/Projects/Github/Alke/.git/**)',
+        'Read(//Users/owner/Projects/Github/Alke/**/.env*)',
+        'Edit(//Users/owner/Projects/Github/Alke/**/.env*)',
+        'Write(//Users/owner/Projects/Github/Alke/**/.env*)'
       ])
     )
     expect(filesystem.allowWrite).toEqual([PACKAGED_PATHS.repoRoot])
@@ -198,5 +203,39 @@ describe('Claude process integration contracts', () => {
       /- from: \.\.\/chatctx\/\.claude\/skills\s+to: chatctx\/\.claude\/skills/
     )
     expect(builderConfig).not.toMatch(/from: \.\.\/chatctx\/\.claude\s*$/m)
+  })
+})
+
+describe('Claude CLI failure events', () => {
+  it('extracts the user-facing text from a structured authentication failure', () => {
+    expect(
+      extractClaudeCliFailure({
+        type: 'assistant',
+        error: 'authentication_failed',
+        message: {
+          content: [{ type: 'text', text: 'Not logged in · Please run /login' }]
+        }
+      })
+    ).toBe('Not logged in · Please run /login')
+  })
+
+  it('extracts a failed result when no assistant error text was emitted', () => {
+    expect(
+      extractClaudeCliFailure({
+        type: 'result',
+        is_error: true,
+        result: 'Authentication failed'
+      })
+    ).toBe('Authentication failed')
+  })
+
+  it('ignores successful and ordinary assistant events', () => {
+    expect(extractClaudeCliFailure({ type: 'result', is_error: false, result: 'OK' })).toBeNull()
+    expect(
+      extractClaudeCliFailure({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Normal reply' }] }
+      })
+    ).toBeNull()
   })
 })

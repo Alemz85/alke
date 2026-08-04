@@ -8,13 +8,17 @@
 // dashboardUtils.ts (unit-tested); this component only formats + renders.
 import type { ReactElement } from 'react'
 import type { BodyWeightSummary } from '../views/dashboardUtils'
+import { Sparkline, type SparklinePoint } from './Sparkline'
 import './BodyWeightPill.css'
 
 export interface BodyWeightPillProps {
   summary: BodyWeightSummary
+  /** Weigh-in history behind the headline number, oldest first. Optional: the
+      pill is still correct without it, it just loses the trend shape. */
+  trend?: SparklinePoint[]
 }
 
-export function BodyWeightPill({ summary }: BodyWeightPillProps): ReactElement {
+export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): ReactElement {
   const { latestKg, latestDateLabel, stalenessLabel, isStale, deltaKg, deltaLabel } = summary
 
   // Quiet empty state — no weigh-in has ever synced.
@@ -45,6 +49,7 @@ export function BodyWeightPill({ summary }: BodyWeightPillProps): ReactElement {
           </span>
         )}
       </div>
+      <Sparkline points={trend} domain="recovery" ariaLabel="Body weight over recent months" />
       <span className="bodyweight-pill-meta">
         {stalenessLabel ? `Weighed ${stalenessLabel.toLowerCase()}` : latestDateLabel}
         {stalenessLabel && stalenessLabel !== 'Today' ? ` · ${latestDateLabel}` : ''}

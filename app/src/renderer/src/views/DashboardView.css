@@ -5,24 +5,47 @@
   gap: var(--space-md);
 }
 
-/* Top glance row — body-weight + protein + active-energy pills side by side.
-   Their own grid so the compact pills share a row and collapse when narrow. */
+/* Hero card — the tab's single big number (weekly session adherence) on the
+   left, its per-modality breakdown on the right. Hero-metric cards take the
+   32px padding DESIGN.md reserves for them, a step up from the 24px every other
+   card uses, so the page's most important figure also owns the most air.
+   The breakdown column is width-capped: stretched across a 1136px card the
+   adherence bars would read as a progress UI rather than a footnote. */
+.dashboard-hero-card {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-lg) var(--space-xl);
+  height: 100%;
+  padding: var(--space-xl);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+}
+
+/* Top glance row — the three standing figures side by side. Their own grid so
+   the compact tiles share a row and collapse when narrow. */
 .dashboard-glance-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-md);
   align-items: stretch;
 }
 
 @media (max-width: 1023px) {
   .dashboard-glance-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 759px) {
   .dashboard-glance-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-hero-card {
+    padding: var(--space-lg);
   }
 }
 
@@ -101,9 +124,9 @@
   height: 100%;
   min-height: 132px;
   width: 100%;
-  padding: var(--space-md);
+  padding: var(--space-lg);
   background: var(--color-surface-elevated);
-  border: none;
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   text-align: left;
   cursor: pointer;
@@ -140,12 +163,18 @@
   color: var(--color-text-secondary);
 }
 
-/* Value + sub cluster pinned to the bottom of the tile. */
+/* Value + trend + sub cluster pinned to the bottom of the tile. */
 .stat-square-figure {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+/* Matches the breathing room the glance pills give their own trend lines, so
+   all four tiles in the row share one internal rhythm. */
+.stat-square-figure .sparkline {
+  margin: var(--space-xs) 0 var(--space-xxs);
 }
 
 .stat-square-value {
@@ -172,28 +201,54 @@
   color: var(--color-text-tertiary);
 }
 
-/* Session adherence card — fills the cell height and centres its rows so the
-   activity pills use the space rather than clustering at the top. */
-.dashboard-sessions-card {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: var(--space-md);
-}
-
+/* Session adherence breakdown — the supporting evidence beside the hero digit.
+   Capped so the bars stay a compact key rather than stretching into a
+   full-width progress panel that would compete with the hero. */
 .dashboard-sessions-list {
   display: flex;
-  flex: 1;
   flex-direction: column;
   justify-content: center;
   gap: var(--space-md);
+  min-width: 260px;
+  max-width: 340px;
+  flex: 1 1 260px;
 }
 
 .dashboard-sessions-row {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-sessions-row-head {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
+}
+
+/* Adherence track, mirroring the protein pill's fraction bar so a "progress
+   toward a target" reads the same everywhere on this view. Sessions accent —
+   falling short of a weekly minimum is information, never a flag. */
+.dashboard-sessions-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-divider-soft);
+  overflow: hidden;
+}
+
+.dashboard-sessions-bar-fill {
+  height: 100%;
+  background: var(--color-sessions);
+  border-radius: var(--radius-full);
+  transition: width var(--motion-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-sessions-bar-fill {
+    transition: none;
+  }
 }
 
 /* Activity pill: environment-coloured icon + badge, mirroring the Sessions list. */
@@ -212,17 +267,16 @@
   flex-shrink: 0;
 }
 
-/* Recent sessions — full-width strip below the chart. Each tile opens its
-   session (with a clear hover cue); the header link opens all sessions. The box
-   itself is not clickable, so a tile's hover reads unambiguously. */
+/* Recent sessions — a full-width SECTION, not a card. It used to be an elevated
+   box wrapping four inset tiles, which put cards inside a card and made the
+   tiles read as holes punched in the surface. Now it matches the two other tile
+   rows on this view (the glance pills above, the Goals strip below): a heading
+   on the canvas, then the tiles themselves carrying the card surface. Each tile
+   opens its session; the header link opens all sessions. */
 .recent-sessions-box {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  background: var(--color-surface-elevated);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  border: none;
   text-align: left;
 }
 
@@ -267,8 +321,19 @@
 
 .recent-sessions-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-sm);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+/* With no wrapping card left, the "no workouts yet" copy would otherwise float
+   on bare canvas — give it the tile surface so the row still reads as a slot
+   waiting to be filled. */
+.recent-sessions-box .empty-state {
+  min-height: 132px;
+  padding: var(--space-lg);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
 }
 
 @media (max-width: 759px) {
@@ -277,31 +342,28 @@
   }
 }
 
-/* Tiles rest at --color-surface (a step darker than the box's
-   --color-surface-elevated) and lift to --color-surface-hover with a faint ring
-   on hover/focus — a clear, unambiguous cue now that the box itself isn't
-   clickable. Info stacks on three lines (modality+icon / date / duration+distance). */
+/* Tiles now carry the card surface themselves (the section around them is bare
+   canvas), so they use the same surface / edge / radius / padding as every other
+   card on this view and lift to --color-surface-hover on hover or focus. Info
+   stacks on three lines (modality+icon / date / duration+distance). */
 .recent-session-tile {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 3px;
   min-width: 0;
-  padding: var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--motion-hover),
-    border-color var(--motion-hover);
+  transition: background var(--motion-hover);
 }
 
 .recent-session-tile:hover,
 .recent-session-tile:focus-visible {
   background: var(--color-surface-hover);
-  border-color: var(--color-hairline);
 }
 
 .recent-session-tile-modality {

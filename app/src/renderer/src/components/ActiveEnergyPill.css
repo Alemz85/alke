@@ -11,10 +11,15 @@
   box-sizing: border-box;
   padding: var(--space-lg);
   background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
 }
 
+/* Shared glance-pill skeleton — see BodyWeightPill.css for the rationale. */
 .activeenergy-pill-eyebrow {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
   font-family: var(--font-body);
   font-size: var(--type-label-size);
   font-weight: var(--type-label-weight);
@@ -53,6 +58,7 @@
 }
 
 .activeenergy-pill-meta {
+  margin-top: auto;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line-height);

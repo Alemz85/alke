@@ -12,10 +12,20 @@
   box-sizing: border-box;
   padding: var(--space-lg);
   background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
 }
 
+/* The three glance pills share one skeleton: an eyebrow row of fixed height,
+   the figure, then the footnote pinned to the bottom edge. The fixed row height
+   is set by the tallest of the three heads (Protein's 32px inline add), so all
+   three eyebrows sit on one baseline instead of Protein's dropping ~9px below
+   its neighbours. Pinning the footnote makes every pill resolve its leftover
+   height in the same place, rather than leaving a ragged void under the text. */
 .bodyweight-pill-eyebrow {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
   font-family: var(--font-body);
   font-size: var(--type-label-size);
   font-weight: var(--type-label-weight);
@@ -59,6 +69,7 @@
 }
 
 .bodyweight-pill-meta {
+  margin-top: auto;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line-height);

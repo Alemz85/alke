@@ -121,7 +121,10 @@ describe('GoalStrip', () => {
     const metricRowRule = styles.match(/\.goal-strip-metric-row\s*\{([\s\S]*?)\}/)?.[1] ?? ''
     const regressingRule = styles.match(/\.goal-strip-delta--regressing\s*\{([\s\S]*?)\}/)?.[1] ?? ''
 
-    expect(gridRule).toContain('repeat(4, minmax(0, 1fr))')
+    // auto-fit still lays four goals out four-up at desktop width, but collapses
+    // the empty track when there are fewer, instead of leaving a quarter-width
+    // hole that reads as a missing card.
+    expect(gridRule).toContain('repeat(auto-fit, minmax(240px, 1fr))')
     expect(gridRule).toContain('gap: var(--space-md)')
     expect(cardRule).toContain('background: var(--color-surface-elevated)')
     expect(cardRule).toContain('border-radius: var(--radius-lg)')

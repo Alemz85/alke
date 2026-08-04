@@ -5,6 +5,7 @@ import json
 import chatctx.injuries as injuries
 from chatctx.injuries import (
     cmd_note,
+    cmd_notes,
     cmd_plan_apply,
     cmd_show,
     current_plan_week,
@@ -22,17 +23,33 @@ def note_args(**overrides):
     return Namespace(**args)
 
 
-def capture_note_body(monkeypatch, args, today="2026-07-14"):
+def capture_note_request(monkeypatch, args, today="2026-07-14", rows=None):
     captured = {}
 
     def request(method, path, **kwargs):
-        captured.update(method=method, path=path, body=kwargs.get("body"))
-        return []
+        captured.update(method=method, path=path, **kwargs)
+        return [{"id": 86}] if rows is None else rows
 
     monkeypatch.setattr(injuries, "_request", request)
     monkeypatch.setattr(injuries, "user_today", lambda: today)
     cmd_note(args)
-    return captured["body"]
+    return captured
+
+
+def capture_note_body(monkeypatch, args, today="2026-07-14"):
+    return capture_note_request(monkeypatch, args, today=today)["body"]
+
+
+def note_update_args(**overrides):
+    args = {"note_id": 86, "note": "Corrected observation"}
+    args.update(overrides)
+    return Namespace(**args)
+
+
+def note_remove_args(**overrides):
+    args = {"note_id": 89}
+    args.update(overrides)
+    return Namespace(**args)
 
 
 def exercise(**overrides):
@@ -457,6 +474,102 @@ def test_note_records_span_and_precision(monkeypatch):
     assert body["pain_level"] == 0
 
 
+def test_note_requests_representation_and_prints_created_id(monkeypatch, capsys):
+    captured = capture_note_request(monkeypatch, note_args(note="Felt better"))
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "injury_notes"
+    assert captured["prefer"] == "return=representation"
+    assert "logged note 86 on injury injury-1" in capsys.readouterr().out
+
+
+def test_note_fails_when_post_returns_no_row(monkeypatch):
+    with pytest.raises(SystemExit, match="note creation failed"):
+        capture_note_request(monkeypatch, note_args(), rows=[])
+
+
+def test_note_update_patches_exact_id_and_requires_a_returned_row(monkeypatch, capsys):
+    captured = {}
+
+    def request(method, path, **kwargs):
+        captured.update(method=method, path=path, **kwargs)
+        return [{"id": 86}]
+
+    monkeypatch.setattr(injuries, "_request", request)
+    injuries.cmd_note_update(note_update_args())
+
+    assert captured == {
+        "method": "PATCH",
+        "path": "injury_notes",
+        "params": {"id": "eq.86"},
+        "body": {"note": "Corrected observation"},
+        "prefer": "return=representation",
+    }
+    assert "updated note 86" in capsys.readouterr().out
+
+
+def test_note_update_fails_when_note_id_is_missing(monkeypatch):
+    monkeypatch.setattr(injuries, "_request", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(SystemExit, match="note 86 not found"):
+        injuries.cmd_note_update(note_update_args())
+
+
+def test_note_remove_deletes_exact_id_and_requires_a_returned_row(monkeypatch, capsys):
+    captured = {}
+
+    def request(method, path, **kwargs):
+        captured.update(method=method, path=path, **kwargs)
+        return [{"id": 89}]
+
+    monkeypatch.setattr(injuries, "_request", request)
+    injuries.cmd_note_remove(note_remove_args())
+
+    assert captured == {
+        "method": "DELETE",
+        "path": "injury_notes",
+        "params": {"id": "eq.89"},
+        "prefer": "return=representation",
+    }
+    assert "removed note 89" in capsys.readouterr().out
+
+
+def test_note_remove_fails_when_note_id_is_missing(monkeypatch):
+    monkeypatch.setattr(injuries, "_request", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(SystemExit, match="note 89 not found"):
+        injuries.cmd_note_remove(note_remove_args())
+
+
+@pytest.mark.parametrize(
+    ("command", "note_id", "extra_args"),
+    [
+        ("note-update", "not-an-id", ["--note", "Corrected observation"]),
+        ("note-update", "0", ["--note", "Corrected observation"]),
+        ("note-update", "-2", ["--note", "Corrected observation"]),
+        ("note-remove", "not-an-id", []),
+        ("note-remove", "0", []),
+        ("note-remove", "-2", []),
+    ],
+)
+def test_note_mutations_reject_invalid_ids_before_request(
+    monkeypatch, command, note_id, extra_args
+):
+    requests = []
+    monkeypatch.setattr(
+        injuries,
+        "_request",
+        lambda *args, **kwargs: requests.append((args, kwargs)) or [{"id": 86}],
+    )
+    monkeypatch.setattr(injuries.sys, "argv", ["injuries.py", command, note_id, *extra_args])
+
+    with pytest.raises(SystemExit) as exc:
+        injuries.main()
+
+    assert exc.value.code == 2
+    assert requests == []
+
+
 def test_note_span_without_start_defaults_to_today(monkeypatch):
     body = capture_note_body(monkeypatch, note_args(until="2026-08-01"))
     assert body["entry_date"] == "2026-07-14"
@@ -487,6 +600,28 @@ def test_current_plan_week_uses_seven_day_phases():
     assert current_plan_week(None, "2026-07-01") is None
 
 
+def test_notes_selects_and_prints_note_ids(monkeypatch, capsys):
+    captured = {}
+
+    def request(method, path, **kwargs):
+        captured.update(method=method, path=path, **kwargs)
+        return [{
+            "id": 86,
+            "entry_date": "2026-07-12",
+            "source": "user",
+            "pain_level": 3,
+            "note": "Sore after running.",
+        }]
+
+    monkeypatch.setattr(injuries, "_request", request)
+    cmd_notes(Namespace(injury_id="injury-1"))
+
+    assert captured["params"]["select"].startswith("id,")
+    output = capsys.readouterr().out
+    assert "| id | when | source | pain | note |" in output
+    assert "| 86 | 2026-07-12 | user | 3 | Sore after running. |" in output
+
+
 def test_show_prints_injury_notes_and_phase_aware_plan(monkeypatch, capsys):
     def request(method, path, **kwargs):
         assert method == "GET"
@@ -503,7 +638,9 @@ def test_show_prints_injury_notes_and_phase_aware_plan(monkeypatch, capsys):
                 "recovery_plan": "Build tolerance progressively.",
             }]
         if path == "injury_notes":
+            assert kwargs["params"]["select"].startswith("id,")
             return [{
+                "id": 86,
                 "entry_date": "2026-07-12",
                 "source": "user",
                 "pain_level": 3,
@@ -535,6 +672,7 @@ def test_show_prints_injury_notes_and_phase_aware_plan(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Knee pain" in output
     assert "current plan week: 1" in output
+    assert "| 86 | 2026-07-12 | user | 3 | Sore after running. |" in output
     assert "Sore after running." in output
     assert "Heel walks" in output
     assert "future" in output

@@ -6,6 +6,7 @@
 // deep-dive: no sparkline, no actions, no status controls — just enough to
 // glance at and a click through to Profile for the rest.
 import { type ReactElement } from 'react'
+import { ArrowRight } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import type { Goal } from '@shared/types'
 import { metricProgress, timeProgress } from '../lib/profileStats'
@@ -41,6 +42,10 @@ function GoalStripMetric({ goal }: { goal: Goal }): ReactElement {
     deltaClass = improving ? 'goal-strip-delta--improving' : 'goal-strip-delta--regressing'
   }
 
+  // The percentage is the card's actual answer ("how far along am I"), so it
+  // leads the footer; the raw target and the change since baseline sit around
+  // it as context. Previously all three were equal-weight numbers on one row
+  // ("Target 7  +0  0%"), which read as a cryptic triplet.
   return (
     <>
       <div className="goal-strip-metric-row">
@@ -55,41 +60,57 @@ function GoalStripMetric({ goal }: { goal: Goal }): ReactElement {
         )}
       </div>
 
-      {goal.metric_target != null && (
-        <div className="goal-strip-footer">
-          <div className="goal-strip-metric-range tabular-nums">
+      {/* One footer block, pinned to the card's bottom edge, so every goal card
+          resolves at the same baseline however much it has to say. */}
+      <div className="goal-strip-progress">
+        {pctToTarget != null ? (
+          <>
+            <div className="goal-strip-progress-head">
+              {/* Accent only once there is progress to report — a bright 0%
+                  would make the emptiest number the loudest thing on screen. */}
+              <span
+                className={
+                  pctToTarget > 0
+                    ? 'goal-strip-progress-value tabular-nums'
+                    : 'goal-strip-progress-value goal-strip-progress-value--zero tabular-nums'
+                }
+              >
+                {pctToTarget}%
+              </span>
+              <span className="goal-strip-metric-range tabular-nums">
+                {'Target '}
+                {goal.metric_target?.toLocaleString()}
+              </span>
+            </div>
+            <div
+              className="goal-strip-bar"
+              role="progressbar"
+              aria-valuenow={pctToTarget}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className="goal-strip-bar-fill" style={{ width: `${pctToTarget}%` }} />
+            </div>
+            {delta != null && (
+              <span className={`goal-strip-delta ${deltaClass} tabular-nums`}>
+                {delta >= 0 ? '+' : ''}
+                {delta.toLocaleString()} vs start
+              </span>
+            )}
+          </>
+        ) : goal.metric_target != null ? (
+          // A target exists but no baseline to measure from, so a percentage
+          // would be invented. State the target and stop there.
+          <span className="goal-strip-metric-range tabular-nums">
             {'Target '}
             {goal.metric_target.toLocaleString()}
-          </div>
-          {delta != null && (
-            <span
-              className={`goal-strip-delta ${deltaClass} tabular-nums`}
-              aria-label={`${delta >= 0 ? '+' : ''}${delta.toLocaleString()} vs start`}
-            >
-              {delta >= 0 ? '+' : ''}
-              {delta.toLocaleString()}
-            </span>
-          )}
-          {pctToTarget != null && (
-            <span className="goal-strip-progress-value tabular-nums">{pctToTarget}%</span>
-          )}
-        </div>
-      )}
-
-      {pctToTarget != null ? (
-        <div
-          className="goal-strip-bar"
-          role="progressbar"
-          aria-valuenow={pctToTarget}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className="goal-strip-bar-fill" style={{ width: `${pctToTarget}%` }} />
-        </div>
-      ) : (
-        !progressQuery.isLoading &&
-        points.length === 0 && <p className="goal-strip-empty">Metric building…</p>
-      )}
+          </span>
+        ) : (
+          <span className="goal-strip-empty">
+            {points.length === 0 ? 'Metric building…' : 'Tracking only — no target set'}
+          </span>
+        )}
+      </div>
     </>
   )
 }
@@ -131,7 +152,15 @@ export function GoalStrip({ onOpenProfile }: GoalStripProps): ReactElement | nul
 
   return (
     <section className="goal-strip-section">
-      <h2 className="goal-strip-section-title">Goals</h2>
+      {/* Header mirrors the Recent sessions section above it: title on the
+          canvas, a quiet link to the full view on the right. */}
+      <div className="goal-strip-section-head">
+        <h2 className="goal-strip-section-title">Goals</h2>
+        <button type="button" className="goal-strip-all" onClick={onOpenProfile}>
+          All goals
+          <ArrowRight size={14} strokeWidth={1.75} />
+        </button>
+      </div>
       <div className="goal-strip-grid">
         {active.map((g) => (
           <GoalStripCard key={g.id} goal={g} now={now} onOpen={onOpenProfile} />

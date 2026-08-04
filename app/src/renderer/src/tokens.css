@@ -14,6 +14,15 @@
   --color-hairline: rgba(255, 255, 255, 0.12);
   --color-divider-soft: rgba(255, 255, 255, 0.06);
 
+  /* Card edge. On the black canvas a card is already set apart by luminance
+     alone (#16181A on #000), so the edge is transparent — drawing a hairline
+     there would only add noise. Light theme overrides it, because #FBFBFC on
+     #FFFFFF is a 1% step that needs the hairline to read as a card at all
+     (DESIGN.md → Light theme: "set apart from canvas by luminance AND a
+     hairline, never a shadow"). Every card surface references this token so
+     the two themes stay in step. */
+  --card-border: transparent;
+
   /* Text */
   --color-text: #ffffff;
   --color-text-secondary: rgba(255, 255, 255, 0.72);
@@ -212,6 +221,8 @@
   --color-surface-hover: #eef0f2; /* interactive hover */
   --color-hairline: rgba(0, 0, 0, 0.1);
   --color-divider-soft: rgba(0, 0, 0, 0.06);
+  /* Near-white cards need the hairline to separate from the white canvas. */
+  --card-border: var(--color-hairline);
 
   /* Text — black at graded opacities */
   --color-text: #000000;

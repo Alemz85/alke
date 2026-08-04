@@ -30,6 +30,7 @@ import { fmtNum } from '../lib/format'
 import { proteinWeekTable } from '../lib/proteinWeek'
 import { useAddProtein, useProteinLog } from '../hooks/useProteinData'
 import { isoWeekStart, todayYMD, ymdKey } from '../hooks/sessionsDate'
+import { Sparkline, type SparklinePoint } from './Sparkline'
 import './ProteinPill.css'
 
 export interface ProteinPillProps {
@@ -45,6 +46,28 @@ export function deriveProteinGlance(
   const table = proteinWeekTable(days, weekStart)
   const todayGrams = table.days.find((d) => d.dateKey === todayKey)?.grams ?? 0
   return { todayGrams, weekAvg: table.avg }
+}
+
+/**
+ * Pure: this week's logged days as sparkline points, Monday through today.
+ *
+ * Returns [] when nothing has been logged all week. A week of zeroes is a
+ * truthful series but draws a flat line pinned to the floor, which reads as a
+ * measurement rather than as "nothing here yet" — the pill's meta line already
+ * says that in words, so the trend simply stays absent until there is a trend.
+ */
+export function deriveProteinTrend(
+  days: ProteinDay[],
+  weekStart: ReturnType<typeof isoWeekStart>,
+  todayKey: string
+): SparklinePoint[] {
+  const table = proteinWeekTable(days, weekStart)
+  const upToToday = table.days.filter((d) => d.dateKey <= todayKey)
+  if (!upToToday.some((d) => d.grams > 0)) return []
+  return upToToday.map((d) => ({
+    x: Math.round(Date.parse(`${d.dateKey}T00:00:00Z`) / 86_400_000),
+    y: d.grams
+  }))
 }
 
 export interface ProteinTargetFraction {
@@ -117,6 +140,10 @@ export function ProteinPill({ timezone }: ProteinPillProps): ReactElement {
     () => deriveProteinTargetFraction(todayGrams, target),
     [todayGrams, target]
   )
+  const trend = useMemo(
+    () => deriveProteinTrend(proteinLogQuery.data ?? [], weekStart, todayKey),
+    [proteinLogQuery.data, weekStart, todayKey]
+  )
 
   function handleAdd(): void {
     const grams = parseGramsInput(input)
@@ -187,6 +214,7 @@ export function ProteinPill({ timezone }: ProteinPillProps): ReactElement {
           />
         </div>
       )}
+      <Sparkline points={trend} domain="load" ariaLabel="Protein logged this week" />
       <span className="protein-pill-meta">
         {targetGlance != null
           ? hasToday

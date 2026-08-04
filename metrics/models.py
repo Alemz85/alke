@@ -480,11 +480,14 @@ def is_aerobic_modality(workout_type: str | None) -> bool:
 
 def z2_trimp_from_zones(time_in_zones: dict) -> float:
     """Zone-2 stimulus w(t) of a single workout (spec §1): Edwards zone-2 weight
-    plus half-credited upper-aerobic (z3) spillover. z1/z4/z5 contribute 0 by
-    design — this metric is Zone-2-scoped.
+    plus half-credited upper-aerobic (z3) spillover, PLUS (v5) the easy-aerobic
+    band below the Z2 floor — see `Z2_EASY_AEROBIC_WEIGHT`. z4/z5 and the truly
+    easy part of z1 (below the adaptation threshold) contribute 0 by design.
 
     Accepts a dict keyed either by int zone (1..5) or by the jsonb string keys
-    ('z2','z3') that computed_workout.time_in_zones stores; values are seconds.
+    ('z2','z3','z1b') that computed_workout.time_in_zones stores; values are
+    seconds. A row computed before v5 simply has no 'z1b' key and scores as it
+    did before — no backfill required for correctness, only for completeness.
     """
 
     def sec(zone: int) -> float:
@@ -494,7 +497,231 @@ def z2_trimp_from_zones(time_in_zones: dict) -> float:
 
     z2_sec = sec(2)
     z3_sec = sec(3)
-    return (z2_sec / 60.0) * 2.0 + (z3_sec / 60.0) * 3.0 * 0.5
+    z1b_sec = float(time_in_zones.get("z1b", 0.0) or 0.0)
+    return (
+        (z2_sec / 60.0) * 2.0
+        + (z3_sec / 60.0) * 3.0 * 0.5
+        + (z1b_sec / 60.0) * Z2_EASY_AEROBIC_WEIGHT
+    )
+
+
+# ---------------------------------------------------------------------------
+# v5 — easy-aerobic (sub-Z2) credit and the ambulatory ambient channel.
+# See TODO.md §6 and knowledge topics/low-intensity-volume-threshold.md.
+#
+# The governing evidence (Swain & Franklin 2002, MSSE): the MINIMUM intensity
+# that still builds VO2max is not a constant — it scales UP with fitness.
+# Initial VO2max < 40 ml/kg/min: no tested intensity was ineffective, down to the
+# lowest anyone tried (~30% VO2R). Initial VO2max > 40: below ~45% VO2R was
+# consistently ineffective. %VO2R maps onto %HRR, so these read directly as
+# heart-rate-reserve fractions. A FIXED 60% HRR Z2 floor therefore demands the
+# highest relative effort from exactly the user whose true threshold is lowest.
+# ---------------------------------------------------------------------------
+
+# [LITERATURE PRIOR] The two Swain & Franklin anchor points, as %HRR.
+Z2_ADAPT_FRAC_LOW_FIT = 0.30
+Z2_ADAPT_FRAC_HIGH_FIT = 0.45
+# [LITERATURE PRIOR] Their split point: initial VO2max 40 ml/kg/min.
+Z2_ADAPT_VO2_LOW = 40.0
+# [CHOSEN PRIOR] Swain & Franklin give a STEP at VO2max 40, not a curve. Smoothing
+# it into a ramp from 40 up to the model's own top-amateur VO2 anchor is OUR
+# choice, made to honour the v3 "continuous in the user's data" principle rather
+# than because the paper supports a gradient. A step would make the whole index
+# jump discontinuously the day a watch VO2max reading crosses 40.
+Z2_ADAPT_VO2_HIGH = Z2_ANCHOR_VO2_100
+# [CHOSEN PRIOR] Edwards-style weight for a minute in the easy-aerobic band
+# [adaptation threshold, Z2 floor). The band is credited on a conceptual 0→2 ramp
+# across its width; a single aggregated second-count cannot say where within the
+# band a minute sat, so it is credited at the ramp's MEAN, which is 1.0 — half a
+# true Zone-2 minute. Not a derived number: Oja 2018 (37 RCTs, n=2001) tested 91
+# walking dose-response relationships and found chance-level significance,
+# concluding there is "insufficient evidence to quantify" the dose.
+Z2_EASY_AEROBIC_WEIGHT = 1.0
+
+
+def adaptation_threshold_frac(
+    vo2max: float | None,
+    low_frac: float = Z2_ADAPT_FRAC_LOW_FIT,
+    high_frac: float = Z2_ADAPT_FRAC_HIGH_FIT,
+    vo2_low: float = Z2_ADAPT_VO2_LOW,
+    vo2_high: float = Z2_ADAPT_VO2_HIGH,
+) -> float:
+    """The %HRR below which aerobic work stops building, as a function of the
+    user's CURRENT fitness (Swain & Franklin 2002, smoothed — see the constants).
+
+    Clamps to `low_frac` at or below `vo2_low` and to `high_frac` at or above
+    `vo2_high`; linear between. An unknown VO2max returns `low_frac`: the
+    conservative reading for someone with no measured fitness is that they are
+    detrained, which is the case where easy work counts for MORE, and getting
+    that wrong under-credits rather than inflates.
+    """
+    if vo2max is None or not math.isfinite(vo2max):
+        return low_frac
+    if vo2_high <= vo2_low:
+        return high_frac
+    t = (float(vo2max) - vo2_low) / (vo2_high - vo2_low)
+    return low_frac + max(0.0, min(1.0, t)) * (high_frac - low_frac)
+
+
+def adaptation_threshold_bpm(hr_max: float, rhr: float, vo2max: float | None) -> float:
+    """Karvonen HR at the adaptation threshold: `rhr + frac(VO2max) · HRR`. Same
+    reserve arithmetic as `zone_bounds`, so the two are directly comparable."""
+    return rhr + adaptation_threshold_frac(vo2max) * (hr_max - rhr)
+
+
+def easy_aerobic_seconds(
+    samples: list[Sample],
+    threshold_bpm: float,
+    z2_low_bpm: float,
+    swim_hr_offset: float = 0.0,
+) -> int:
+    """Seconds in the easy-aerobic band `[threshold_bpm, z2_low_bpm)` — the part
+    of the app's Zone 1 that is still above the adaptation threshold.
+
+    Deliberately a SEPARATE accumulator rather than a sixth entry in
+    `time_in_zones`: that function's 1..5 dict is consumed in several places that
+    assume exactly five integer keys, and widening it would ripple. Sample
+    duration follows the identical rule (gap to next sample, capped at
+    SPACING_CAP_S; the last sample contributes nothing), so this band and the
+    zone buckets are measured on the same clock and can be summed safely.
+    """
+    if z2_low_bpm <= threshold_bpm:
+        return 0
+    total = 0
+    ordered = sorted(samples)
+    for (offset, bpm), (next_offset, _) in zip(ordered, ordered[1:]):
+        adjusted = bpm - swim_hr_offset
+        if threshold_bpm <= adjusted < z2_low_bpm:
+            total += min(next_offset - offset, SPACING_CAP_S)
+    return total
+
+
+# ── ambulatory ambient channel (TODO.md §6 Part A) ──────────────────────────
+# The index must not depend on whether the user pressed "start workout". Daily
+# active energy is logging-invariant and already ingested, so the load that
+# unlogged walking represents is derivable: total active energy MINUS what logged
+# workouts already account for, above the user's own sedentary baseline.
+
+# [CHOSEN PRIOR] Load units per excess ambient kcal. Anchored by the user's own
+# logged data rather than literature (which declines to supply one — Oja 2018):
+# a steady pool swim works out to roughly 0.18 load/kcal at
+# true Zone-2 intensity. Ambulatory work is credited at ~1/3 of that, the
+# "transfer is always a discount" constraint from Tanaka 1994. Deliberately
+# conservative: under-crediting a walk is a smaller error than letting errands
+# masquerade as training.
+Z2_AMBIENT_LOAD_PER_KCAL = 0.06
+# [CHOSEN PRIOR] Daily ceiling in load units. A day of walking, however long, must
+# not out-score a hard training session (a hard logged session
+# scores around this ceiling). Saturating rather than clipped, so the map stays smooth.
+Z2_AMBIENT_DAILY_MAX = 60.0
+# Percentile of the user's OWN daily ambient series taken as their sedentary
+# baseline — data-derived per the v3 dynamic principle, never a fixed kcal
+# constant (an inactive day is a personal quantity).
+Z2_AMBIENT_BASELINE_PCT = 20.0
+
+
+def ambient_daily_load(
+    ambient_kcal: float | None,
+    sedentary_kcal: float,
+    rate: float = Z2_AMBIENT_LOAD_PER_KCAL,
+    daily_max: float = Z2_AMBIENT_DAILY_MAX,
+) -> float:
+    """Build stimulus from a day's UNLOGGED ambulatory activity, in load units.
+
+        excess = max(0, ambient_kcal − sedentary_kcal)
+        load   = daily_max · (1 − exp(−rate · excess / daily_max))
+
+    Saturating: near-linear at `rate` for ordinary days, asymptotic to `daily_max`
+    for an exceptional one. Missing energy data returns 0.0 — a day we cannot see
+    contributes nothing rather than guessing.
+
+    NOTE on `flights_climbed`: an earlier draft of this spec added a separate
+    vertical-work term. It is deliberately NOT here — Apple's active-energy
+    already includes the cost of climbing, so adding flights on top would double
+    count the same joules (each ~3 m flight's cost is already inside the
+    number). Flights remain useful as a bout-structure signal if one is ever
+    needed; they are not additive load.
+    """
+    if ambient_kcal is None or not math.isfinite(ambient_kcal):
+        return 0.0
+    excess = max(0.0, float(ambient_kcal) - sedentary_kcal)
+    if excess <= 0.0 or daily_max <= 0.0 or rate <= 0.0:
+        return 0.0
+    return daily_max * (1.0 - math.exp(-rate * excess / daily_max))
+
+
+def calibrate_kcal_per_km(pairs: list[tuple[float, float]]) -> float | None:
+    """Median daily active-kcal per walking+running km, fitted from the user's OWN
+    days where BOTH readings exist. Returns None when there is nothing to fit.
+
+    Why a fitted ratio and not a literature walking-economy constant: the quantity
+    being estimated is the day's WHOLE active-energy total, of which ambulation is
+    the bulk but not all — so a textbook kcal/kg/km figure would systematically
+    under-read. Fitting it to their own overlap makes the estimator carry whatever
+    their real mix is, and it self-corrects as that mix changes (v3 dynamic
+    principle). `pairs` is [(active_kcal, distance_m)]; days under a kilometre are
+    dropped because the ratio is unstable there.
+    """
+    ratios = sorted(
+        kcal / (dist / 1000.0)
+        for kcal, dist in pairs
+        if kcal is not None and dist is not None and dist > 1000.0 and math.isfinite(kcal)
+    )
+    if not ratios:
+        return None
+    mid = len(ratios) // 2
+    return ratios[mid] if len(ratios) % 2 else (ratios[mid - 1] + ratios[mid]) / 2.0
+
+
+def estimated_active_kcal(distance_m: float | None, kcal_per_km: float | None) -> float | None:
+    """Fallback day-level active energy from walking+running distance, for the long
+    stretch of history before HAE began sending `active_energy` (most older days
+    have no energy reading, but they do have distance).
+
+    Returns None — never a guess — when either input is missing, so a day with no
+    usable signal keeps contributing exactly nothing.
+    """
+    if distance_m is None or kcal_per_km is None or not math.isfinite(distance_m):
+        return None
+    return max(0.0, float(distance_m) / 1000.0 * kcal_per_km)
+
+
+def sedentary_ambient_baseline(
+    ambient_series: list[float], pct: float = Z2_AMBIENT_BASELINE_PCT
+) -> float:
+    """The user's own inactive-day ambient burn: the `pct`th percentile of their
+    daily ambient-kcal series. Empty input returns 0.0, which makes every day read
+    as fully "excess" — acceptable only because it cannot occur alongside real
+    energy data, and erring toward 0 never suppresses a real signal silently."""
+    values = sorted(v for v in ambient_series if v is not None and math.isfinite(v))
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    rank = (pct / 100.0) * (len(values) - 1)
+    lo = int(math.floor(rank))
+    hi = min(lo + 1, len(values) - 1)
+    return values[lo] + (values[hi] - values[lo]) * (rank - lo)
+
+
+# Modality markers for activity whose energy is ALREADY inside daily active
+# energy and which therefore must not also feed w(t) through the workout channel
+# (TODO.md §6 Part A step 5). This is what makes the index logging-invariant:
+# logging a walk moves no number, because the walk was already counted.
+Z2_AMBULATORY_MARKERS = ("walk", "hiking")
+
+
+def is_ambulatory_modality(workout_type: str | None) -> bool:
+    """Whether a workout is ambulatory (walk/hike) and thus already represented in
+    the day's active-energy total. Such workouts are excluded from the workout
+    `w(t)` channel, the intensity-correct session count, and B's weekly minutes —
+    not because walking doesn't build (it does; see the module docstring above),
+    but because the ambient channel already credits it, from data that exists
+    whether or not the user started a workout."""
+    if not workout_type:
+        return False
+    t = workout_type.lower()
+    return any(marker in t for marker in Z2_AMBULATORY_MARKERS)
 
 
 def vo2max_to_score(v: float) -> float:

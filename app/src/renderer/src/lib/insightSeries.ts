@@ -272,6 +272,37 @@ export interface DatedNullableValue {
   value: number | null
 }
 
+/** Median circular timing dispersion across exactly the seven prior dates. */
+export function priorSleepTimingVariability(
+  rows: DatedNullableValue[]
+): Map<string, number> {
+  const sorted = [...rows].sort((left, right) => left.date.localeCompare(right.date))
+  const values = new Map(sorted.map((row) => [row.date, row.value]))
+  const variability = new Map<string, number>()
+  for (const row of sorted) {
+    const currentMs = Date.parse(`${row.date}T00:00:00Z`)
+    if (!Number.isFinite(currentMs)) continue
+    const prior: number[] = []
+    for (let lag = 1; lag <= 7; lag++) {
+      const priorDate = new Date(currentMs - lag * 86_400_000).toISOString().slice(0, 10)
+      const value = values.get(priorDate)
+      if (value === null || value === undefined || !Number.isFinite(value)) break
+      prior.push(((value % 24) + 24) % 24)
+    }
+    if (prior.length !== 7) continue
+    const angles = prior.map((hour) => (hour * 2 * Math.PI) / 24)
+    const meanSin = angles.reduce((sum, angle) => sum + Math.sin(angle), 0) / angles.length
+    const meanCos = angles.reduce((sum, angle) => sum + Math.cos(angle), 0) / angles.length
+    if (Math.hypot(meanSin, meanCos) <= 1e-9) continue
+    const center = ((((Math.atan2(meanSin, meanCos) * 24) / (2 * Math.PI)) % 24) + 24) % 24
+    const distances = prior
+      .map((hour) => Math.abs(signedClockDelta(hour, center)))
+      .sort((left, right) => left - right)
+    variability.set(row.date, distances[Math.floor(distances.length / 2)])
+  }
+  return variability
+}
+
 /** Effective number of equally sized training days in the preceding week. */
 export function priorTrainingDensity(rows: DatedNullableValue[]): Map<string, number> {
   const loadByDate = new Map(
