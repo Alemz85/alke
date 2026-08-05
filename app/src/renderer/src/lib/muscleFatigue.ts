@@ -117,6 +117,41 @@ export const GROUP_MEMBERSHIP: Record<MuscleGroup, Partial<Record<Muscle, number
   core: { abs: 1.0, obliques: 1.0, 'hip flexors': 1.0, 'lower back': 0.4 }
 }
 
+/**
+ * Joint classes for the isometric endurance-time table. These are the joints
+ * Frey Law & Avin (2010) fitted separate models for; `general` is their pooled
+ * model, used where no joint-specific fit was published (arms) or where an
+ * exercise's muscles do not agree on one joint.
+ */
+export type IsoJoint = 'ankle' | 'trunk' | 'knee' | 'shoulder' | 'general'
+
+/**
+ * Which joint's endurance curve governs a muscle's holds. Fatigue resistance at
+ * a given %MVC ranks ankle > trunk > knee > shoulder, so this is the difference
+ * between a 45 s calf hold and a 45 s delt hold meaning the same thing or not.
+ * Muscles with no clear single joint (or no published fit) map to `general`.
+ */
+export const MUSCLE_ISO_JOINT: Partial<Record<Muscle, IsoJoint>> = {
+  calves: 'ankle',
+  tibialis: 'ankle',
+  quadriceps: 'knee',
+  hamstrings: 'knee',
+  glutes: 'knee',
+  adductors: 'knee',
+  abductors: 'knee',
+  'hip flexors': 'trunk',
+  abs: 'trunk',
+  obliques: 'trunk',
+  'lower back': 'trunk',
+  'front delts': 'shoulder',
+  'side delts': 'shoulder',
+  'rear delts': 'shoulder',
+  traps: 'shoulder',
+  lats: 'shoulder',
+  'upper back': 'shoulder',
+  chest: 'shoulder'
+}
+
 export const MUSCLE_GROUPS: MuscleGroup[] = ['chest', 'back', 'shoulders', 'arms', 'legs', 'core']
 
 // ---------------------------------------------------------------------------
@@ -167,19 +202,53 @@ export const MUSCLE_FATIGUE_PARAMS = {
     // a second of dynamic work to look up, only a defensible convention.
     secondsPerRepEquivalent: 3,
 
-    // CHOSEN PRIOR, grounded in the isometric force-duration relationship
-    // (Rohmert 1960 and its successors): endurance time rises hyperbolically as
-    // %MVC falls, so a hold you can sustain for minutes is necessarily at a low
-    // fraction of maximum. Later seconds are therefore cheaper seconds, and a
-    // linear map would let a 5-minute plank out-fatigue a heavy squat session.
-    // Effective seconds saturate as t -> saturationSeconds * (1 - e^(-t/T)),
-    // the same saturating shape the Zone-2 ambient channel uses.
+    // Reference hold duration T, per JOINT. Effective seconds saturate as
+    // T·(1 − e^(−t/T)): endurance time rises steeply as %MVC falls, so a hold
+    // sustainable for minutes is necessarily at a low fraction of maximum and
+    // its later seconds are genuinely cheaper. A linear map would let a
+    // 5-minute plank out-fatigue a heavy squat session on elapsed time alone.
     //
-    // At T = 60 s: a 30 s hold counts ~23.6 s, 45 s counts ~31.7 s, 60 s counts
-    // ~37.9 s, and a 5-minute plank asymptotes near 60 s rather than running
-    // away. The model has no %MVIC input, so this stands in for the intensity
-    // the user must have dropped to in order to hold that long.
-    saturationSeconds: 60,
+    // LITERATURE-DERIVED, not chosen. These are Frey Law & Avin's (2010,
+    // Ergonomics) joint-specific power models ET = b₀·MVC^b₁, fitted over 194
+    // publications / 369 data points, each evaluated at a common 50% MVC:
+    //
+    //   ankle    ET = 34.71·MVC^−2.06 → 145 s      trunk    22.69·MVC^−2.27 → 109 s
+    //   knee     ET = 19.38·MVC^−1.88 →  71 s      shoulder 14.86·MVC^−1.83 →  53 s
+    //   general  ET = 21.92·MVC^−1.98 →  86 s
+    //
+    // The absolute anchor (50% MVC) is arbitrary and cancels — only the RATIOS
+    // between joints matter downstream, and those are what the meta-analysis
+    // measured. Its headline conclusion is why this is a table and not a
+    // constant: "a single generalised ET model does not adequately represent
+    // most individual joints," with between-joint effect sizes up to d = 2.9
+    // (ankle vs knee). Fatigue resistance ranks ankle > trunk > elbow/grip >
+    // knee > shoulder — a calf holds far longer than a delt at the same
+    // relative load, so the same 45 s means different things at each.
+    //
+    // Elbow/grip is deliberately absent: the published power coefficients for
+    // those joints were not available, so arms fall back to `general` rather
+    // than to an invented number.
+    jointReferenceSeconds: {
+      ankle: 145,
+      trunk: 109,
+      knee: 71,
+      shoulder: 53,
+      general: 86
+    } as Record<IsoJoint, number>,
+
+    // Personalisation gate. With at least this many prior logged holds of the
+    // SAME exercise, the joint table is replaced by the user's own demonstrated
+    // capacity (below) — their own endurance curve beats a population fit, and
+    // Frey Law & Avin's own conclusion is that pooled models under-describe
+    // even whole joints, let alone individuals.
+    minHistoryHolds: 3,
+    // Percentile of the user's trailing hold durations taken as their capacity
+    // for that exercise. Matches refPercentile's role on the weight side.
+    capacityPercentile: 0.9,
+    // Guard rails on a personalised reference, so one mis-logged 2-hour "hold"
+    // (or a single 3 s tap) cannot rewrite the curve.
+    minReferenceSeconds: 15,
+    maxReferenceSeconds: 600,
 
     // CHOSEN PRIOR bracketed by two literatures pulling opposite ways:
     //  - UPPER BOUND ~1.0: with time-under-tension and intensity equated,
@@ -462,22 +531,65 @@ export function isBodyweightBearing(ex: Exercise | undefined): boolean {
  * would be unfounded hardcoding.
  */
 /**
+ * The joint whose endurance curve governs this exercise's holds, from its
+ * primary muscles. Falls back to `general` when the exercise has no muscle
+ * metadata or its primaries straddle joints (a full-body plank), rather than
+ * picking a winner between them.
+ */
+export function isoJointOf(ex: Exercise | undefined): IsoJoint {
+  const joints = new Set(
+    (ex?.primary_muscles ?? [])
+      .map((m) => MUSCLE_ISO_JOINT[m as Muscle])
+      .filter((j): j is IsoJoint => j != null)
+  )
+  return joints.size === 1 ? [...joints][0] : 'general'
+}
+
+/**
+ * The reference hold duration T for one exercise, in seconds — the scale on
+ * which its holds saturate.
+ *
+ * Prefers the user's OWN demonstrated capacity for that exercise (a high
+ * percentile of their prior logged holds) once there is enough history, and
+ * falls back to the joint-specific literature value otherwise. Frey Law &
+ * Avin's own conclusion is that a pooled model under-describes even a whole
+ * joint, so a person's own curve is the better evidence about themselves as
+ * soon as it exists.
+ *
+ * Clamped both ways so a single mis-logged marathon hold — or one 3-second
+ * tap — cannot rewrite the scale.
+ */
+export function isometricReferenceSeconds(ex: Exercise | undefined, priorHolds: number[]): number {
+  const ISO = MUSCLE_FATIGUE_PARAMS.iso
+  const fallback = ISO.jointReferenceSeconds[isoJointOf(ex)]
+  if (priorHolds.length < ISO.minHistoryHolds) return fallback
+  const capacity = percentile(priorHolds, ISO.capacityPercentile)
+  if (capacity == null || capacity <= 0) return fallback
+  return Math.min(ISO.maxReferenceSeconds, Math.max(ISO.minReferenceSeconds, capacity))
+}
+
+/**
  * Rep-equivalents for a time-counted set, so a hold enters the same hard-set
  * unit as every dynamic set instead of scoring zero.
  *
- * Seconds saturate before conversion: `T·(1 − e^(−t/T))`. The isometric
- * force–duration relationship is hyperbolic (Rohmert), so the longer a hold
- * runs the lower the %MVC it can possibly be at — later seconds genuinely cost
- * less. Without saturation a long plank would out-fatigue a heavy squat
- * session purely on elapsed time.
+ * Seconds saturate before conversion: `T·(1 − e^(−t/T))`, where T is this
+ * exercise's reference hold duration. Endurance time rises steeply as %MVC
+ * falls (a power law, exponent ≈ −1.9 to −2.3 across joints), so the longer a
+ * hold runs the lower the intensity it can possibly be at — later seconds
+ * genuinely cost less. Without saturation a long plank would out-fatigue a
+ * heavy squat session purely on elapsed time.
  *
  * Returns 0 for a non-positive duration so a malformed row deposits nothing
  * rather than a negative stimulus.
  */
-export function isometricRepEquivalents(durationSeconds: number): number {
-  const { saturationSeconds, secondsPerRepEquivalent } = MUSCLE_FATIGUE_PARAMS.iso
+export function isometricRepEquivalents(
+  durationSeconds: number,
+  referenceSeconds: number = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds.general
+): number {
+  const { secondsPerRepEquivalent } = MUSCLE_FATIGUE_PARAMS.iso
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0
-  const effectiveSeconds = saturationSeconds * (1 - Math.exp(-durationSeconds / saturationSeconds))
+  const T = referenceSeconds > 0 ? referenceSeconds : MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds.general
+  const effectiveSeconds = T * (1 - Math.exp(-durationSeconds / T))
   return effectiveSeconds / secondsPerRepEquivalent
 }
 
@@ -486,8 +598,11 @@ export function isometricRepEquivalents(durationSeconds: number): number {
  * A set is rep-counted or time-counted (DB constraint), never both, so this is
  * the single place the two become comparable.
  */
-export function setRepEquivalents(s: Pick<GymSet, 'reps' | 'duration_s'>): number {
-  if (s.duration_s != null) return isometricRepEquivalents(s.duration_s)
+export function setRepEquivalents(
+  s: Pick<GymSet, 'reps' | 'duration_s'>,
+  referenceSeconds?: number
+): number {
+  if (s.duration_s != null) return isometricRepEquivalents(s.duration_s, referenceSeconds)
   return s.reps ?? 0
 }
 
@@ -570,9 +685,21 @@ export function exerciseLoadCoefficient(ex: Exercise): number {
  */
 export function relIntensityFactor(
   set: GymSet,
-  priorLoads: number[] // in-window non-warmup loads for this exercise, current session excluded
+  priorLoads: number[], // in-window non-warmup loads for this exercise, current session excluded
+  priorHolds: number[] = [] // in-window hold DURATIONS for this exercise, same exclusions
 ): number {
   const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+  // A hold carries its intensity in its DURATION, not its weight: holding 60 s
+  // when your norm for that exercise is 30 s is the isometric equivalent of
+  // adding plates. Without this branch every hold sat at a flat 1.0 — the model
+  // could not tell a near-limit hold from an easy one, because a bodyweight
+  // hold has no weight_kg for the branch below to read.
+  if (set.duration_s != null) {
+    if (priorHolds.length < R.minHistorySets) return 1
+    const norm = median(priorHolds)
+    if (norm == null || norm <= 0) return 1
+    return Math.min(R.max, Math.max(R.min, set.duration_s / norm))
+  }
   // No actual weight on the set → the ratio is meaningless; stay neutral. (A
   // bodyweight/band set's cost is already handled by loadCoeff + hard-set volume.)
   if (set.weight_kg == null) return 1
@@ -645,6 +772,10 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
   // added weight so the intensity median only reflects genuinely-loaded sets.
   const exerciseLoads = new Map<string, { dayKey: string; load: number }[]>()
   const exerciseWeights = new Map<string, { dayKey: string; weightKg: number }[]>()
+  // Hold durations per exercise, the isometric counterpart of exerciseWeights:
+  // they carry both this exercise's intensity signal and the user's own
+  // demonstrated capacity, which personalises the saturation scale.
+  const exerciseHolds = new Map<string, { dayKey: string; seconds: number }[]>()
   for (const sess of sessions) {
     const dayKey = localDateKey(sess.performed_at, timezone)
     const bodyWeight = resolveBodyWeight(input.bodyWeightSeries, dayKey)
@@ -658,6 +789,11 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
         warr.push({ dayKey, weightKg: set.weight_kg })
         exerciseWeights.set(set.exercise_id, warr)
       }
+      if (set.duration_s != null) {
+        const harr = exerciseHolds.get(set.exercise_id) ?? []
+        harr.push({ dayKey, seconds: set.duration_s })
+        exerciseHolds.set(set.exercise_id, harr)
+      }
     }
   }
 
@@ -669,10 +805,19 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       const ex = exercisesById.get(set.exercise_id)
       if (!ex) continue // custom without muscle metadata -> honest gap, no guess
       // Rep-equivalents, so a timed hold contributes on the same scale as a
-      // rep-counted set rather than being skipped for having no reps.
-      const reps = setRepEquivalents(set)
-      if (reps <= 0) continue
+      // rep-counted set rather than being skipped for having no reps. The
+      // saturation scale is this exercise's own reference: the user's
+      // demonstrated capacity once they have a history of it, else the
+      // joint-specific literature value.
       const isIsometric = set.duration_s != null
+      const priorHoldSeconds = (exerciseHolds.get(set.exercise_id) ?? [])
+        .filter((h) => h.dayKey < dayKey)
+        .map((h) => h.seconds)
+      const holdReference = isIsometric
+        ? isometricReferenceSeconds(ex, priorHoldSeconds)
+        : undefined
+      const reps = setRepEquivalents(set, holdReference)
+      if (reps <= 0) continue
       const load = setLoad(set, ex, bodyWeight)
 
       // relIntensity = load / ref30 (this set's weight vs the user's recent norm).
@@ -696,7 +841,10 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       const priorLoads = (exerciseWeights.get(set.exercise_id) ?? [])
         .filter((w) => w.dayKey < dayKey && w.dayKey > cutoff)
         .map((w) => w.weightKg)
-      const intensityFactor = relIntensityFactor(set, priorLoads)
+      const windowHolds = (exerciseHolds.get(set.exercise_id) ?? [])
+        .filter((h) => h.dayKey < dayKey && h.dayKey > cutoff)
+        .map((h) => h.seconds)
+      const intensityFactor = relIntensityFactor(set, priorLoads, windowHolds)
 
       // Eccentric work gets a conservative final-stimulus multiplier. It is
       // deliberately applied after reference/history calculations, leaving

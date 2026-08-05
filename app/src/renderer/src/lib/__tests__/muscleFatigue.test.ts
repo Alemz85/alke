@@ -6,6 +6,8 @@ import {
   isBodyweightBearing,
   relIntensityFactor,
   isometricRepEquivalents,
+  isometricReferenceSeconds,
+  isoJointOf,
   setRepEquivalents,
   fatigueStatus,
   MUSCLE_FATIGUE_PARAMS,
@@ -1341,43 +1343,110 @@ const WALL_SIT = exercise({
 })
 
 describe('isometricRepEquivalents', () => {
-  it('converts a hold to rep-equivalents on the documented saturating curve', () => {
-    // T·(1 − e^(−t/T)) / secondsPerRep, T = 60 s, 3 s/rep.
-    expect(isometricRepEquivalents(30)).toBeCloseTo(7.869, 2)
-    expect(isometricRepEquivalents(45)).toBeCloseTo(10.553, 2)
-    expect(isometricRepEquivalents(60)).toBeCloseTo(12.642, 2)
+  const KNEE_T = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds.knee
+
+  it('converts a hold to rep-equivalents on the saturating curve for its joint', () => {
+    // T·(1 − e^(−t/T)) / 3 s per rep, knee T = 71 s (Frey Law & Avin at 50% MVC).
+    expect(isometricRepEquivalents(30, KNEE_T)).toBeCloseTo((KNEE_T * (1 - Math.exp(-30 / KNEE_T))) / 3, 6)
+    expect(isometricRepEquivalents(45, KNEE_T)).toBeCloseTo(11.11, 1)
   })
 
   it('is monotonic in duration — a longer hold never counts for less', () => {
     const durations = [5, 15, 30, 45, 60, 90, 120, 300, 900]
-    const values = durations.map(isometricRepEquivalents)
+    const values = durations.map((d) => isometricRepEquivalents(d, KNEE_T))
     for (let i = 1; i < values.length; i++) {
       expect(values[i]).toBeGreaterThan(values[i - 1])
     }
   })
 
   it('saturates, so a very long hold cannot run away with the load budget', () => {
-    // Rohmert: a hold sustainable for minutes is necessarily at a low %MVC, so
-    // later seconds are cheaper. Linear would make a 5-min plank 100 reps.
-    const asymptote = MUSCLE_FATIGUE_PARAMS.iso.saturationSeconds /
-      MUSCLE_FATIGUE_PARAMS.iso.secondsPerRepEquivalent
-    expect(isometricRepEquivalents(300)).toBeLessThan(asymptote)
-    // An hour-long hold is numerically AT the asymptote, never past it.
-    expect(isometricRepEquivalents(3600)).toBeLessThanOrEqual(asymptote)
-    // A 5-minute plank stays under two nominal 10-rep sets' worth.
-    expect(isometricRepEquivalents(300)).toBeLessThan(20)
+    // A hold sustainable for minutes is necessarily at a low %MVC, so later
+    // seconds are cheaper. Linear would make a 5-min plank 100 rep-equivalents.
+    const asymptote = KNEE_T / MUSCLE_FATIGUE_PARAMS.iso.secondsPerRepEquivalent
+    expect(isometricRepEquivalents(300, KNEE_T)).toBeLessThan(asymptote)
+    expect(isometricRepEquivalents(3600, KNEE_T)).toBeLessThanOrEqual(asymptote)
   })
 
   it('is near-linear at short durations, where saturation has barely bitten', () => {
     const linear = 10 / MUSCLE_FATIGUE_PARAMS.iso.secondsPerRepEquivalent
-    expect(isometricRepEquivalents(10)).toBeGreaterThan(linear * 0.9)
-    expect(isometricRepEquivalents(10)).toBeLessThan(linear)
+    expect(isometricRepEquivalents(10, KNEE_T)).toBeGreaterThan(linear * 0.9)
+    expect(isometricRepEquivalents(10, KNEE_T)).toBeLessThan(linear)
+  })
+
+  it('scales the same hold by the joint reference it is given', () => {
+    // The whole point of the joint table: 45 s at the ankle (T = 145 s, the
+    // most fatigue-resistant joint) is a smaller fraction of capacity than the
+    // same 45 s at the shoulder (T = 53 s), so it counts for MORE raw seconds
+    // before saturation bites.
+    const J = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds
+    expect(isometricRepEquivalents(45, J.ankle)).toBeGreaterThan(isometricRepEquivalents(45, J.knee))
+    expect(isometricRepEquivalents(45, J.knee)).toBeGreaterThan(isometricRepEquivalents(45, J.shoulder))
+  })
+
+  it('defaults to the general (pooled) reference when none is supplied', () => {
+    const general = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds.general
+    expect(isometricRepEquivalents(45)).toBeCloseTo(isometricRepEquivalents(45, general), 10)
   })
 
   it('returns 0 for a non-positive or malformed duration rather than negative load', () => {
-    expect(isometricRepEquivalents(0)).toBe(0)
-    expect(isometricRepEquivalents(-30)).toBe(0)
-    expect(isometricRepEquivalents(Number.NaN)).toBe(0)
+    expect(isometricRepEquivalents(0, KNEE_T)).toBe(0)
+    expect(isometricRepEquivalents(-30, KNEE_T)).toBe(0)
+    expect(isometricRepEquivalents(Number.NaN, KNEE_T)).toBe(0)
+  })
+
+  it('falls back rather than dividing by a nonsense reference', () => {
+    expect(isometricRepEquivalents(45, 0)).toBeCloseTo(isometricRepEquivalents(45), 10)
+    expect(isometricRepEquivalents(45, -5)).toBeCloseTo(isometricRepEquivalents(45), 10)
+  })
+})
+
+describe('isoJointOf', () => {
+  it('reads the joint from an exercise\'s primary muscles', () => {
+    expect(isoJointOf(exercise({ id: 'a', primary_muscles: ['quadriceps'] }))).toBe('knee')
+    expect(isoJointOf(exercise({ id: 'b', primary_muscles: ['calves'] }))).toBe('ankle')
+    expect(isoJointOf(exercise({ id: 'c', primary_muscles: ['abs'] }))).toBe('trunk')
+    expect(isoJointOf(exercise({ id: 'd', primary_muscles: ['side delts'] }))).toBe('shoulder')
+  })
+
+  it('falls back to general when the primaries straddle joints, rather than picking one', () => {
+    expect(isoJointOf(exercise({ id: 'e', primary_muscles: ['quadriceps', 'side delts'] }))).toBe('general')
+  })
+
+  it('falls back to general for an exercise with no muscle metadata', () => {
+    expect(isoJointOf(exercise({ id: 'f', primary_muscles: [] }))).toBe('general')
+    expect(isoJointOf(undefined)).toBe('general')
+  })
+
+  it('maps arms to general — no published joint fit to borrow', () => {
+    expect(isoJointOf(exercise({ id: 'g', primary_muscles: ['biceps'] }))).toBe('general')
+  })
+})
+
+describe('isometricReferenceSeconds', () => {
+  const KNEE = exercise({ id: 'k', primary_muscles: ['quadriceps'] })
+  const ISO = MUSCLE_FATIGUE_PARAMS.iso
+
+  it('uses the joint literature value when there is no personal history', () => {
+    expect(isometricReferenceSeconds(KNEE, [])).toBe(ISO.jointReferenceSeconds.knee)
+  })
+
+  it('keeps the literature value until the history gate is met', () => {
+    const thin = Array.from({ length: ISO.minHistoryHolds - 1 }, () => 120)
+    expect(isometricReferenceSeconds(KNEE, thin)).toBe(ISO.jointReferenceSeconds.knee)
+  })
+
+  it('switches to the user\'s own demonstrated capacity once history exists', () => {
+    // Someone who routinely holds ~120 s has a different curve from the pooled
+    // fit, and their own data is the better evidence about them.
+    const holds = [110, 115, 120, 118, 122]
+    const ref = isometricReferenceSeconds(KNEE, holds)
+    expect(ref).toBeGreaterThan(ISO.jointReferenceSeconds.knee)
+    expect(ref).toBeLessThanOrEqual(122)
+  })
+
+  it('clamps a personal reference so one mis-logged hold cannot rewrite the scale', () => {
+    expect(isometricReferenceSeconds(KNEE, [7200, 7200, 7200, 7200])).toBe(ISO.maxReferenceSeconds)
+    expect(isometricReferenceSeconds(KNEE, [2, 3, 2, 3])).toBe(ISO.minReferenceSeconds)
   })
 })
 
@@ -1387,7 +1456,18 @@ describe('setRepEquivalents', () => {
   })
 
   it('reads a time-counted set through the hold conversion', () => {
-    expect(setRepEquivalents({ reps: null, duration_s: 45 })).toBeCloseTo(10.553, 2)
+    expect(setRepEquivalents({ reps: null, duration_s: 45 })).toBeCloseTo(
+      isometricRepEquivalents(45),
+      10
+    )
+  })
+
+  it('passes a supplied reference through to the hold conversion', () => {
+    const ankle = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds.ankle
+    expect(setRepEquivalents({ reps: null, duration_s: 45 }, ankle)).toBeCloseTo(
+      isometricRepEquivalents(45, ankle),
+      10
+    )
   })
 
   it('treats a set carrying neither measure as no dose', () => {
@@ -1506,5 +1586,95 @@ describe('isometric holds in the fatigue model', () => {
     expect(muscleDetail(groupBy(plank, 'legs'), 'quadriceps').fatigue).toBeLessThan(
       muscleDetail(groupBy(squats, 'legs'), 'quadriceps').fatigue
     )
+  })
+})
+
+describe('sharpened isometric load: personal scale and hold intensity', () => {
+  const asOf = new Date('2026-07-20T20:00:00.000Z')
+
+  const holdSession = (day: string, seconds: number) =>
+    session(`2026-07-${day}T09:00:00.000Z`, [
+      set({ exercise_id: 'wall-sit', reps: null, duration_s: seconds, weight_kg: null })
+    ])
+
+  const quadFatigue = (sessions: GymSession[]): number =>
+    muscleDetail(
+      groupBy(
+        computeMuscleFatigue(baseInput({ sessions, exercisesById: mapOf(WALL_SIT), asOf })),
+        'legs'
+      ),
+      'quadriceps'
+    ).fatigue
+
+  it('rates a hold above the personal norm harder than one below it', () => {
+    // The mechanism that was dead before: a bodyweight hold has no weight_kg,
+    // so relIntensityFactor sat at a flat 1.0 and the model could not tell a
+    // near-limit hold from an easy one. Duration is the intensity signal.
+    const history = ['13', '15', '17'].map((d) => holdSession(d, 40))
+    const easy = quadFatigue([...history, holdSession('20', 20)])
+    const hard = quadFatigue([...history, holdSession('20', 80)])
+    expect(hard).toBeGreaterThan(easy)
+  })
+
+  it('reads the same absolute hold differently against different personal norms', () => {
+    // 60 s is a hard set for someone whose norm is 30 s and an easy one for
+    // someone whose norm is 120 s. Same seconds, different meaning.
+    const lowNorm = ['13', '15', '17'].map((d) => holdSession(d, 30))
+    const highNorm = ['13', '15', '17'].map((d) => holdSession(d, 120))
+    const forLowNorm = quadFatigue([...lowNorm, holdSession('20', 60)])
+    const forHighNorm = quadFatigue([...highNorm, holdSession('20', 60)])
+    // The high-norm athlete's own capacity also rescales saturation, so this
+    // asserts only that the two are genuinely distinguished.
+    expect(forLowNorm).not.toBeCloseTo(forHighNorm, 6)
+  })
+
+  it('still produces a finite, bounded stimulus with no history at all', () => {
+    const cold = quadFatigue([holdSession('20', 45)])
+    expect(cold).toBeGreaterThan(0)
+    expect(Number.isFinite(cold)).toBe(true)
+  })
+
+  it('routes a knee hold through the knee reference, not the pooled one', () => {
+    // WALL_SIT's primary is quadriceps → knee (T = 71 s), which is shorter than
+    // the pooled general reference (86 s), so the same hold saturates sooner.
+    expect(isoJointOf(WALL_SIT)).toBe('knee')
+    const J = MUSCLE_FATIGUE_PARAMS.iso.jointReferenceSeconds
+    expect(isometricRepEquivalents(45, J.knee)).toBeLessThan(isometricRepEquivalents(45, J.general))
+  })
+})
+
+describe('relIntensityFactor with holds', () => {
+  const hold = (seconds: number): GymSet =>
+    set({ reps: null, duration_s: seconds, weight_kg: null })
+
+  it('stays neutral until there is enough hold history', () => {
+    expect(relIntensityFactor(hold(60), [], [30])).toBe(1)
+  })
+
+  it('scales a hold by its duration against the personal median', () => {
+    const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+    // Ratios beyond the bounds clamp, exactly as on the weight path: doubling
+    // your usual hold is capped at max, halving it floored at min.
+    expect(relIntensityFactor(hold(60), [], [30, 30, 30, 30])).toBe(R.max)
+    expect(relIntensityFactor(hold(15), [], [30, 30, 30, 30])).toBe(R.min)
+    // Inside the bounds the ratio passes through untouched.
+    expect(relIntensityFactor(hold(36), [], [30, 30, 30, 30])).toBeCloseTo(1.2, 5)
+    expect(relIntensityFactor(hold(24), [], [30, 30, 30, 30])).toBeCloseTo(0.8, 5)
+  })
+
+  it('clamps to the same bounds as the weighted path', () => {
+    const R = MUSCLE_FATIGUE_PARAMS.relIntensity
+    expect(relIntensityFactor(hold(6000), [], [30, 30, 30, 30])).toBe(R.max)
+    expect(relIntensityFactor(hold(1), [], [300, 300, 300, 300])).toBe(R.min)
+  })
+
+  it('leaves rep-counted sets on the weight path, untouched by hold history', () => {
+    const weighted = set({ reps: 10, duration_s: null, weight_kg: 100 })
+    // 100 kg against an 50 kg norm → clamped max, and the hold history beside
+    // it changes nothing.
+    expect(relIntensityFactor(weighted, [50, 50, 50, 50], [30, 30, 30, 30])).toBe(
+      MUSCLE_FATIGUE_PARAMS.relIntensity.max
+    )
+    expect(relIntensityFactor(weighted, [90, 90, 90, 90], [30, 30, 30, 30])).toBeCloseTo(100 / 90, 5)
   })
 })
