@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { RecoveryPlanItem } from '@shared/types'
 import { formatRecoveryItemDose, formatRecoveryStepDose } from '../lib/recoveryPlan'
-import { nextItemPhase, resolveItemTargets } from '../lib/injuryStats'
+import { resolveItemTargets } from '../lib/injuryStats'
 import './RecoveryPlanDetail.css'
 
 const GUIDANCE_LABEL: Record<Exclude<RecoveryPlanItem['kind'], 'exercise'>, string> = {
@@ -26,29 +26,62 @@ export function RecoveryRoutineTable({ item }: { item: RecoveryPlanItem }): Reac
 }
 
 /**
- * The frequency in force now, plus the next step when the prescription ramps.
- * A ramped item ("3× in week 1, then daily") used to need two plan rows to say
- * this; one row now carries the schedule, so the card states both.
+ * The prescribed frequency, as a schedule rather than a sentence.
+ *
+ * A flat item has one frequency and shows just that. A ramped one ("3× in week
+ * 1, then daily from week 2") renders one labelled row per step, so what's on
+ * the card is visibly the prescription's own structure — week label plus dose —
+ * instead of prose that reads like fixed copy. The step in force is marked;
+ * later steps stay legible but recede.
  */
-function FrequencyLine({
+function FrequencySchedule({
   item,
   currentWeek
 }: {
   item: RecoveryPlanItem
   currentWeek: number | null
 }): ReactElement | null {
-  const targets = resolveItemTargets(item, currentWeek)
-  const next = nextItemPhase(item, currentWeek)
-  if (targets.weekly_target == null) return null
+  const phases = [...(item.phases ?? [])].sort((a, b) => a.from_week - b.from_week)
+  const active = resolveItemTargets(item, currentWeek)
+  if (active.weekly_target == null) return null
+
+  if (phases.length === 0) {
+    return <span className="tabular-nums">{active.weekly_target}× / week</span>
+  }
+
+  const steps = [
+    { from_week: item.start_week, weekly_target: item.weekly_target },
+    ...phases.map((phase) => ({ from_week: phase.from_week, weekly_target: phase.weekly_target }))
+  ].filter((step) => step.weekly_target != null)
+
+  // The step in force is the last one that has started; with no plan start date
+  // nothing has demonstrably begun, so none is marked current.
+  const currentFrom =
+    currentWeek == null
+      ? null
+      : steps.reduce<number | null>(
+          (found, step) => (step.from_week <= currentWeek ? step.from_week : found),
+          null
+        )
+
   return (
-    <>
-      <span className="tabular-nums">{targets.weekly_target}× / week</span>
-      {next && (
-        <span className="recovery-detail-next-phase tabular-nums">
-          then {next.weekly_target}× from week {next.from_week}
-        </span>
-      )}
-    </>
+    <span className="recovery-detail-schedule" role="list" aria-label={`${item.name} frequency schedule`}>
+      {steps.map((step) => {
+        const isCurrent = step.from_week === currentFrom
+        return (
+          <span
+            key={step.from_week}
+            role="listitem"
+            className={`recovery-detail-schedule-step${isCurrent ? ' recovery-detail-schedule-step--current' : ''}`}
+          >
+            <span className="recovery-detail-schedule-week tabular-nums">W{step.from_week}</span>
+            <span className="recovery-detail-schedule-dose tabular-nums">
+              {step.weekly_target}× / week
+            </span>
+          </span>
+        )
+      })}
+    </span>
   )
 }
 
@@ -112,7 +145,7 @@ export function RecoveryPlanDetail({
                         </div>
                         <span className="recovery-detail-prescription">
                           {statusFor?.(item) && <span>{statusFor(item)}</span>}
-                          <FrequencyLine item={item} currentWeek={currentWeek ?? null} />
+                          <FrequencySchedule item={item} currentWeek={currentWeek ?? null} />
                         </span>
                       </li>
                     )

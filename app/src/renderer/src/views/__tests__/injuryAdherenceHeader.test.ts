@@ -170,3 +170,34 @@ describe('completed-count meter', () => {
     expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*\{\s*\.injury-completed-meter-fill/)
   })
 })
+
+describe('prescribed frequency schedule', () => {
+  const source = readFileSync(new URL('../../components/RecoveryPlanDetail.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../../components/RecoveryPlanDetail.css', import.meta.url), 'utf8')
+  const schedule = source.match(/function FrequencySchedule\([\s\S]*?\n\}\n/)?.[0] ?? ''
+
+  it('renders a ramp as one labelled row per step, built from the item phases', () => {
+    // Prose ("then Nx from week M") read as fixed copy rather than as the
+    // prescription's own structure.
+    expect(schedule).toContain("item.phases ?? []")
+    expect(schedule).toContain('from_week: item.start_week, weekly_target: item.weekly_target')
+    expect(schedule).toContain('recovery-detail-schedule-week')
+    expect(schedule).toContain('recovery-detail-schedule-dose')
+    expect(schedule).not.toContain('then ')
+  })
+
+  it('marks the step in force and leaves later steps present but recessive', () => {
+    expect(schedule).toContain('recovery-detail-schedule-step--current')
+    expect(css).toMatch(/\.recovery-detail-schedule-step\s*\{[^}]*opacity:0\.55/)
+    expect(css).toMatch(/\.recovery-detail-schedule-step--current\s*\{[^}]*opacity:1/)
+  })
+
+  it('marks no step current when the plan has no start date', () => {
+    expect(schedule).toContain('currentWeek == null')
+  })
+
+  it('keeps a flat prescription as a single frequency, with no week scaffolding', () => {
+    expect(schedule).toContain('phases.length === 0')
+    expect(schedule).toContain('{active.weekly_target}× / week')
+  })
+})
