@@ -148,6 +148,59 @@ export const MUSCLE_FATIGUE_PARAMS = {
   // or the exercise's relative-load histories; personalizable after calibration.
   eccentricStimulusMultiplier: 1.25,
 
+  // --- isometric holds (time-counted sets) ---
+  // A held set (gym_sets.duration_s) carries no rep count, so it needs a route
+  // into the same hard-set-equivalent unit as everything else. Before this it
+  // deposited ZERO load: a 45-second wall sit and a rest day were identical to
+  // the model, which is wrong in the harsh direction for a rehab plan built on
+  // isometrics. See knowledge/topics/isometric-load.md for the evidence.
+  iso: {
+    // CHOSEN PRIOR (convention, not a measured equivalence). Seconds of hold
+    // are converted to rep-equivalents at the same ~3 s/rep the app already
+    // assumes when estimating a template's duration (views/gym/gymFormat.ts),
+    // so the two never disagree about what a rep costs in time.
+    //
+    // It cannot be more than a convention: Schoenfeld 2015's meta-analysis
+    // found 0.5-8 s/rep produce SIMILAR hypertrophy, i.e. within dynamic
+    // training the seconds themselves are not the driver — mechanical tension
+    // is. So there is no empirical exchange rate between a second of hold and
+    // a second of dynamic work to look up, only a defensible convention.
+    secondsPerRepEquivalent: 3,
+
+    // CHOSEN PRIOR, grounded in the isometric force-duration relationship
+    // (Rohmert 1960 and its successors): endurance time rises hyperbolically as
+    // %MVC falls, so a hold you can sustain for minutes is necessarily at a low
+    // fraction of maximum. Later seconds are therefore cheaper seconds, and a
+    // linear map would let a 5-minute plank out-fatigue a heavy squat session.
+    // Effective seconds saturate as t -> saturationSeconds * (1 - e^(-t/T)),
+    // the same saturating shape the Zone-2 ambient channel uses.
+    //
+    // At T = 60 s: a 30 s hold counts ~23.6 s, 45 s counts ~31.7 s, 60 s counts
+    // ~37.9 s, and a 5-minute plank asymptotes near 60 s rather than running
+    // away. The model has no %MVIC input, so this stands in for the intensity
+    // the user must have dropped to in order to hold that long.
+    saturationSeconds: 60,
+
+    // CHOSEN PRIOR bracketed by two literatures pulling opposite ways:
+    //  - UPPER BOUND ~1.0: with time-under-tension and intensity equated,
+    //    isometric and dynamic training produce comparable hypertrophy, so a
+    //    hold is not a token stimulus.
+    //  - LOWER BOUND ~0.3: isometric work induces markedly LESS acute
+    //    neuromuscular fatigue than heavy dynamic work. Lum et al. (2023),
+    //    matched exercises, measured IMTP peak force -98.9 N after isometric
+    //    vs -363.3 N after heavy resistance at 5 min (~27%), and by 24 h the
+    //    isometric condition had fully recovered (+37.9 N) while the dynamic
+    //    one had not (-289.2 N). Mechanism: a hold has no lengthening-under-
+    //    load phase, and eccentric actions drive most exercise-induced muscle
+    //    damage.
+    // 0.6 sits above the acute-fatigue ratio deliberately. This model gates
+    // rehab decisions for injured users, where silently
+    // UNDER-counting work done by an injured limb is the more costly error;
+    // n = 10 trained athletes in one acute study is not enough to justify
+    // pushing it down to 0.3.
+    stimulusMultiplier: 0.6
+  },
+
   // --- cardio stimulus ---
   // MARKED PRIOR: no literature scalar. Conservative start so cardio deposits
   // LESS muscle fatigue than lifting per unit; personalizable.
@@ -408,6 +461,36 @@ export function isBodyweightBearing(ex: Exercise | undefined): boolean {
  * weight matters, not the absolute magnitude — inventing per-movement fractions
  * would be unfounded hardcoding.
  */
+/**
+ * Rep-equivalents for a time-counted set, so a hold enters the same hard-set
+ * unit as every dynamic set instead of scoring zero.
+ *
+ * Seconds saturate before conversion: `T·(1 − e^(−t/T))`. The isometric
+ * force–duration relationship is hyperbolic (Rohmert), so the longer a hold
+ * runs the lower the %MVC it can possibly be at — later seconds genuinely cost
+ * less. Without saturation a long plank would out-fatigue a heavy squat
+ * session purely on elapsed time.
+ *
+ * Returns 0 for a non-positive duration so a malformed row deposits nothing
+ * rather than a negative stimulus.
+ */
+export function isometricRepEquivalents(durationSeconds: number): number {
+  const { saturationSeconds, secondsPerRepEquivalent } = MUSCLE_FATIGUE_PARAMS.iso
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0
+  const effectiveSeconds = saturationSeconds * (1 - Math.exp(-durationSeconds / saturationSeconds))
+  return effectiveSeconds / secondsPerRepEquivalent
+}
+
+/**
+ * The dose of one working set in rep-equivalents, whichever measure it carries.
+ * A set is rep-counted or time-counted (DB constraint), never both, so this is
+ * the single place the two become comparable.
+ */
+export function setRepEquivalents(s: Pick<GymSet, 'reps' | 'duration_s'>): number {
+  if (s.duration_s != null) return isometricRepEquivalents(s.duration_s)
+  return s.reps ?? 0
+}
+
 function setLoad(s: GymSet, ex: Exercise | undefined, bodyWeightKg: number): number {
   if (isBodyweightBearing(ex)) return bodyWeightKg + (s.weight_kg ?? 0)
   return s.weight_kg == null ? MUSCLE_FATIGUE_PARAMS.bwProxy : s.weight_kg
@@ -585,8 +668,11 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       if (set.is_warmup) continue
       const ex = exercisesById.get(set.exercise_id)
       if (!ex) continue // custom without muscle metadata -> honest gap, no guess
-      const reps = set.reps ?? 0
+      // Rep-equivalents, so a timed hold contributes on the same scale as a
+      // rep-counted set rather than being skipped for having no reps.
+      const reps = setRepEquivalents(set)
       if (reps <= 0) continue
+      const isIsometric = set.duration_s != null
       const load = setLoad(set, ex, bodyWeight)
 
       // relIntensity = load / ref30 (this set's weight vs the user's recent norm).
@@ -615,12 +701,16 @@ function buildDailyStimulus(input: MuscleFatigueInput): {
       // Eccentric work gets a conservative final-stimulus multiplier. It is
       // deliberately applied after reference/history calculations, leaving
       // ref30, relative intensity, and descriptive set counts unchanged.
-      const sigma =
-        hardSetEquivalent *
-        hardness *
-        loadCoeff *
-        intensityFactor *
-        (set.is_eccentric ? P.eccentricStimulusMultiplier : 1)
+      // A hold has no lengthening-under-load phase, so it deposits less fatigue
+      // than the same time-under-tension of dynamic work. The two multipliers
+      // are mutually exclusive by construction: an isometric set cannot also be
+      // an eccentric one.
+      const contractionFactor = isIsometric
+        ? P.iso.stimulusMultiplier
+        : set.is_eccentric
+          ? P.eccentricStimulusMultiplier
+          : 1
+      const sigma = hardSetEquivalent * hardness * loadCoeff * intensityFactor * contractionFactor
 
       for (const m of ex.primary_muscles) {
         if ((MUSCLES as readonly string[]).includes(m)) deposit(dayKey, m as Muscle, sigma * P.primaryShare)

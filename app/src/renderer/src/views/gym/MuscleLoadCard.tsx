@@ -145,7 +145,9 @@ export function MuscleLoadCard({ result }: { result: MuscleFatigueResult }): Rea
             {period === 'week' ? 'this ISO week' : 'this month'} — 1 per primary muscle, ½ per
             secondary. Fatigue reflects lifting + cardio spillover, weighted by each exercise&apos;s
             load (a barbell compound taxes more than a band drill) and by how the weight compares to
-            your recent norm; decays over days; literature-based, personalizes with your data.
+            your recent norm. Timed holds count too, converted from seconds and discounted — a hold
+            builds without costing the recovery a dynamic set does. Decays over days;
+            literature-based, personalizes with your data.
           </p>
         </>
       )}

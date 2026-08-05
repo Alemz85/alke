@@ -5,6 +5,8 @@ import {
   exerciseLoadCoefficient,
   isBodyweightBearing,
   relIntensityFactor,
+  isometricRepEquivalents,
+  setRepEquivalents,
   fatigueStatus,
   MUSCLE_FATIGUE_PARAMS,
   type MuscleFatigueInput,
@@ -1318,5 +1320,191 @@ describe('realistic training week (mock-data scenario)', () => {
     )
     console.log('\n[scenario] Muscle load & fatigue — Sun 2026-07-12, aerobic base 45:\n' + lines.join('\n') + '\n')
     expect(ranked.length).toBe(6)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Isometric holds. Time-counted sets used to deposit ZERO fatigue — a 45-second
+// wall sit and a rest day were identical to the model, which is the wrong
+// direction for a rehab plan built on isometrics.
+// ---------------------------------------------------------------------------
+
+const WALL_SIT = exercise({
+  id: 'wall-sit',
+  name: 'Wall Sit',
+  body_part: 'legs',
+  primary_muscles: ['quadriceps'],
+  secondary_muscles: ['glutes'],
+  equipment: 'bodyweight',
+  mechanics: 'isolation',
+  movement_pattern: 'squat'
+})
+
+describe('isometricRepEquivalents', () => {
+  it('converts a hold to rep-equivalents on the documented saturating curve', () => {
+    // T·(1 − e^(−t/T)) / secondsPerRep, T = 60 s, 3 s/rep.
+    expect(isometricRepEquivalents(30)).toBeCloseTo(7.869, 2)
+    expect(isometricRepEquivalents(45)).toBeCloseTo(10.553, 2)
+    expect(isometricRepEquivalents(60)).toBeCloseTo(12.642, 2)
+  })
+
+  it('is monotonic in duration — a longer hold never counts for less', () => {
+    const durations = [5, 15, 30, 45, 60, 90, 120, 300, 900]
+    const values = durations.map(isometricRepEquivalents)
+    for (let i = 1; i < values.length; i++) {
+      expect(values[i]).toBeGreaterThan(values[i - 1])
+    }
+  })
+
+  it('saturates, so a very long hold cannot run away with the load budget', () => {
+    // Rohmert: a hold sustainable for minutes is necessarily at a low %MVC, so
+    // later seconds are cheaper. Linear would make a 5-min plank 100 reps.
+    const asymptote = MUSCLE_FATIGUE_PARAMS.iso.saturationSeconds /
+      MUSCLE_FATIGUE_PARAMS.iso.secondsPerRepEquivalent
+    expect(isometricRepEquivalents(300)).toBeLessThan(asymptote)
+    // An hour-long hold is numerically AT the asymptote, never past it.
+    expect(isometricRepEquivalents(3600)).toBeLessThanOrEqual(asymptote)
+    // A 5-minute plank stays under two nominal 10-rep sets' worth.
+    expect(isometricRepEquivalents(300)).toBeLessThan(20)
+  })
+
+  it('is near-linear at short durations, where saturation has barely bitten', () => {
+    const linear = 10 / MUSCLE_FATIGUE_PARAMS.iso.secondsPerRepEquivalent
+    expect(isometricRepEquivalents(10)).toBeGreaterThan(linear * 0.9)
+    expect(isometricRepEquivalents(10)).toBeLessThan(linear)
+  })
+
+  it('returns 0 for a non-positive or malformed duration rather than negative load', () => {
+    expect(isometricRepEquivalents(0)).toBe(0)
+    expect(isometricRepEquivalents(-30)).toBe(0)
+    expect(isometricRepEquivalents(Number.NaN)).toBe(0)
+  })
+})
+
+describe('setRepEquivalents', () => {
+  it('reads a rep-counted set by its reps', () => {
+    expect(setRepEquivalents({ reps: 8, duration_s: null })).toBe(8)
+  })
+
+  it('reads a time-counted set through the hold conversion', () => {
+    expect(setRepEquivalents({ reps: null, duration_s: 45 })).toBeCloseTo(10.553, 2)
+  })
+
+  it('treats a set carrying neither measure as no dose', () => {
+    expect(setRepEquivalents({ reps: null, duration_s: null })).toBe(0)
+  })
+})
+
+describe('isometric holds in the fatigue model', () => {
+  const asOf = new Date('2026-07-12T20:00:00.000Z')
+  const holdInput = (durationS: number): MuscleFatigueInput =>
+    baseInput({
+      sessions: [
+        session('2026-07-12T09:00:00.000Z', [
+          set({ exercise_id: 'wall-sit', reps: null, duration_s: durationS, weight_kg: null })
+        ])
+      ],
+      exercisesById: mapOf(WALL_SIT),
+      asOf
+    })
+
+  it('deposits real quadriceps load — the zero-load bug this fixes', () => {
+    const res = computeMuscleFatigue(holdInput(45))
+    expect(muscleDetail(groupBy(res, 'legs'), 'quadriceps').fatigue).toBeGreaterThan(0)
+  })
+
+  it('scales with hold duration', () => {
+    const short = muscleDetail(groupBy(computeMuscleFatigue(holdInput(20)), 'legs'), 'quadriceps')
+    const long = muscleDetail(groupBy(computeMuscleFatigue(holdInput(60)), 'legs'), 'quadriceps')
+    expect(long.fatigue).toBeGreaterThan(short.fatigue)
+  })
+
+  it('costs less than dynamic work of the same rep-equivalent dose', () => {
+    // A hold has no lengthening-under-load phase; eccentric actions drive most
+    // exercise-induced damage, and isometric sessions recover markedly faster.
+    const holdReps = isometricRepEquivalents(45)
+    const hold = computeMuscleFatigue(holdInput(45))
+    const dynamic = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          session('2026-07-12T09:00:00.000Z', [
+            set({ exercise_id: 'wall-sit', reps: holdReps, duration_s: null, weight_kg: null })
+          ])
+        ],
+        exercisesById: mapOf(WALL_SIT),
+        asOf
+      })
+    )
+    const holdFatigue = muscleDetail(groupBy(hold, 'legs'), 'quadriceps').fatigue
+    const dynamicFatigue = muscleDetail(groupBy(dynamic, 'legs'), 'quadriceps').fatigue
+    expect(holdFatigue).toBeLessThan(dynamicFatigue)
+    // Near the stimulus multiplier, not exactly it: fatigue is a saturating
+    // function of deposited stimulus, so the ratio of outcomes is slightly
+    // compressed relative to the ratio of inputs.
+    expect(holdFatigue / dynamicFatigue).toBeCloseTo(MUSCLE_FATIGUE_PARAMS.iso.stimulusMultiplier, 1)
+  })
+
+  it('still counts as one working set in descriptive volume', () => {
+    // The set-count layer was never rep-based, so a hold has always been a set
+    // there — the discount applies to the fatigue stimulus only.
+    const res = computeMuscleFatigue(holdInput(45))
+    expect(groupBy(res, 'legs').volumeWeekSets).toBeGreaterThan(0)
+  })
+
+  it('credits secondary muscles at the usual share', () => {
+    const legs = groupBy(computeMuscleFatigue(holdInput(45)), 'legs')
+    const quads = muscleDetail(legs, 'quadriceps').fatigue
+    const glutes = muscleDetail(legs, 'glutes').fatigue
+    expect(glutes).toBeGreaterThan(0)
+    expect(glutes).toBeLessThan(quads)
+  })
+
+  it('does not double-count an eccentric flag on a hold', () => {
+    // A hold cannot also be an eccentric action; the isometric factor wins.
+    const plain = computeMuscleFatigue(holdInput(45))
+    const flagged = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          session('2026-07-12T09:00:00.000Z', [
+            set({
+              exercise_id: 'wall-sit',
+              reps: null,
+              duration_s: 45,
+              weight_kg: null,
+              is_eccentric: true
+            })
+          ])
+        ],
+        exercisesById: mapOf(WALL_SIT),
+        asOf
+      })
+    )
+    expect(muscleDetail(groupBy(flagged, 'legs'), 'quadriceps').fatigue).toBeCloseTo(
+      muscleDetail(groupBy(plain, 'legs'), 'quadriceps').fatigue,
+      10
+    )
+  })
+
+  it('leaves a plank-length hold well below a heavy compound session', () => {
+    // The saturation guard, end to end: 5 minutes of core holds must not
+    // out-fatigue five heavy squat sets.
+    const plank = computeMuscleFatigue(holdInput(300))
+    const squats = computeMuscleFatigue(
+      baseInput({
+        sessions: [
+          session(
+            '2026-07-12T09:00:00.000Z',
+            Array.from({ length: 5 }, () =>
+              set({ exercise_id: 'wall-sit', reps: 10, duration_s: null, weight_kg: null })
+            )
+          )
+        ],
+        exercisesById: mapOf(WALL_SIT),
+        asOf
+      })
+    )
+    expect(muscleDetail(groupBy(plank, 'legs'), 'quadriceps').fatigue).toBeLessThan(
+      muscleDetail(groupBy(squats, 'legs'), 'quadriceps').fatigue
+    )
   })
 })
