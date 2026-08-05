@@ -14,6 +14,8 @@ import {
   type GymBodyPart,
   type InsightCorrelation,
   type InsightModel,
+  type BloodMarker,
+  type BloodPanel,
   type ChatMessage,
   type ChatSession,
   type ChatSessionMeta,
@@ -610,6 +612,54 @@ function assertUuid(id: unknown, label: string): void {
 
 function assertDate(date: unknown, label: string): void {
   if (typeof date !== 'string' || !DATE_RE.test(date)) throw new Error(`invalid ${label}`)
+}
+
+const BLOOD_PANEL_COLUMNS =
+  'id, collected_on, lab, panel_name, source_file, notes, created_at, updated_at'
+const BLOOD_MARKER_COLUMNS =
+  'id, panel_id, code, label_raw, category, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, method, position'
+const BLOOD_MARKER_NUMERIC_KEYS: (keyof BloodMarker)[] = [
+  'value_num',
+  'ref_low',
+  'ref_high',
+  'position'
+]
+
+// Read-only: blood panels are written exclusively by scripts/import_blood_panel.py
+// from a reviewed JSON transcription of a lab report, never by the app. Newest
+// panel first, markers in the order the report printed them (which groups related
+// analytes — the report's own ordering is meaningful).
+export async function getBloodPanels(): Promise<BloodPanel[]> {
+  const supabase = getClient()
+
+  const { data: panels, error: panelError } = await supabase
+    .from('blood_panels')
+    .select(BLOOD_PANEL_COLUMNS)
+    .order('collected_on', { ascending: false })
+  if (panelError) throw new Error(`getBloodPanels: ${panelError.message}`)
+
+  const rows = (panels ?? []) as Omit<BloodPanel, 'markers'>[]
+  if (rows.length === 0) return []
+
+  const { data: markers, error: markerError } = await supabase
+    .from('blood_markers')
+    .select(BLOOD_MARKER_COLUMNS)
+    .in(
+      'panel_id',
+      rows.map((p) => p.id)
+    )
+    .order('position', { ascending: true })
+  if (markerError) throw new Error(`getBloodPanels markers: ${markerError.message}`)
+
+  const byPanel = new Map<string, BloodMarker[]>()
+  for (const raw of markers ?? []) {
+    const marker = normalizeNumeric(raw as BloodMarker, BLOOD_MARKER_NUMERIC_KEYS)
+    const list = byPanel.get(marker.panel_id)
+    if (list) list.push(marker)
+    else byPanel.set(marker.panel_id, [marker])
+  }
+
+  return rows.map((panel) => ({ ...panel, markers: byPanel.get(panel.id) ?? [] }))
 }
 
 // Read-only: injuries/injury_notes are written exclusively by the chat agent's

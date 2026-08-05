@@ -31,6 +31,7 @@ import {
   type Achievement
 } from '../lib/profileStats'
 import { applyGoalPatch, isQueuedWriteReceipt, replaceById } from '../lib/optimisticEntities'
+import { BloodPanelsSection } from './profile/BloodPanelsSection'
 import './ProfileView.css'
 
 const ABOUT_ME_MAX = 5000
@@ -1163,6 +1164,7 @@ export function ProfileView(): ReactElement {
         <>
           <StatsRow workouts={workouts} now={now} />
           <AchievementsSection workouts={workouts} now={now} />
+          <BloodPanelsSection now={now} />
         </>
       )}
     </div>

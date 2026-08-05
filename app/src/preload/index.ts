@@ -26,6 +26,7 @@ const api: HealthApi = {
   getUserConfig: () => ipcRenderer.invoke(IPC_CHANNELS.getUserConfig),
   updateUserConfig: (patch) => ipcRenderer.invoke(IPC_CHANNELS.updateUserConfig, patch),
   getTodayFlags: () => ipcRenderer.invoke(IPC_CHANNELS.getTodayFlags),
+  getBloodPanels: () => ipcRenderer.invoke(IPC_CHANNELS.getBloodPanels),
   getInjuries: () => ipcRenderer.invoke(IPC_CHANNELS.getInjuries),
   getInjuryLog: (injuryId) => ipcRenderer.invoke(IPC_CHANNELS.getInjuryLog, injuryId),
   addInjuryLog: (entry) => ipcRenderer.invoke(IPC_CHANNELS.addInjuryLog, entry),

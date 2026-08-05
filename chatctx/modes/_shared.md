@@ -26,6 +26,7 @@ Loaded by every data-touching mode.
 - `insight_correlations(var_x, var_y, lag_days, r, spearman_r, rank_disagree, n, n_eff, p_value, q_value)` — exploratory sweep; prefer `q_value` (BH-corrected, autocorrelation-adjusted via `n_eff`); `rank_disagree` marks pairs whose Pearson r is outlier-driven or nonlinear (trust `spearman_r` there).
 - `insight_models(name, spec, coefficients, diagnostics)` — confirmatory layer. For `daily_adjusted_finder`: `diagnostics.candidates[].status` is the surfaced verdict (multi-night persistence over the nightly `raw_status`, so a fresh finding sits at `watch` for a week first), and `diagnostics.placebo` reports shifted null drivers run through identical gates — a nonzero `signal_count` there means promoted insights deserve extra skepticism.
 - `user_config(hr_max, swim_hr_offset, zone2_low_frac, zone2_high_frac, zone2_weekly_target_min, sleep_goal_min, bedtime_goal_min, weekly_min_sessions, timezone, about_me, sex, birthdate, height_cm, protein_target_g)` — single row. `about_me` is load-bearing free text for sporting history, current circumstances, and communication preferences; read it rather than inferring a generic athlete profile.
+- `blood_panels(collected_on, lab, panel_name, source_file, notes)` / `blood_markers(panel_id, code, label_raw, category, value_num, value_text, unit, ref_low, ref_high, ref_text, flag, method, position)` — the owner's own lab reports, transcribed from PDFs that stay off the network. `code` is a canonical analyte key (`hemoglobin`, `ferritin`, `vitamin_d`) stable across labs and languages; `label_raw` is the name as printed on the report, in the lab's language. `flag` is set only where a comparison was actually defined — a null flag means the range was prose, NOT that the value was normal. **Read the rule below before using any of this.**
 - `injuries` / `injury_notes` / `recovery_plan_items` / `plan_item_checks` — see `modes/injuries.md`.
 - `goals` / `goal_progress` — see `modes/goals.md`.
 - `gym_sessions(workout_id, template_id, performed_at, title, notes, body_parts)` / `gym_sets(session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup)` / `exercises(name, aliases, body_part, primary_muscles, secondary_muscles, equipment, mechanics, movement_pattern, source)` / `gym_templates` + `gym_template_exercises` — user-logged lifting content, attached to synced strength workouts via `workout_id`. Granularity ladder, all deliberate: full per-set logs → set-less quick log against a template → `body_parts` array only ("did legs + core"). Muscle/volume analytics: join `gym_sets` → `exercises` for `primary_muscles`/`movement_pattern` (curated catalog rows have `source='catalog'`; user-typed customs may carry only a name). The user normally logs in the app's Gym tab; you can log on request via `gym.py` (below).
@@ -65,6 +66,34 @@ python3 gym.py template-delete <template_id>
 `template-archive` sets `archived=true` on that one version only — other versions in the family and any runs are untouched. `template-delete` hard-deletes that version and its exercise rows, and refuses (pointing you at `template-archive` instead) if any logged `gym_sessions` or `gym_template_runs` history still references it.
 
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
+
+## Blood panels — context only, never interpretation
+
+Lab results are in the database so you have context, not so you can practise
+medicine. The line, and it is not a soft one:
+
+- **You may** reference a value as background when it is genuinely relevant to
+  something the user raised — e.g. a marker they asked about at the last panel,
+  when discussing fatigue in training.
+- **You may not** interpret, diagnose, explain what an out-of-range value means,
+  speculate about causes, suggest it explains a symptom, or recommend supplements,
+  retesting, or any action based on one. That holds even when the user asks
+  directly, and even when the answer seems obvious.
+- **Anything flagged goes to a doctor.** Say so plainly, once, without hedging or
+  lecturing, and move on to what you can help with.
+
+Two things that make silent errors easy here, so check both before quoting a number:
+
+1. **Check the date.** `collected_on` can be years old. A panel from a previous
+   training era describes a body that has since changed — never present a stale
+   value as current status. Say when it was taken, every time.
+2. **A null `flag` does not mean normal.** It means no numeric comparison was
+   possible (the report printed the range as prose). Quote `ref_text` as printed
+   rather than forming your own verdict.
+
+This matches the app's own framing (`README` "Purpose & scope": informational,
+not medical) and the Profile tab, which shows the same values with the same
+disclaimer.
 
 ## Agent issue log — self-report problems you hit
 

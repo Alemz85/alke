@@ -1,0 +1,182 @@
+/* Blood panels — a quiet reference table. Deliberately low-chrome: these are
+   clinical numbers to read, not metrics to optimize, so nothing here uses the
+   accent/celebration treatment the training surfaces do. DESIGN.md tokens only. */
+
+.blood-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.blood-panel {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.blood-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: none;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.blood-panel-head:hover {
+  background: var(--color-surface-hover);
+}
+
+.blood-panel-head:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+
+.blood-panel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.blood-panel-name {
+  font-family: var(--font-body);
+  font-size: var(--type-body-md-size);
+}
+
+.blood-panel-meta,
+.blood-panel-age,
+.blood-panel-count {
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+/* Staleness is a correctness signal, not decoration: a three-year-old panel
+   read as current is the failure mode this label exists to prevent. */
+.blood-panel-age {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.blood-panel-count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.blood-panel-flagged {
+  color: var(--color-flag);
+}
+
+.blood-panel-body {
+  padding: 0 var(--space-md) var(--space-md);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.blood-group + .blood-group {
+  margin-top: var(--space-md);
+}
+
+.blood-group-title {
+  margin: var(--space-sm) 0 var(--space-xs);
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+
+/* Reference strings are long and varied ("deficient <20 · insufficient 20-30 ·
+   sufficient 30-100 ng/ml"), so the table scrolls inside its own box rather
+   than pushing the page sideways. */
+.blood-group {
+  overflow-x: auto;
+}
+
+.blood-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: var(--type-body-sm-size);
+  /* Fixed layout with explicit widths: each category renders its OWN table, so
+     content-based sizing let every group pick different column widths and the
+     section read as ragged. These four add to 100%. */
+  table-layout: fixed;
+}
+
+.blood-table th:nth-child(1) { width: 38%; }
+.blood-table th:nth-child(2) { width: 20%; }
+.blood-table th:nth-child(3) { width: 32%; }
+.blood-table th:nth-child(4) { width: 10%; }
+
+.blood-table th,
+.blood-table td {
+  padding: 6px var(--space-xs);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.blood-table thead th {
+  font-weight: 400;
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.blood-row + .blood-row .blood-cell-name,
+.blood-row + .blood-row td {
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.blood-cell-name {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.blood-cell-value {
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.blood-unit {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.blood-cell-ref {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.blood-row--flagged .blood-cell-value {
+  color: var(--color-flag);
+}
+
+.blood-flag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption-size);
+  text-transform: lowercase;
+  background: var(--color-flag-dim);
+  color: var(--color-flag);
+  border: 1px solid var(--color-flag);
+}
+
+.blood-panel-notes,
+.blood-disclaimer {
+  margin-top: var(--space-sm);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.blood-disclaimer {
+  max-width: 62ch;
+}

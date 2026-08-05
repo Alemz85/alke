@@ -244,6 +244,7 @@ function registerIpcHandlers(): void {
     updateDockBadge(flags)
     return flags
   })
+  ipcMain.handle(IPC_CHANNELS.getBloodPanels, () => db.getBloodPanels())
   ipcMain.handle(IPC_CHANNELS.getInjuries, () => db.getInjuries())
   ipcMain.handle(IPC_CHANNELS.getInjuryLog, (_event, injuryId: string) => db.getInjuryLog(injuryId))
   ipcMain.handle(IPC_CHANNELS.addInjuryLog, (_event, entry: NewInjuryLog) =>

@@ -177,6 +177,45 @@ export interface DbStatus {
   error?: string
 }
 
+// Blood panels / lab reports (migration 20260805010000_blood_panels.sql). The
+// source PDFs never leave the owner's disk — only extracted results are stored,
+// so nothing here carries an identifier. Read-only in the app: panels are
+// imported by scripts/import_blood_panel.py from a reviewed JSON transcription.
+export interface BloodMarker {
+  id: string
+  panel_id: string
+  /** Canonical analyte key ('hemoglobin', 'ferritin') — stable across labs and languages. */
+  code: string
+  /** The analyte name exactly as the report printed it, e.g. 'HGB'. */
+  label_raw: string
+  category: string | null
+  value_num: number | null
+  /** Set when the result isn't a plain number, e.g. '< 0.4'. Prefer it for display. */
+  value_text: string | null
+  unit: string | null
+  ref_low: number | null
+  ref_high: number | null
+  /** The reference range as printed. Always shown — many ranges are prose, not bounds. */
+  ref_text: string | null
+  /** Null when no comparison was possible; never guessed. */
+  flag: 'low' | 'normal' | 'high' | 'abnormal' | null
+  method: string | null
+  position: number
+}
+
+export interface BloodPanel {
+  id: string
+  /** Sample/accession date — the axis panels are ordered and trended on. */
+  collected_on: string
+  lab: string | null
+  panel_name: string
+  source_file: string | null
+  notes: string | null
+  created_at: string | null
+  updated_at: string | null
+  markers: BloodMarker[]
+}
+
 export interface Injury {
   id: string
   name: string
@@ -589,6 +628,7 @@ export interface HealthApi {
   getUserConfig(): Promise<UserConfig>
   updateUserConfig(patch: UserConfigPatch): Promise<QueueableWriteResult<UserConfig>>
   getTodayFlags(): Promise<Flag[]>
+  getBloodPanels(): Promise<BloodPanel[]>
   getInjuries(): Promise<Injury[]>
   getInjuryLog(injuryId: string): Promise<InjuryLogEntry[]>
   addInjuryLog(entry: NewInjuryLog): Promise<QueueableWriteResult<InjuryLogEntry>>
@@ -690,6 +730,7 @@ export const IPC_CHANNELS = {
   getUserConfig: 'db:getUserConfig',
   updateUserConfig: 'db:updateUserConfig',
   getTodayFlags: 'db:getTodayFlags',
+  getBloodPanels: 'db:getBloodPanels',
   getInjuries: 'db:getInjuries',
   getInjuryLog: 'db:getInjuryLog',
   addInjuryLog: 'db:addInjuryLog',

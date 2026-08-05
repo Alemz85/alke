@@ -58,3 +58,9 @@ knowledge/
 # name and any copy placed under data/.
 *runkeeper-data-export*/
 /data/runkeeper/
+
+# Medical records (blood panels, lab reports). Source PDFs carry name/DOB and
+# never belong in git — even a private remote, since history is forever. The
+# extracted RESULTS live in the database like every other health fact; these
+# files stay local. See TODO.md "Blood panels".
+/Health/
