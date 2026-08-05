@@ -1174,6 +1174,99 @@
   background: var(--color-flag-dim);
 }
 
+/* Completed cell: the count, plus a meter reading it against the prescribed
+   dose. The fill inherits the row's rating colour, so the bar can never
+   contradict the row tint or the status label. */
+.injury-completed-meter {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 88px;
+}
+
+.injury-completed-meter-value {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.injury-completed-meter-of {
+  color: var(--color-text-tertiary);
+}
+
+.injury-completed-meter-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-zone-neutral-1);
+  overflow: hidden;
+}
+
+.injury-completed-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+  transition: width var(--motion-chart);
+}
+
+/* Threshold marks at minimum and acceptable — the two columns to the right,
+   placed where they actually fall on the way to the full dose. */
+.injury-completed-meter-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-canvas);
+  opacity: 0.9;
+}
+
+.injury-current-week-scorecard-row--met .injury-completed-meter-fill {
+  background: var(--color-aerobic);
+}
+
+.injury-current-week-scorecard-row--low .injury-completed-meter-fill {
+  background: var(--color-sessions);
+}
+
+.injury-current-week-scorecard-row--none .injury-completed-meter-fill {
+  background: var(--color-flag);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .injury-completed-meter-fill {
+    transition: none;
+  }
+}
+
+/* Later-phase items: listed, but deliberately out of the scored table. */
+.injury-current-week-upcoming {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0 0;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.injury-current-week-upcoming-label {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.injury-current-week-upcoming-item:not(:last-child)::after {
+  content: '·';
+  margin-left: var(--space-xs);
+  opacity: 0.5;
+}
+
 .injury-scorecard-status {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1194,14 +1287,8 @@
 }
 
 .injury-scorecard-status--progress,
-.injury-scorecard-status--unscored,
-.injury-scorecard-status--future {
+.injury-scorecard-status--unscored {
   color: var(--color-text-tertiary);
-}
-
-.injury-scorecard-status--future span + span::before {
-  content: '·';
-  margin-right: var(--space-xxs);
 }
 
 .injury-adh-wrap {

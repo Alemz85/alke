@@ -57,18 +57,45 @@ export function groupExerciseBlocksByBodyPart(
   return groups
 }
 
-/** Compact working-set prescription for a collapsed exercise disclosure. */
+/**
+ * Compact working-set prescription for a collapsed exercise disclosure. Reads a
+ * time-counted block as a hold ("3 × 45s") — the dose measure comes from the
+ * sets themselves, so a block of holds never summarises as a rep count.
+ */
 export function formatExerciseSetSummary(sets: GymSet[]): string {
   const working = sets.filter((set) => !set.is_warmup)
   if (working.length === 0) return 'Warm-up only'
-  const reps = working.map((set) => set.reps)
-  if (reps.every((value) => value != null && value === reps[0])) {
-    return `${working.length} × ${reps[0]}`
+  const timed = working.every((set) => set.duration_s != null)
+  const doses = working.map((set) => (timed ? set.duration_s : set.reps))
+  const unit = (value: number | null): string => (timed ? `${value}s` : String(value))
+  if (doses.every((value) => value != null && value === doses[0])) {
+    return `${working.length} × ${unit(doses[0])}`
   }
-  if (reps.every((value) => value != null)) {
-    return `${working.length} sets · ${reps.join(' / ')}`
+  if (doses.every((value) => value != null)) {
+    return `${working.length} sets · ${doses.map(unit).join(' / ')}`
   }
   return `${working.length} ${working.length === 1 ? 'set' : 'sets'}`
+}
+
+/**
+ * Column label for a block's dose: "Hold" when every working set is
+ * time-counted, else "Reps". The cell values carry their own unit, so this is
+ * about the header not contradicting the column beneath it.
+ */
+export function setDoseLabel(sets: Pick<GymSet, 'duration_s' | 'is_warmup'>[]): string {
+  const working = sets.filter((set) => !set.is_warmup)
+  const measured = working.length > 0 ? working : sets
+  return measured.length > 0 && measured.every((set) => set.duration_s != null) ? 'Hold' : 'Reps'
+}
+
+/**
+ * One logged set's dose for a table cell: "8" for reps, "45s" for a hold, and
+ * the caller's blank otherwise. The unit is carried in the value so a timed set
+ * reads correctly even under a column headed "Reps".
+ */
+export function formatSetDose(set: Pick<GymSet, 'reps' | 'duration_s'>, blank = '—'): string {
+  if (set.duration_s != null) return `${set.duration_s}s`
+  return set.reps != null ? String(set.reps) : blank
 }
 
 /** Sum of reps × weight_kg over non-warmup sets where both are non-null. */
@@ -149,7 +176,9 @@ export function summarizeSession(session: GymSession, templateName: string | nul
 export interface PrefillSetRow {
   exerciseId: string
   exerciseName: string
+  /** One dose measure per row: reps OR a held duration, never both. */
   reps: number | null
+  durationS?: number | null
   weightKg: number | null
   isWarmup: boolean
   /** Session-only context. Templates and quick generators leave these blank. */
@@ -195,6 +224,11 @@ export function buildQuickSetRows(
  * (default 3 when target_sets is null), each prefilled with the item's
  * target_reps / target_weight_kg (null-safe — a target left blank prefills
  * blank, never a fabricated number).
+ *
+ * A time-counted item (target_duration_seconds) still contributes its set rows,
+ * with reps left blank: gym_sets records reps, and stamping "1" for a 45-second
+ * hold would log a rep count that never happened. The prescribed hold stays on
+ * the template, which is where it is read from.
  */
 export function prefillFromTemplate(template: GymTemplate): PrefillSetRow[] {
   const rows: PrefillSetRow[] = []
@@ -205,6 +239,7 @@ export function prefillFromTemplate(template: GymTemplate): PrefillSetRow[] {
         exerciseId: item.exercise_id,
         exerciseName: item.exercise_name,
         reps: item.target_reps,
+        durationS: item.target_duration_seconds,
         weightKg: item.target_weight_kg,
         isWarmup: false
       })
@@ -244,12 +279,16 @@ export function lastPerformance(
   return null
 }
 
-/** "8×80 · 8×80 · 8×77.5" — compact reps×kg rendering of a working-set list ("×12" when weight is blank = bodyweight). */
+/**
+ * "8×80 · 8×80 · 8×77.5" — compact reps×kg rendering of a working-set list
+ * ("×12" when weight is blank = bodyweight). A time-counted set renders its
+ * hold ("45s×bw") rather than the '?' an absent rep count would otherwise show.
+ */
 export function formatSetLine(sets: GymSet[]): string {
   return sets
     .map((s) => {
-      const reps = s.reps ?? '?'
-      return s.weight_kg === null ? `${reps}×bw` : `${reps}×${s.weight_kg}`
+      const dose = s.duration_s != null ? `${s.duration_s}s` : (s.reps ?? '?')
+      return s.weight_kg === null ? `${dose}×bw` : `${dose}×${s.weight_kg}`
     })
     .join(' · ')
 }
@@ -326,6 +365,7 @@ export function blocksToNewSets(blocks: { exerciseId: string; sets: PrefillSetRo
       out.push({
         exercise_id: block.exerciseId,
         reps: row.reps,
+        duration_s: row.durationS ?? null,
         weight_kg: row.weightKg,
         rpe: row.rpe ?? null,
         note: row.note?.trim() || null,

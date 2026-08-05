@@ -6,12 +6,20 @@
 directly with the service key. Stdlib only; credentials come from ./.env when
 present, else the process environment (same resolution as db.py / injuries.py).
 
+These subcommands are FAST PATHS for the common operations, not the boundary of
+what may be done to this data. `--help` on any of them is authoritative over any
+prose describing it, including this docstring; read the source when the two
+disagree, and say so rather than reshaping a request to fit an existing verb.
+
 Subcommands:
   list           [--days 30]              recent gym sessions with set summaries
   log            --json '<payload>'       create a session (sets expand from schemes), prints its id
   delete         <session_id>             remove a mis-logged session (cascades its sets; retracts
                                            any source='gym' plan_item_checks it produced — see
                                            remove_gym_plan_checks_for_session)
+  exercise-list  [--query ..] [--source ..] [--incomplete]   search the exercise catalog
+  exercise-add   --name ".." [attrs]      add a COMPLETE catalog row
+  exercise-update <name|id> [attrs]       enrich/correct one catalog row (patches only what you pass)
   template-list                           list reusable Gym templates
   template-apply --file <plan.json>       validate + idempotently apply named templates
   template-archive <template_id>          archive a single template version (runs/other versions untouched)
@@ -19,6 +27,13 @@ Subcommands:
   run-start      <template_id>            start/resurrect a run on that template version
   run-complete   <template_id>            close the family's open run
   create-version <base_template_id> --file <plan.json>  save a new version of a template family
+
+Catalog attrs (shared by exercise-add / exercise-update, and by the "create"
+opt-in inside the log and template documents): --body-part, --primary-muscles,
+--secondary-muscles, --equipment, --mechanics, --movement-pattern, --aliases.
+Fill primary_muscles whenever you know it: the muscle/volume analytics join
+gym_sets → exercises on it, so a row with an empty muscle array is silently
+excluded from them — no error, just a body part that under-reports.
 
 Non-atomicity caveat: this hits PostgREST directly, one HTTP request per
 statement, with no cross-request transactions. Two multi-step sequences can
@@ -56,7 +71,10 @@ leave the DB mid-way through a logical operation if a later step fails:
     "sets": [                          // optional; [] + body_parts = quick log
       {"exercise": "back squat", "sets": 3, "reps": 8, "kg": 80},
       {"exercise": "lat machine", "reps": 12},              // one set; kg omitted = bodyweight
-      {"exercise": "heel walk", "warmup": true, "create": true}  // create allows a new custom exercise
+      {"exercise": "wall sit", "sets": 3, "secs": 45},      // a HOLD, not "1 rep"
+      {"exercise": "heel walk", "warmup": true, "create": true,   // create mints a catalog row
+       "body_part": "legs", "primary_muscles": ["tibialis"],      // …fill it in while you are here
+       "equipment": "bodyweight", "mechanics": "isolation", "movement_pattern": "carry"}
     ]
   }
 Exercise names resolve case-insensitively against the catalog (aliases work).
@@ -76,10 +94,22 @@ logs the same exercise (see remove_gym_plan_checks_for_session).
       "default_rest_s": 90,             // optional; template-level DEFAULT rest between sets, seconds
       "exercises": [
         {"exercise": "back squat", "sets": 3, "reps": 8, "kg": 80, "note": "Leave 2 in reserve."},
-        {"exercise": "leg press", "sets": 3, "reps": 10, "kg": 120, "rest_after_s": 180}
+        {"exercise": "leg press", "sets": 3, "reps": 10, "kg": 120, "rest_after_s": 180},
+        {"exercise": "wall sit", "sets": 3, "secs": 45},        // a HOLD, not "1 rep"
+        {"exercise": "pelvic drop", "sets": 3, "reps": 10, "create": true,  // mint + describe
+         "body_part": "legs", "primary_muscles": ["glutes"], "equipment": "bodyweight",
+         "mechanics": "isolation", "movement_pattern": "hinge"}
       ]
     }]
   }
+Each exercise takes exactly ONE dose measure: "reps" (1-500) or "secs" (1-3600)
+for a prescribed hold. A timed exercise must never be encoded as 1 rep. `create`
+works here exactly as it does in `log` — a template write can mint the catalog
+row it needs, with the same optional metadata, instead of failing because a
+physio-prescribed movement isn't catalogued yet. Passing catalog metadata
+WITHOUT "create": true is an error (use `exercise-update` to edit an existing
+row) — this keeps a typo from silently rewriting a real catalog entry.
+
 `default_rest_s` is the STANDARD for the template: set it once. Only add a
 per-exercise "rest_after_s" override when that exercise genuinely needs
 different rest than the template default (e.g. a heavy compound needs longer,
@@ -128,6 +158,98 @@ import zoneinfo
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 BODY_PARTS = ("chest", "back", "shoulders", "arms", "legs", "core", "full body")
 
+# Catalog vocabularies — these mirror the CHECK constraints on `exercises`
+# (supabase/migrations/20260713010000_gym_exercise_catalog.sql, extended with
+# 'tibialis' by 20260722120000). Validated here so a bad value fails with a
+# readable list instead of a raw Postgres constraint violation. If the DB vocab
+# changes, this list is the thing to re-sync.
+MUSCLES = (
+    "chest", "lats", "upper back", "traps", "lower back", "front delts", "side delts",
+    "rear delts", "biceps", "triceps", "forearms", "quadriceps", "hamstrings", "glutes",
+    "calves", "tibialis", "adductors", "abductors", "hip flexors", "abs", "obliques",
+)
+EQUIPMENT = (
+    "barbell", "dumbbell", "kettlebell", "machine", "cable", "bodyweight", "band",
+    "smith machine", "ez bar", "trap bar", "other",
+)
+MECHANICS = ("compound", "isolation")
+MOVEMENT_PATTERNS = (
+    "squat", "hinge", "lunge", "horizontal push", "vertical push", "horizontal pull",
+    "vertical pull", "carry", "core", "rotation", "isolation",
+)
+
+# Catalog columns an agent may set, beyond the name. Empty muscle arrays are the
+# silent failure this vocabulary exists to prevent: a row with no
+# primary_muscles joins to nothing in the muscle/volume analytics, so it
+# disappears from them without any error.
+EXERCISE_ATTR_KEYS = (
+    "body_part", "primary_muscles", "secondary_muscles", "equipment", "mechanics",
+    "movement_pattern", "aliases",
+)
+
+
+def _one_of(value, valid: tuple, label: str):
+    """Validate a scalar catalog field against its vocabulary. None passes."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in valid:
+        sys.exit(f"invalid {label} {value!r} — valid: {', '.join(valid)}")
+    return value
+
+
+def _string_list(value, valid: tuple | None, label: str) -> list[str] | None:
+    """Validate a text[] catalog field (muscles, aliases). None passes; [] is a
+    meaningful value (explicitly clearing the list)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [part.strip() for part in value.split(",") if part.strip()]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        sys.exit(f"invalid {label} — expected a list of strings")
+    cleaned = [v.strip() for v in value if v.strip()]
+    if valid is not None:
+        unknown = [v for v in cleaned if v not in valid]
+        if unknown:
+            sys.exit(
+                f"invalid {label} value(s) {', '.join(repr(u) for u in unknown)} — "
+                f"valid: {', '.join(valid)}"
+            )
+    return cleaned
+
+
+def normalize_exercise_attrs(raw: dict, at: str = "exercise") -> dict:
+    """Validate the catalog metadata columns present in `raw`, returning only
+    the keys actually supplied (so an update patches rather than blanks).
+
+    Shared by every path that writes the catalog — `exercise-add`,
+    `exercise-update`, and the per-entry `"create": true` in the log and
+    template documents — so a row minted from a template is as complete as one
+    minted deliberately."""
+    attrs: dict = {}
+    if "body_part" in raw:
+        attrs["body_part"] = _one_of(raw["body_part"], BODY_PARTS, f"{at}.body_part")
+    if "equipment" in raw:
+        attrs["equipment"] = _one_of(raw["equipment"], EQUIPMENT, f"{at}.equipment")
+    if "mechanics" in raw:
+        attrs["mechanics"] = _one_of(raw["mechanics"], MECHANICS, f"{at}.mechanics")
+    if "movement_pattern" in raw:
+        attrs["movement_pattern"] = _one_of(
+            raw["movement_pattern"], MOVEMENT_PATTERNS, f"{at}.movement_pattern"
+        )
+    if "primary_muscles" in raw:
+        attrs["primary_muscles"] = _string_list(
+            raw["primary_muscles"], MUSCLES, f"{at}.primary_muscles"
+        )
+    if "secondary_muscles" in raw:
+        attrs["secondary_muscles"] = _string_list(
+            raw["secondary_muscles"], MUSCLES, f"{at}.secondary_muscles"
+        )
+    if "aliases" in raw:
+        # Aliases are matched lowercase by resolve_exercise's containment query.
+        aliases = _string_list(raw["aliases"], None, f"{at}.aliases")
+        attrs["aliases"] = [a.lower() for a in aliases] if aliases is not None else None
+    return {k: v for k, v in attrs.items() if v is not None}
+
 
 def validate_template_document(plan: object) -> list[dict]:
     """Validate and normalize a complete reusable-template document before writes."""
@@ -170,11 +292,25 @@ def validate_template_document(plan: object) -> list[dict]:
             if not exercise_name:
                 sys.exit(f"invalid template plan: {at}.exercise needs an exact catalog name")
             sets = raw_exercise.get("sets")
-            reps = raw_exercise.get("reps")
             if isinstance(sets, bool) or not isinstance(sets, int) or not 1 <= sets <= 50:
                 sys.exit(f"invalid template plan: {at}.sets must be 1-50")
-            if isinstance(reps, bool) or not isinstance(reps, int) or not 1 <= reps <= 500:
+            # One dose measure per exercise: reps OR a timed hold. A prescribed
+            # hold ("wall sit 3 × 45s") must NOT be encoded as 1 rep — that
+            # misreports the dose everywhere the template renders.
+            reps = raw_exercise.get("reps")
+            secs = raw_exercise.get("secs")
+            if reps is not None and secs is not None:
+                sys.exit(f"invalid template plan: {at} sets both reps and secs — an exercise takes one")
+            if reps is None and secs is None:
+                sys.exit(f"invalid template plan: {at} needs reps (1-500) or secs (1-3600)")
+            if reps is not None and (
+                isinstance(reps, bool) or not isinstance(reps, int) or not 1 <= reps <= 500
+            ):
                 sys.exit(f"invalid template plan: {at}.reps must be 1-500")
+            if secs is not None and (
+                isinstance(secs, bool) or not isinstance(secs, int) or not 1 <= secs <= 3600
+            ):
+                sys.exit(f"invalid template plan: {at}.secs must be 1-3600")
             kg = raw_exercise.get("kg")
             if kg is not None and (isinstance(kg, bool) or not isinstance(kg, (int, float)) or not 0 <= kg <= 1500):
                 sys.exit(f"invalid template plan: {at}.kg must be null or 0-1500")
@@ -187,9 +323,24 @@ def validate_template_document(plan: object) -> list[dict]:
                 or not 0 <= rest_after_s <= 3600
             ):
                 sys.exit(f"invalid template plan: {at}.rest_after_s must be null or 0-3600")
+            # A template may mint a catalog row it needs, exactly like a set in
+            # `log` does — a plan write must not be blocked because a
+            # physio-prescribed movement isn't in the catalog yet. Opt-in per
+            # entry, so a typo still aborts with near-matches.
+            create = raw_exercise.get("create")
+            if create is not None and not isinstance(create, bool):
+                sys.exit(f"invalid template plan: {at}.create must be true or false")
+            attrs = normalize_exercise_attrs(raw_exercise, at)
+            if attrs and not create:
+                sys.exit(
+                    f"invalid template plan: {at} carries catalog metadata "
+                    f"({', '.join(sorted(attrs))}) without \"create\": true — "
+                    "edit an existing row with `gym.py exercise-update` instead"
+                )
             exercises.append({
-                "exercise": exercise_name, "sets": sets, "reps": reps, "kg": kg, "note": note,
-                "rest_after_s": rest_after_s,
+                "exercise": exercise_name, "sets": sets, "reps": reps, "secs": secs,
+                "kg": kg, "note": note, "rest_after_s": rest_after_s,
+                "create": bool(create), "attrs": attrs,
             })
         normalized.append({"name": name, "notes": notes, "default_rest_s": default_rest_s, "exercises": exercises})
     return normalized
@@ -328,11 +479,19 @@ def active_plan_items_for_exercises(exercise_ids: list[str]) -> list[dict]:
     return items
 
 
-def resolve_exercise(name: str, *, create: bool, body_part: str | None) -> dict:
+def resolve_exercise(
+    name: str, *, create: bool, body_part: str | None, attrs: dict | None = None
+) -> dict:
     """Resolve an exercise name (case-insensitive, aliases too) to its catalog
     row. With create=True an unknown name becomes a new source='user' row;
     otherwise abort with near-matches — a typo must not silently spawn a new
-    exercise and pollute the autocomplete."""
+    exercise and pollute the autocomplete.
+
+    `attrs` carries the rest of the catalog metadata for the created row
+    (muscles, equipment, mechanics, movement pattern, aliases). Passing it is
+    strongly preferred over name+body_part alone: a row with empty
+    primary_muscles is invisible to the muscle/volume analytics that join
+    gym_sets → exercises, and nothing errors to say so."""
     key = name.strip().lower()
     rows = _request("GET", "exercises", params={
         "name_key": f"eq.{key}", "select": "id,name", "limit": "1",
@@ -346,9 +505,9 @@ def resolve_exercise(name: str, *, create: bool, body_part: str | None) -> dict:
     if create:
         if body_part is not None and body_part not in BODY_PARTS:
             sys.exit(f"invalid body_part {body_part!r} — valid: {', '.join(BODY_PARTS)}")
-        created = _request("POST", "exercises",
-                           body={"name": name.strip(), "body_part": body_part, "source": "user"},
-                           prefer="return=representation")
+        body = {"name": name.strip(), "source": "user", **(attrs or {})}
+        body.setdefault("body_part", body_part)
+        created = _request("POST", "exercises", body=body, prefer="return=representation")
         return created[0]
     near = _request("GET", "exercises", params={
         "name": f"ilike.*{name.strip()}*", "select": "name", "limit": "6",
@@ -358,6 +517,22 @@ def resolve_exercise(name: str, *, create: bool, body_part: str | None) -> dict:
         f"no exact exercise match for {name!r} (near matches: {hint}) — "
         'use the exact catalog name, or add "create": true to that entry to make a new custom exercise'
     )
+
+
+def template_item_row(exercise_id: str, position: int, prescription: dict) -> dict:
+    """One gym_template_exercises row from a validated prescription. Exactly one
+    of target_reps / target_duration_seconds is non-null — the DB enforces the
+    same rule (gym_template_exercises_single_dose_measure)."""
+    return {
+        "exercise_id": exercise_id,
+        "position": position,
+        "target_sets": prescription["sets"],
+        "target_reps": prescription["reps"],
+        "target_duration_seconds": prescription["secs"],
+        "target_weight_kg": prescription["kg"],
+        "note": prescription["note"],
+        "rest_after_s": prescription["rest_after_s"],
+    }
 
 
 def apply_template_document(plan: object) -> list[tuple[str, str, str]]:
@@ -370,16 +545,13 @@ def apply_template_document(plan: object) -> list[tuple[str, str, str]]:
     for template in templates:
         exercises = []
         for position, prescription in enumerate(template["exercises"]):
-            exercise = resolve_exercise(prescription["exercise"], create=False, body_part=None)
-            exercises.append({
-                "exercise_id": exercise["id"],
-                "position": position,
-                "target_sets": prescription["sets"],
-                "target_reps": prescription["reps"],
-                "target_weight_kg": prescription["kg"],
-                "note": prescription["note"],
-                "rest_after_s": prescription["rest_after_s"],
-            })
+            exercise = resolve_exercise(
+                prescription["exercise"],
+                create=prescription["create"],
+                body_part=None,
+                attrs=prescription["attrs"],
+            )
+            exercises.append(template_item_row(exercise["id"], position, prescription))
         resolved.append({**template, "exercises": exercises})
 
     # Only each family's CURRENT version competes for a name match — every
@@ -538,16 +710,13 @@ def create_template_version(base_template_id: str, plan: object) -> dict:
 
     exercises = []
     for position, prescription in enumerate(template["exercises"]):
-        exercise = resolve_exercise(prescription["exercise"], create=False, body_part=None)
-        exercises.append({
-            "exercise_id": exercise["id"],
-            "position": position,
-            "target_sets": prescription["sets"],
-            "target_reps": prescription["reps"],
-            "target_weight_kg": prescription["kg"],
-            "note": prescription["note"],
-            "rest_after_s": prescription["rest_after_s"],
-        })
+        exercise = resolve_exercise(
+            prescription["exercise"],
+            create=prescription["create"],
+            body_part=None,
+            attrs=prescription["attrs"],
+        )
+        exercises.append(template_item_row(exercise["id"], position, prescription))
 
     family_id = _family_id_of(base_template_id)
     latest = _request("GET", "gym_templates", params={
@@ -612,10 +781,29 @@ def cmd_create_version(args) -> None:
           f"template {new_template['id']} ({new_template['name']})")
 
 
+def set_dose_text(row: dict) -> str:
+    """One logged set's dose for CLI display: reps, or "45s" for a hold."""
+    secs = row.get("duration_s")
+    if secs is not None:
+        return f"{secs}s"
+    reps = row.get("reps")
+    return str(reps) if reps is not None else "?"
+
+
+def template_dose_text(item: dict) -> str:
+    """The dose half of a template line for CLI display: reps, or "45s" for a
+    prescribed hold. Never renders a hold as a rep count."""
+    secs = item.get("target_duration_seconds")
+    if secs is not None:
+        return f"{secs}s"
+    return str(item.get("target_reps") or "—")
+
+
 def cmd_template_list(_args) -> None:
     rows = _request("GET", "gym_templates", params={
         "select": "id,name,notes,default_rest_s,archived,"
-                  "gym_template_exercises(position,target_sets,target_reps,target_weight_kg,note,rest_after_s,exercises(name))",
+                  "gym_template_exercises(position,target_sets,target_reps,target_duration_seconds,"
+                  "target_weight_kg,note,rest_after_s,exercises(name))",
         "order": "archived,created_at",
     })
     if not rows:
@@ -627,7 +815,7 @@ def cmd_template_list(_args) -> None:
         items = sorted(row.get("gym_template_exercises") or [], key=lambda item: item.get("position", 0))
         exercise_text = "; ".join(
             f"{(item.get('exercises') or {}).get('name') or '?'} "
-            f"{item.get('target_sets') or '—'}x{item.get('target_reps') or '—'}"
+            f"{item.get('target_sets') or '—'}x{template_dose_text(item)}"
             + (f" (rest {item['rest_after_s']}s)" if item.get("rest_after_s") is not None else "")
             for item in items
         )
@@ -636,6 +824,124 @@ def cmd_template_list(_args) -> None:
         notes = (row.get("notes") or "").replace("|", "\\|").replace("\n", " ")
         print(f"| {row['id']} | {row.get('name') or ''} | {exercise_text} | {default_rest_text} | "
               f"{row.get('archived')} | {notes} |")
+
+
+EXERCISE_SELECT = (
+    "id,name,source,body_part,primary_muscles,secondary_muscles,equipment,"
+    "mechanics,movement_pattern,aliases"
+)
+
+
+def _print_exercise_rows(rows: list[dict]) -> None:
+    if not rows:
+        print("_no matching exercises_")
+        return
+    print("| id | name | source | body part | primary | secondary | equipment | mechanics | pattern | aliases |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    for row in rows:
+        def cell(value) -> str:
+            if value is None:
+                return "—"
+            if isinstance(value, list):
+                return ", ".join(value) if value else "—"
+            return str(value)
+        print(
+            f"| {row['id']} | {row.get('name')} | {row.get('source')} | {cell(row.get('body_part'))} | "
+            f"{cell(row.get('primary_muscles'))} | {cell(row.get('secondary_muscles'))} | "
+            f"{cell(row.get('equipment'))} | {cell(row.get('mechanics'))} | "
+            f"{cell(row.get('movement_pattern'))} | {cell(row.get('aliases'))} |"
+        )
+
+
+def cmd_exercise_list(args) -> None:
+    params = {"select": EXERCISE_SELECT, "order": "name", "limit": str(args.limit)}
+    if args.query:
+        params["name"] = f"ilike.*{args.query}*"
+    if args.source:
+        params["source"] = f"eq.{args.source}"
+    rows = _request("GET", "exercises", params=params)
+    if args.incomplete:
+        # Rows with no primary muscle contribute nothing to the muscle/volume
+        # analytics — this filter is how you find them before they silently
+        # under-report a body part.
+        rows = [row for row in rows if not (row.get("primary_muscles") or [])]
+    _print_exercise_rows(rows)
+
+
+def _exercise_attr_args(args) -> dict:
+    """Collect the catalog columns given as CLI flags into the attrs shape."""
+    raw = {}
+    for key in EXERCISE_ATTR_KEYS:
+        value = getattr(args, key, None)
+        if value is not None:
+            raw[key] = value
+    return normalize_exercise_attrs(raw, "exercise")
+
+
+def cmd_exercise_add(args) -> None:
+    name = args.name.strip()
+    if not name:
+        sys.exit("exercise name cannot be empty")
+    existing = _request("GET", "exercises", params={
+        "name_key": f"eq.{name.lower()}", "select": "id,name", "limit": "1",
+    })
+    if existing:
+        sys.exit(
+            f"exercise {existing[0]['name']!r} already exists ({existing[0]['id']}) — "
+            "use `exercise-update` to change it"
+        )
+    body = {"name": name, "source": "user", **_exercise_attr_args(args)}
+    created = _request("POST", "exercises", body=body, prefer="return=representation")
+    row = _request("GET", "exercises", params={
+        "id": f"eq.{created[0]['id']}", "select": EXERCISE_SELECT, "limit": "1",
+    })
+    print(f"created exercise {created[0]['id']}: {name}")
+    _print_exercise_rows(row)
+    if not (row[0].get("primary_muscles") or []):
+        print(
+            "\nNote: primary_muscles is empty, so this exercise contributes nothing to the "
+            "muscle/volume analytics. Set it with `exercise-update` when you know the muscle."
+        )
+
+
+def cmd_exercise_update(args) -> None:
+    """Enrich or correct one catalog row. Only the flags you pass are written,
+    so this patches rather than blanking the columns you leave out."""
+    rows = _request("GET", "exercises", params={
+        "name_key": f"eq.{args.exercise.strip().lower()}", "select": "id,name", "limit": "1",
+    })
+    if not rows:
+        rows = _request("GET", "exercises", params={
+            "id": f"eq.{args.exercise}", "select": "id,name", "limit": "1",
+        }) if _looks_like_uuid(args.exercise) else []
+    if not rows:
+        near = _request("GET", "exercises", params={
+            "name": f"ilike.*{args.exercise.strip()}*", "select": "name", "limit": "6",
+        })
+        hint = ", ".join(r["name"] for r in near) if near else "none"
+        sys.exit(f"no exercise matching {args.exercise!r} (near matches: {hint})")
+    exercise_id = rows[0]["id"]
+
+    patch = _exercise_attr_args(args)
+    if args.rename:
+        patch["name"] = args.rename.strip()
+    if not patch:
+        sys.exit("nothing to update — pass at least one field to change")
+    _request("PATCH", "exercises", params={"id": f"eq.{exercise_id}"}, body=patch,
+             prefer="return=minimal")
+    updated = _request("GET", "exercises", params={
+        "id": f"eq.{exercise_id}", "select": EXERCISE_SELECT, "limit": "1",
+    })
+    print(f"updated exercise {exercise_id} ({', '.join(sorted(patch))})")
+    _print_exercise_rows(updated)
+
+
+def _looks_like_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError):
+        return False
 
 
 def cmd_template_apply(args) -> None:
@@ -671,7 +977,7 @@ def cmd_list(args) -> None:
     since = (datetime.date.today() - datetime.timedelta(days=args.days)).isoformat()
     rows = _request("GET", "gym_sessions", params={
         "select": "id,performed_at,title,notes,source,body_parts,workout_id,"
-                  "gym_sets(exercise_id,reps,weight_kg,is_warmup,exercises(name))",
+                  "gym_sets(exercise_id,reps,duration_s,weight_kg,is_warmup,exercises(name))",
         "performed_at": f"gte.{since}",
         "order": "performed_at.desc",
     })
@@ -691,7 +997,7 @@ def cmd_list(args) -> None:
                 by_ex.setdefault(ex_name, []).append(s)
             content = "; ".join(
                 f"{name} " + " ".join(
-                    f"{s.get('reps') if s.get('reps') is not None else '?'}"
+                    f"{set_dose_text(s)}"
                     f"x{s['weight_kg'] if s.get('weight_kg') is not None else 'bw'}"
                     for s in ex_sets
                 )
@@ -766,16 +1072,26 @@ def cmd_log(args) -> None:
         exercise = resolve_exercise(
             str(entry["exercise"]),
             create=bool(entry.get("create")),
-            body_part=entry.get("body_part"),
+            body_part=None,
+            attrs=normalize_exercise_attrs(entry, "sets[]"),
         )
         exercise_ids.append(exercise["id"])
         count = int(entry.get("sets", 1))
         if not 1 <= count <= 50:
             sys.exit(f"invalid sets count {count} for {exercise['name']}")
+        # One dose measure per set: reps OR a held duration. Logging a
+        # 45-second hold as reps=1 is the falsification this rejects.
+        reps = entry.get("reps")
+        secs = entry.get("secs")
+        if reps is not None and secs is not None:
+            sys.exit(f"{exercise['name']}: a set takes reps or secs, not both")
+        if secs is not None and not (isinstance(secs, int) and 1 <= secs <= 3600):
+            sys.exit(f"{exercise['name']}: secs must be an integer 1-3600")
         for _ in range(count):
             set_rows.append({
                 "exercise_id": exercise["id"],
-                "reps": entry.get("reps"),
+                "reps": reps,
+                "duration_s": secs,
                 "weight_kg": entry.get("kg"),
                 "rpe": entry.get("rpe"),
                 "is_warmup": bool(entry.get("warmup")),
@@ -970,6 +1286,42 @@ def main() -> None:
     p_del = sub.add_parser("delete", help="Delete a mis-logged session (cascades its sets)")
     p_del.add_argument("session_id")
     p_del.set_defaults(func=cmd_delete)
+
+    def add_exercise_attr_args(p) -> None:
+        p.add_argument("--body-part", dest="body_part", choices=BODY_PARTS)
+        p.add_argument("--primary-muscles", dest="primary_muscles",
+                       help=f"comma-separated; valid: {', '.join(MUSCLES)}")
+        p.add_argument("--secondary-muscles", dest="secondary_muscles",
+                       help="comma-separated; same vocabulary as --primary-muscles")
+        p.add_argument("--equipment", choices=EQUIPMENT)
+        p.add_argument("--mechanics", choices=MECHANICS)
+        p.add_argument("--movement-pattern", dest="movement_pattern", choices=MOVEMENT_PATTERNS)
+        p.add_argument("--aliases", help="comma-separated alternate names (stored lowercase)")
+
+    p_ex_list = sub.add_parser("exercise-list", help="Search the exercise catalog")
+    p_ex_list.add_argument("--query", help="substring match on name")
+    p_ex_list.add_argument("--source", choices=("catalog", "user"))
+    p_ex_list.add_argument("--incomplete", action="store_true",
+                           help="only rows with no primary_muscles (invisible to muscle analytics)")
+    p_ex_list.add_argument("--limit", type=int, default=50)
+    p_ex_list.set_defaults(func=cmd_exercise_list)
+
+    p_ex_add = sub.add_parser(
+        "exercise-add",
+        help="Add a complete exercise catalog row (name + muscles/equipment/mechanics/pattern)",
+    )
+    p_ex_add.add_argument("--name", required=True)
+    add_exercise_attr_args(p_ex_add)
+    p_ex_add.set_defaults(func=cmd_exercise_add)
+
+    p_ex_update = sub.add_parser(
+        "exercise-update",
+        help="Enrich or correct one catalog row (only the fields you pass are written)",
+    )
+    p_ex_update.add_argument("exercise", help="exact catalog name or id")
+    p_ex_update.add_argument("--rename", help="new name for the row")
+    add_exercise_attr_args(p_ex_update)
+    p_ex_update.set_defaults(func=cmd_exercise_update)
 
     args = parser.parse_args()
     args.func(args)

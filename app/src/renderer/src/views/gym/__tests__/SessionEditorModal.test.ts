@@ -41,6 +41,8 @@ function makeSetRow(overrides: Partial<SetRow> = {}): SetRow {
     exerciseId: 'ex-1',
     exerciseName: 'Back Squat',
     reps: 8,
+    durationS: null,
+    doseUnit: 'reps',
     weightKg: 60,
     rpe: null,
     note: '',

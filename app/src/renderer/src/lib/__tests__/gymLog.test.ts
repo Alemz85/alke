@@ -6,6 +6,8 @@ import {
   exerciseUsage,
   formatExerciseSetSummary,
   formatRest,
+  formatSetDose,
+  setDoseLabel,
   formatSetLine,
   groupExerciseBlocksByBodyPart,
   groupSetsIntoBlocks,
@@ -28,6 +30,7 @@ function set(partial: Partial<GymSet> & { exercise_id: string; position: number 
     session_id: 'sess-1',
     exercise_name: partial.exercise_id,
     reps: null,
+    duration_s: null,
     weight_kg: null,
     rpe: null,
     is_warmup: false,
@@ -245,6 +248,7 @@ describe('blocksToNewSets', () => {
     expect(blocksToNewSets([{ exerciseId: 'bench', sets: rows }])).toEqual([{
       exercise_id: 'bench',
       reps: 8,
+      duration_s: null,
       weight_kg: 60,
       rpe: 8.5,
       note: 'Paused on the chest.',
@@ -356,6 +360,7 @@ describe('prefillFromTemplate', () => {
           position: 0,
           target_sets: 3,
           target_reps: 8,
+          target_duration_seconds: null,
           target_weight_kg: 60,
           note: null,
           rest_after_s: null
@@ -368,6 +373,7 @@ describe('prefillFromTemplate', () => {
       exerciseId: 'squat',
       exerciseName: 'Squat',
       reps: 8,
+      durationS: null,
       weightKg: 60,
       isWarmup: false
     })
@@ -384,6 +390,7 @@ describe('prefillFromTemplate', () => {
           position: 0,
           target_sets: null,
           target_reps: null,
+          target_duration_seconds: null,
           target_weight_kg: null,
           note: null,
           rest_after_s: null
@@ -406,6 +413,7 @@ describe('prefillFromTemplate', () => {
           position: 1,
           target_sets: 1,
           target_reps: 12,
+          target_duration_seconds: null,
           target_weight_kg: 50,
           note: null,
           rest_after_s: null
@@ -418,6 +426,7 @@ describe('prefillFromTemplate', () => {
           position: 0,
           target_sets: 1,
           target_reps: 8,
+          target_duration_seconds: null,
           target_weight_kg: 60,
           note: null,
           rest_after_s: null
@@ -463,6 +472,7 @@ describe('prefillFromTemplates', () => {
           position: 0,
           target_sets: 2,
           target_reps: 8,
+          target_duration_seconds: null,
           target_weight_kg: 60,
           note: null,
           rest_after_s: null
@@ -480,6 +490,7 @@ describe('prefillFromTemplates', () => {
           position: 0,
           target_sets: 1,
           target_reps: 45,
+          target_duration_seconds: null,
           target_weight_kg: null,
           note: null,
           rest_after_s: null
@@ -697,5 +708,86 @@ describe('formatRest', () => {
     expect(formatRest(60)).toBe('1:00')
     expect(formatRest(90)).toBe('1:30')
     expect(formatRest(125)).toBe('2:05')
+  })
+})
+
+// ── timed sets ─────────────────────────────────────────────────────────────
+// gym_sets used to record reps only, so a 60-second hold and a 1-second twitch
+// both stored as `reps: 1`.
+
+describe('timed sets', () => {
+  it('formatSetDose reads a hold as a hold, not as a rep count', () => {
+    expect(formatSetDose({ reps: null, duration_s: 45 })).toBe('45s')
+    expect(formatSetDose({ reps: 8, duration_s: null })).toBe('8')
+    expect(formatSetDose({ reps: null, duration_s: null })).toBe('—')
+    expect(formatSetDose({ reps: null, duration_s: null }, 'n/a')).toBe('n/a')
+  })
+
+  it('formatSetLine renders a held set with its unit instead of "?"', () => {
+    const hold = set({ exercise_id: 'wall-sit', position: 0, reps: null, duration_s: 45 })
+    expect(formatSetLine([hold])).toBe('45s×bw')
+  })
+
+  it('formatExerciseSetSummary summarises a uniform block of holds', () => {
+    const holds = [0, 1, 2].map((i) =>
+      set({ exercise_id: 'wall-sit', position: i, reps: null, duration_s: 45 })
+    )
+    expect(formatExerciseSetSummary(holds)).toBe('3 × 45s')
+  })
+
+  it('formatExerciseSetSummary lists varying holds individually', () => {
+    const holds = [45, 50, 60].map((d, i) =>
+      set({ exercise_id: 'wall-sit', position: i, reps: null, duration_s: d })
+    )
+    expect(formatExerciseSetSummary(holds)).toBe('3 sets · 45s / 50s / 60s')
+  })
+
+  it('sessionVolumeKg ignores holds — a hold has no reps to multiply', () => {
+    const hold = set({ exercise_id: 'wall-sit', position: 0, reps: null, duration_s: 45, weight_kg: 20 })
+    expect(sessionVolumeKg([hold])).toBe(0)
+  })
+
+  it('prefillFromTemplate carries a template hold onto its set rows, reps left blank', () => {
+    const t = template({
+      items: [
+        {
+          id: 'i1', template_id: 't1', exercise_id: 'wall-sit', exercise_name: 'Wall Sit',
+          position: 0, target_sets: 3, target_reps: null, target_duration_seconds: 45,
+          target_weight_kg: null, note: null, rest_after_s: null
+        }
+      ]
+    })
+    const rows = prefillFromTemplate(t)
+    expect(rows).toHaveLength(3)
+    expect(rows[0].durationS).toBe(45)
+    expect(rows[0].reps).toBeNull()
+  })
+
+  it('setDoseLabel heads a timed block "Hold" and a rep block "Reps"', () => {
+    const holds = [0, 1].map((i) =>
+      set({ exercise_id: 'wall-sit', position: i, reps: null, duration_s: 45 })
+    )
+    const reps = [0, 1].map((i) => set({ exercise_id: 'squat', position: i, reps: 8 }))
+    expect(setDoseLabel(holds)).toBe('Hold')
+    expect(setDoseLabel(reps)).toBe('Reps')
+    // A mixed block falls back to Reps rather than mislabelling half its rows.
+    expect(setDoseLabel([holds[0], reps[0]])).toBe('Reps')
+  })
+
+  it('setDoseLabel ignores warm-ups when deciding the label', () => {
+    const warmup = set({ exercise_id: 'wall-sit', position: 0, reps: 5, is_warmup: true })
+    const hold = set({ exercise_id: 'wall-sit', position: 1, reps: null, duration_s: 45 })
+    expect(setDoseLabel([warmup, hold])).toBe('Hold')
+  })
+
+  it('blocksToNewSets sends the duration through', () => {
+    const rows = [{
+      exerciseId: 'wall-sit', exerciseName: 'Wall Sit',
+      reps: null, durationS: 45, weightKg: null, isWarmup: false
+    }]
+    expect(blocksToNewSets([{ exerciseId: 'wall-sit', sets: rows }])[0]).toMatchObject({
+      reps: null,
+      duration_s: 45
+    })
   })
 })

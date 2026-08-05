@@ -27,6 +27,7 @@ describe('TemplateViewModal', () => {
         position: 0,
         target_sets: 3,
         target_reps: 10,
+        target_duration_seconds: null,
         target_weight_kg: null,
         rest_after_s: null,
         note: 'Use an 8–12 rep range and leave 2 reps in reserve.'
@@ -72,6 +73,7 @@ describe('TemplateViewModal', () => {
         position: 0,
         target_sets: 3,
         target_reps: 10,
+        target_duration_seconds: null,
         target_weight_kg: null,
         rest_after_s: null,
         note: null

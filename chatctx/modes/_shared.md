@@ -2,6 +2,22 @@
 
 Loaded by every data-touching mode.
 
+## How to use the helper scripts
+
+`db.py`, `gym.py`, `injuries.py`, `goals.py` and `agent_log.py` are **fast paths for common operations** — they exist so you can do the usual things in one command without re-deriving the schema every session. They are NOT a list of the only things you are allowed to do, and the verbs documented here are not the edge of your judgement.
+
+Concretely, you may and should:
+
+- **Read the helper's source and `--help`.** Both outrank this file: the docs go stale, the tool does not. If a documented invocation and the tool disagree, the tool is right — follow it and log the drift (`agent_log.py`, `--category instructions`).
+- **Query `information_schema`** to check what a table actually has before trusting a column list written down here. The documented schema below has been wrong before.
+- **Reason from the underlying tables** when no helper verb fits. Say plainly that the helper has no path for what's needed, then do the direct thing (a scoped PostgREST write, a targeted `PATCH`) rather than bending the user's request into a verb that happens to exist. Reshaping a request to fit an available command is worse than reaching past it — that is how a request for a template edit turns into an unasked-for recovery-plan write.
+- **Tell the user when a capability is genuinely missing**, so it gets built. Log it (`agent_log.py --category tool`). Do not tell them a correction is impossible until you have checked the tool itself — twice now, the verb existed.
+
+Two guardrails are deliberate and do not bend:
+
+- **`db.py` is read-only.** Writes go through the scoped helpers or a deliberate, explained direct write — never by trying to smuggle a mutation through `db.py`.
+- **Never fabricate what the user reported.** Pain levels, reps, weights, dates: log what they said, leave the rest null. A plausible number you invented is worse than a blank field.
+
 ## Metric definitions (as computed in this system)
 
 - **TRIMP (Edwards)**: per workout, minutes in each heart-rate zone × the zone number (1–5), summed. Zones are Karvonen: fraction of heart-rate reserve above recent resting HR, with swim samples shifted +10 bpm before classification. It is the system's single training-load unit.
@@ -20,7 +36,7 @@ Loaded by every data-touching mode.
 - `workout_hr_samples(workout_id, offset_s, bpm)` — per-second HR traces.
 - `workout_swim_samples(workout_id, offset_s, distance_m, strokes)` — per-second swim series for pool swims (meters/strokes attributed to each second; seconds with no row = resting).
 - `swim_sets(workout_id, set_index, start_offset_s, duration_s, distance_m, strokes, rest_after_s)` — ingest-detected swim sets (new set after a >10s sampling gap; `rest_after_s` null on the last set). Pace and SWOLF are derived, not stored: `pace_s_per_100m = 100*duration_s/distance_m`; `swolf25 = (duration_s + 2*strokes)/(distance_m/25)` (stored strokes are watch-arm cycles; ×2 converts to both-hands, freestyle assumption).
-- `daily_metrics(date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, state_of_mind, weight_kg)`.
+- `daily_metrics(date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, weight_kg, walking_running_distance_m, flights_climbed)`. `walking_running_distance_m` and `flights_climbed` are the ambulatory-load pair — the only columns that see walking volume and descent, and load-bearing for anything involving knees, ankles, or a trip on foot (a 61-flights day against a ~5/day baseline explained an rehab flare that the training-load model showed nothing for).
 - `computed_workout(workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60)`.
 - `computed_daily(date, trimp_total, ctl, atl, tsb, acwr, rhr_baseline_60d, rhr_dev, hrv_baseline_60d, hrv_dev, flags)`.
 - `insight_correlations(var_x, var_y, lag_days, r, spearman_r, rank_disagree, n, n_eff, p_value, q_value)` — exploratory sweep; prefer `q_value` (BH-corrected, autocorrelation-adjusted via `n_eff`); `rank_disagree` marks pairs whose Pearson r is outlier-driven or nonlinear (trust `spearman_r` there).
@@ -41,7 +57,23 @@ python3 gym.py log --json '{"date": "2026-07-12", "title": "Legs", "body_parts":
 python3 gym.py delete <session_id>
 ```
 
+Each set takes exactly one dose measure: `"reps"` or `"secs"` for a hold — `{"exercise": "wall sit", "sets": 3, "secs": 45}`. Never log a hold as `"reps": 1`; a 60-second wall sit and a 1-second twitch would store identically and both would be false.
+
 Rules: log only what the user actually states — never invent reps/weights; leave fields they didn't give as null (a `body_parts`-only log is valid and better than fabricated sets). Check `gym.py list` first so you don't double-log a session the user already entered in the app; if a synced strength workout exists for that day (`workouts`, type ~ strength/core), pass its id as `workout_id` so the log attaches to it. Exercise names resolve against the `exercises` catalog including aliases; on a no-match the command aborts with suggestions — only add `"create": true` when it's genuinely a new exercise, not a near-miss of an existing one. Sets of exercises linked to recovery-plan items auto-check the day's rehab item (`source='gym'`) — mention it when it happens. `delete` is for correcting your own mis-logs, not for removing the user's app-entered sessions.
+
+## Maintaining the exercise catalog
+
+The `exercises` catalog is yours to write, not only to read from:
+
+```
+python3 gym.py exercise-list [--query ".."] [--source user|catalog] [--incomplete]
+python3 gym.py exercise-add --name ".." [--body-part ..] [--primary-muscles "quadriceps,glutes"] [--secondary-muscles ".."] [--equipment ..] [--mechanics compound|isolation] [--movement-pattern ..] [--aliases "a,b"]
+python3 gym.py exercise-update <name|id> [--rename ".."] [same attribute flags]
+```
+
+`exercise-add` mints a complete row directly — you never need to route a catalog addition through a fabricated session or an unrelated recovery-plan item to get one created. `exercise-update` patches only the flags you pass, so it is the way to enrich a row that was created name-only.
+
+**Always fill `primary_muscles`.** The muscle and volume analytics join `gym_sets → exercises` on it, so a row with an empty muscle array is silently dropped from them — nothing errors, the body part just under-reports. `exercise-list --incomplete` lists the rows in that state. The same attributes can be passed inline wherever `"create": true` appears (a `log` set, a template exercise), so a row minted mid-task is as complete as one added deliberately.
 
 ## Creating reusable Gym workout templates
 
@@ -54,7 +86,11 @@ node workout_template_contract.mjs validate /tmp/workout-templates.json
 python3 gym.py template-apply --file /tmp/workout-templates.json
 ```
 
-Before authoring, read active goals, injuries/constraints, relevant training history, and the exercise catalog as needed. Every exercise must use an exact catalog name and include sets/reps; leave starting weight null unless the user supplied it or asked for a justified value. Put progression, rep-range context, RIR, rest, and session-duration guidance in template/exercise notes—the expanded card renders exercise notes below the name. The current template dose field is rep-counted, not time-counted: do not encode a timed hold as a misleading `1 rep`; choose a suitable rep-counted alternative unless the user specifically requires the timed exercise. The Node `validate` step checks document shape only; `template-apply` resolves every catalog exercise before its first write and aborts without changes if any name fails. `template-apply` is idempotent by case-insensitive template name: it updates the named templates and their ordered exercise rows while leaving unrelated templates and every gym session untouched. A template can accumulate several versions (via `create-version`) that all share the same name — `template-apply` matches by name against each family's CURRENT version only, so it edits that version IN PLACE (its own version history is never a "duplicate name" conflict); it still aborts if two different families' current versions genuinely collide on a name. Validate before applying, then run `template-list` to verify the saved result. Do not call `--help` for commands already documented here unless a documented invocation fails.
+Before authoring, read active goals, injuries/constraints, relevant training history, and the exercise catalog as needed. Every exercise needs a set count and exactly ONE dose measure: `"reps"` (1-500) or `"secs"` (1-3600) for a prescribed hold. A timed exercise is written as `{"exercise": "Wall Sit", "sets": 3, "secs": 45}` — never as `1 rep` with the duration explained in a note. Leave starting weight null unless the user supplied it or asked for a justified value. Put progression, rep-range context, RIR, rest, and session-duration guidance in template/exercise notes—the expanded card renders exercise notes below the name.
+
+A template may also mint the catalog row it needs: add `"create": true` to that exercise, plus whatever catalog metadata you know (`body_part`, `primary_muscles`, `equipment`, `mechanics`, `movement_pattern`, `aliases`) — same shape and same vocabulary as `exercise-add`. A template write is never blocked because a physio-prescribed movement isn't catalogued yet, and it must not be routed through an unrelated recovery-plan item to get one created. Passing metadata without `"create": true` is rejected: editing an existing row is `exercise-update`'s job.
+
+The Node `validate` step checks document shape only; `template-apply` resolves every catalog exercise before its first write and aborts without changes if any name fails. `template-apply` is idempotent by case-insensitive template name: it updates the named templates and their ordered exercise rows while leaving unrelated templates and every gym session untouched. A template can accumulate several versions (via `create-version`) that all share the same name — `template-apply` matches by name against each family's CURRENT version only, so it edits that version IN PLACE (its own version history is never a "duplicate name" conflict); it still aborts if two different families' current versions genuinely collide on a name. Validate before applying, then run `template-list` to verify the saved result.
 
 To remove a template rather than update it:
 
@@ -66,6 +102,8 @@ python3 gym.py template-delete <template_id>
 `template-archive` sets `archived=true` on that one version only — other versions in the family and any runs are untouched. `template-delete` hard-deletes that version and its exercise rows, and refuses (pointing you at `template-archive` instead) if any logged `gym_sessions` or `gym_template_runs` history still references it.
 
 Data quirks: watch data covers only the recent part of the record (check the earliest `daily_metrics` date); resting HR / HRV / sleep exist on ~half of days (watch not always worn); `distance_m` exists only for swims and walks.
+
+**The load model is blind to unlogged walking.** TRIMP comes from a workout's heart-rate zones, so a day with no logged workout scores `trimp_total = 0` no matter how much walking it contained — a long day on foot with tens of thousands of steps and dozens of flights still scores zero. Everything derived from TRIMP inherits that blindness: CTL, ATL, TSB and ACWR all read "rested and fresh" across what may be the highest mechanical-load week in the record. Before reporting freshness or a light week, check `steps` / `walking_running_distance_m` / `flights_climbed` for the same days, and say which kind of load you mean. (The Zone-2 index is the exception — `metrics/models.py` feeds unlogged ambulatory activity into it via daily active energy, so the Z2 index and the CTL family can legitimately disagree about the same week.)
 
 ## Blood panels — context only, never interpretation
 

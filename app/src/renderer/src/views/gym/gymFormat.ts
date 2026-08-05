@@ -1,4 +1,4 @@
-import type { GymTemplate } from '@shared/types'
+import type { GymTemplate, GymTemplateItem } from '@shared/types'
 import { toZonedYMD } from '../../hooks/sessionsDate'
 
 /** "Mon, Jul 7" in the user's timezone (noon-anchored to avoid DST edges). */
@@ -28,6 +28,44 @@ export function fmtSets(sets: number): string {
   return Number.isInteger(sets) ? String(sets) : sets.toFixed(1)
 }
 
+/** "45s" / "1:30" — a prescribed hold, minutes only once it's worth reading as one. */
+export function formatDoseDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest === 0 ? `${minutes}m` : `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+/**
+ * The dose half of a template line: "3 × 8" for reps, "3 × 45s" for a hold, and
+ * an em dash for whichever side is unset. A template item carries ONE dose
+ * measure (DB constraint), so this never has to show both — and a timed item
+ * must never render as "× 1", which is what made holds unrepresentable before
+ * target_duration_seconds existed.
+ */
+export function formatTemplateDose(
+  item: Pick<GymTemplateItem, 'target_sets' | 'target_reps' | 'target_duration_seconds'>,
+  options: { compact?: boolean } = {}
+): string {
+  const sets = item.target_sets != null ? fmtSets(item.target_sets) : '—'
+  const dose =
+    item.target_duration_seconds != null
+      ? formatDoseDuration(item.target_duration_seconds)
+      : item.target_reps != null
+        ? String(item.target_reps)
+        : '—'
+  // Cards run tight on width, so they get the unspaced "3×8"; the modal has
+  // room for the spaced form.
+  return options.compact ? `${sets}×${dose}` : `${sets} × ${dose}`
+}
+
+/** True when the line prescribes neither reps nor a duration nor a set count. */
+export function hasNoTemplateTarget(
+  item: Pick<GymTemplateItem, 'target_sets' | 'target_reps' | 'target_duration_seconds'>
+): boolean {
+  return item.target_sets == null && item.target_reps == null && item.target_duration_seconds == null
+}
+
 // Rough per-rep tempo assumption and a small fixed cost per exercise for
 // walking to equipment / adjusting a machine — deliberately coarse since this
 // is a "~N min" estimate, not a logged duration.
@@ -38,18 +76,19 @@ const DEFAULT_REPS_WHEN_UNSET = 10
 
 /**
  * Rough estimated workout duration in seconds: sum over exercises of
- * sets × (reps × ~3s/rep + effective rest-after), plus a small per-exercise
- * setup constant. Exercises without a target_sets/target_reps fall back to a
- * conservative 1×10 so an incomplete template still yields a sane estimate.
- * Deliberately coarse — labeled "~N min" everywhere it's shown, never exact.
+ * sets × (work + effective rest-after), plus a small per-exercise setup
+ * constant. Work is the prescribed hold for a timed item, else reps × ~3s/rep.
+ * Exercises without any target fall back to a conservative 1×10 so an
+ * incomplete template still yields a sane estimate. Deliberately coarse —
+ * labeled "~N min" everywhere it's shown, never exact.
  */
 export function estimateTemplateDurationSeconds(template: GymTemplate): number {
   let totalSeconds = 0
   for (const item of template.items) {
     const sets = item.target_sets ?? DEFAULT_SETS_WHEN_UNSET
-    const reps = item.target_reps ?? DEFAULT_REPS_WHEN_UNSET
     const restSeconds = item.rest_after_s ?? template.default_rest_s ?? 0
-    const workSeconds = reps * SECONDS_PER_REP
+    const workSeconds =
+      item.target_duration_seconds ?? (item.target_reps ?? DEFAULT_REPS_WHEN_UNSET) * SECONDS_PER_REP
     totalSeconds += sets * (workSeconds + restSeconds)
     totalSeconds += SETUP_SECONDS_PER_EXERCISE
   }

@@ -8,6 +8,58 @@ const kinds = new Set(['exercise', 'activity', 'habit', 'constraint'])
 // supabase/migrations/20260713010000_gym_exercise_catalog.sql).
 const bodyParts = new Set(['chest', 'back', 'shoulders', 'arms', 'legs', 'core', 'full body'])
 
+const MAX_PHASES = 8
+
+/**
+ * An item's frequency SCHEDULE — the later dose steps. Clinicians ramp rehab
+ * ("3× in week 1, then daily"), which one weekly_target cannot express; each
+ * phase overrides the item's scalar targets from its own from_week, and the
+ * scalars cover start_week until the first phase begins.
+ *
+ * Every phase restates ALL THREE numbers on purpose: a ramp changes what counts
+ * as an acceptable dose, so inheriting green_min/yellow_min would keep grading
+ * a later week by an earlier week's standard.
+ */
+function validatePhases(item, at, errors) {
+  const phases = item.phases
+  if (phases == null) return
+  if (!Array.isArray(phases)) {
+    errors.push(`${at}.phases must be an array or null`)
+    return
+  }
+  if (phases.length > MAX_PHASES) {
+    errors.push(`${at}.phases must contain at most ${MAX_PHASES} steps`)
+    return
+  }
+  let previousFrom = Number.isInteger(item.start_week) ? item.start_week : 1
+  phases.forEach((phase, index) => {
+    const where = `${at}.phases[${index}]`
+    if (!phase || typeof phase !== 'object' || Array.isArray(phase)) {
+      errors.push(`${where} must be an object`)
+      return
+    }
+    for (const [field, max] of [['from_week', 52], ['weekly_target', 14], ['green_min', 14], ['yellow_min', 14]]) {
+      if (!Number.isInteger(phase[field]) || phase[field] < 1 || phase[field] > max) {
+        errors.push(`${where}.${field} must be an integer from 1–${max}`)
+      }
+    }
+    if (Number.isInteger(phase.from_week) && phase.from_week <= previousFrom) {
+      errors.push(
+        `${where}.from_week must be greater than ${index ? 'the previous phase' : 'start_week'} (${previousFrom})`
+      )
+    }
+    if (Number.isInteger(phase.from_week)) previousFrom = phase.from_week
+    if (
+      Number.isInteger(phase.yellow_min) &&
+      Number.isInteger(phase.green_min) &&
+      Number.isInteger(phase.weekly_target) &&
+      !(phase.yellow_min <= phase.green_min && phase.green_min <= phase.weekly_target)
+    ) {
+      errors.push(`${where}: require yellow_min ≤ green_min ≤ weekly_target`)
+    }
+  })
+}
+
 export function validatePlan(plan) {
   const errors = []
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return ['plan must be a JSON object']
@@ -54,7 +106,8 @@ export function validatePlan(plan) {
       if (step.note !== null && typeof step.note !== 'string') errors.push(`${stepAt}.note must be a string or null`)
       if ([step.reps, step.duration_seconds, step.distance_m].filter(value => value !== null).length !== 1) errors.push(`${stepAt} requires exactly one of reps, duration_seconds, or distance_m`)
     })
-    if (item.kind === 'constraint' && ['weekly_target', 'green_min', 'yellow_min', 'target_sets', 'target_reps', 'exercise', 'body_part', 'steps'].some((field) => item[field] != null) || (item.kind === 'constraint' && create)) {
+    validatePhases(item, at, errors)
+    if (item.kind === 'constraint' && ['weekly_target', 'green_min', 'yellow_min', 'target_sets', 'target_reps', 'exercise', 'body_part', 'steps', 'phases'].some((field) => item[field] != null) || (item.kind === 'constraint' && create)) {
       errors.push(`${at}: constraints cannot carry targets, a Gym dose, an exercise link, or create`)
     }
     if (item.kind === 'exercise') {
@@ -78,7 +131,7 @@ export function validatePlan(plan) {
 const template = {
   approach: 'Short current approach, progression rule, and important caution.',
   items: [
-    { name: 'Linked strength exercise', kind: 'exercise', start_week: 2, weekly_target: 3, green_min: 3, yellow_min: 2, note: 'Technique and progression guidance.', exercise: 'Exact catalog exercise name', create: false, body_part: null, target_sets: 3, target_reps: 12, steps: null },
+    { name: 'Linked strength exercise', kind: 'exercise', start_week: 2, weekly_target: 3, green_min: 3, yellow_min: 2, note: 'Technique and progression guidance.', exercise: 'Exact catalog exercise name', create: false, body_part: null, target_sets: 3, target_reps: 12, steps: null, phases: [{ from_week: 3, weekly_target: 5, green_min: 4, yellow_min: 3 }] },
     { name: 'New composite mobility routine', kind: 'exercise', start_week: 1, weekly_target: 7, green_min: 5, yellow_min: 3, note: 'When and how to perform the routine.', exercise: 'New catalog exercise name', create: true, body_part: 'legs', target_sets: 1, target_reps: 1, steps: [{ name: 'Named stretch', sets: 2, reps: null, duration_seconds: 30, distance_m: null, per_side: true, note: null }] }
   ]
 }

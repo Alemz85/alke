@@ -23,6 +23,7 @@ function item(partial: Partial<RecoveryPlanItem> & Pick<RecoveryPlanItem, 'id' |
     weekly_target: null,
     green_min: null,
     yellow_min: null,
+    phases: null,
     start_week: 1,
     target_sets: null,
     target_reps: null,

@@ -6,6 +6,8 @@ import { ModalityIcon } from '../../components/ModalityIcon'
 import {
   displayBodyPart,
   formatExerciseSetSummary,
+  formatSetDose,
+  setDoseLabel,
   groupExerciseBlocksByBodyPart,
   groupSetsIntoBlocks,
   type ExerciseBlock,
@@ -58,7 +60,7 @@ export function ExerciseDisclosure({
         <div id={`gym-log-sets-${blockKey}`} className="gym-log-set-table">
           <div className="gym-log-set-row gym-log-set-row--head">
             <span>Set</span>
-            <span>Reps</span>
+            <span>{setDoseLabel(block.sets)}</span>
             <span>Load</span>
             <span>RPE</span>
             <span>Muscle group</span>
@@ -66,7 +68,7 @@ export function ExerciseDisclosure({
           {block.sets.map((set, index) => (
             <div key={set.id} className="gym-log-set-row">
               <span className="tabular-nums">{index + 1}</span>
-              <span className="tabular-nums">{set.reps ?? '—'}</span>
+              <span className="tabular-nums">{formatSetDose(set)}</span>
               <span className="tabular-nums">
                 {set.weight_kg == null ? 'BW' : `${set.weight_kg} kg`}
               </span>

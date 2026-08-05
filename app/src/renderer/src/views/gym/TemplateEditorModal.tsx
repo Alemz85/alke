@@ -14,6 +14,10 @@ const BODY_PART_OPTIONS = [
 ]
 import '../GymView.css'
 
+/** A template line prescribes reps OR a hold, never both — so the editor has
+ *  one dose field and a unit switch rather than two rival number inputs. */
+export type DoseUnit = 'reps' | 'secs'
+
 export interface ItemRow {
   key: string
   exerciseId: string | null
@@ -21,7 +25,8 @@ export interface ItemRow {
   // UI-only picker filter, autofilled back from a picked exercise's body_part.
   bodyPartFilter: GymBodyPart | null
   targetSets: string
-  targetReps: string
+  targetDose: string
+  doseUnit: DoseUnit
   targetWeightKg: string
   // Per-exercise rest override (seconds); blank = use the template default.
   restAfterSeconds: string
@@ -41,7 +46,8 @@ function blankItem(): ItemRow {
     exerciseName: '',
     bodyPartFilter: null,
     targetSets: '',
-    targetReps: '',
+    targetDose: '',
+    doseUnit: 'reps',
     targetWeightKg: '',
     restAfterSeconds: '',
     note: ''
@@ -65,7 +71,16 @@ export function itemsFromTemplate(template: GymTemplate, exercisesById: Map<stri
       exerciseName: item.exercise_name,
       bodyPartFilter: (exercisesById.get(item.exercise_id)?.body_part as GymBodyPart | null) ?? null,
       targetSets: item.target_sets != null ? String(item.target_sets) : '',
-      targetReps: item.target_reps != null ? String(item.target_reps) : '',
+      // A saved hold reopens as a hold: the unit follows whichever dose measure
+      // the row actually carries, so editing a timed item can't silently
+      // downgrade it to reps.
+      targetDose:
+        item.target_duration_seconds != null
+          ? String(item.target_duration_seconds)
+          : item.target_reps != null
+            ? String(item.target_reps)
+            : '',
+      doseUnit: item.target_duration_seconds != null ? 'secs' : 'reps',
       targetWeightKg: item.target_weight_kg != null ? String(item.target_weight_kg) : '',
       restAfterSeconds: item.rest_after_s != null ? String(item.rest_after_s) : '',
       note: item.note ?? ''
@@ -112,6 +127,13 @@ function toNullableRestSeconds(s: string): number | null {
   const n = toNullableInt(s)
   if (n == null) return null
   return Math.max(0, Math.min(3600, n))
+}
+
+/** Clamp/round to the 1–3600s hold range (a 0-second hold is not a dose). */
+function toNullableHoldSeconds(s: string): number | null {
+  const n = toNullableInt(s)
+  if (n == null) return null
+  return Math.max(1, Math.min(3600, n))
 }
 
 function toNullableInt(s: string): number | null {
@@ -254,13 +276,25 @@ function TemplateItemEditor({
         value={item.targetSets}
         onChange={(e) => onChange({ targetSets: e.target.value })}
       />
-      <input
-        className="gym-input gym-template-target-input"
-        type="number"
-        placeholder="reps"
-        value={item.targetReps}
-        onChange={(e) => onChange({ targetReps: e.target.value })}
-      />
+      <span className="gym-template-dose">
+        <input
+          className="gym-input gym-template-target-input gym-template-dose-input"
+          type="number"
+          placeholder={item.doseUnit === 'secs' ? 'secs' : 'reps'}
+          aria-label={item.doseUnit === 'secs' ? 'Hold (seconds)' : 'Target reps'}
+          value={item.targetDose}
+          onChange={(e) => onChange({ targetDose: e.target.value })}
+        />
+        <button
+          type="button"
+          className="gym-template-dose-unit"
+          aria-label={`Dose unit: ${item.doseUnit === 'secs' ? 'seconds' : 'reps'} — click to switch`}
+          title="Switch between reps and a timed hold"
+          onClick={() => onChange({ doseUnit: item.doseUnit === 'secs' ? 'reps' : 'secs' })}
+        >
+          {item.doseUnit === 'secs' ? 'secs' : 'reps'}
+        </button>
+      </span>
       <input
         className="gym-input gym-template-target-input"
         type="number"
@@ -369,7 +403,10 @@ export function TemplateEditorModal({
     const newItems: NewGymTemplateItem[] = items.map((it) => ({
       exercise_id: it.exerciseId as string,
       target_sets: toNullableInt(it.targetSets),
-      target_reps: toNullableInt(it.targetReps),
+      // Exactly one dose measure reaches the DB — the unit switch decides
+      // which, so the pair can never both be set.
+      target_reps: it.doseUnit === 'reps' ? toNullableInt(it.targetDose) : null,
+      target_duration_seconds: it.doseUnit === 'secs' ? toNullableHoldSeconds(it.targetDose) : null,
       target_weight_kg: toNullableFloat(it.targetWeightKg),
       rest_after_s: toNullableRestSeconds(it.restAfterSeconds),
       note: it.note.trim() || null

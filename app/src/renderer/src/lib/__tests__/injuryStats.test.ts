@@ -5,6 +5,8 @@ import {
   adherenceRating,
   doseTarget,
   itemAdherenceRating,
+  nextItemPhase,
+  resolveItemTargets,
   buildTimeline,
   currentWeekAdherenceSummary,
   currentPlanWeek,
@@ -53,6 +55,7 @@ function item(partial: Partial<RecoveryPlanItem> & { id: string }): RecoveryPlan
     active: true,
     green_min: null,
     yellow_min: null,
+    phases: null,
     target_sets: null,
     target_reps: null,
     start_week: 1,
@@ -954,5 +957,156 @@ describe('humanizeDuration', () => {
   it('formats years with a decimal, dropping trailing .0', () => {
     expect(humanizeDuration('2025-01-01', '2026-01-01')).toBe('1 y')
     expect(humanizeDuration('2024-07-01', '2026-01-01')).toBe('1.5 y')
+  })
+})
+
+// ── phased frequency ───────────────────────────────────────────────────────
+// A plan item held one weekly_target, so "3× in week 1, then daily" could only
+// be encoded as two rows — which double-counted the exercise and needed a human
+// to deactivate the stale row on a specific date.
+
+describe('resolveItemTargets', () => {
+  const ramped = item({
+    id: 'i1',
+    weekly_target: 3,
+    green_min: 3,
+    yellow_min: 2,
+    phases: [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+  })
+
+  it('uses the scalar targets before any phase begins', () => {
+    expect(resolveItemTargets(ramped, 1)).toEqual({
+      weekly_target: 3,
+      green_min: 3,
+      yellow_min: 2
+    })
+  })
+
+  it('switches to the phase from its from_week onward', () => {
+    expect(resolveItemTargets(ramped, 2).weekly_target).toBe(7)
+    expect(resolveItemTargets(ramped, 12).weekly_target).toBe(7)
+  })
+
+  it('takes the LAST phase that has started', () => {
+    const twoStep = item({
+      id: 'i2',
+      weekly_target: 3,
+      green_min: 3,
+      yellow_min: 2,
+      phases: [
+        { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 },
+        { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 }
+      ]
+    })
+    expect(resolveItemTargets(twoStep, 3).weekly_target).toBe(5)
+    expect(resolveItemTargets(twoStep, 4).weekly_target).toBe(7)
+  })
+
+  it('resolves out-of-order phases by from_week, not array order', () => {
+    const unsorted = item({
+      id: 'i3',
+      weekly_target: 3,
+      green_min: 3,
+      yellow_min: 2,
+      phases: [
+        { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 },
+        { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 }
+      ]
+    })
+    expect(resolveItemTargets(unsorted, 3).weekly_target).toBe(5)
+  })
+
+  it('falls back to the scalars when the plan has no start date', () => {
+    expect(resolveItemTargets(ramped, null).weekly_target).toBe(3)
+  })
+
+  it('is a no-op for a flat prescription', () => {
+    const flat = item({ id: 'i4', weekly_target: 3, green_min: 3, yellow_min: 2 })
+    expect(resolveItemTargets(flat, 9).weekly_target).toBe(3)
+  })
+})
+
+describe('nextItemPhase', () => {
+  const ramped = item({
+    id: 'i1',
+    weekly_target: 3,
+    green_min: 3,
+    yellow_min: 2,
+    phases: [
+      { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 },
+      { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 }
+    ]
+  })
+
+  it('reports the next step that has not started', () => {
+    expect(nextItemPhase(ramped, 1)?.from_week).toBe(2)
+    expect(nextItemPhase(ramped, 2)?.from_week).toBe(4)
+  })
+
+  it('is null once the final phase is in force', () => {
+    expect(nextItemPhase(ramped, 4)).toBeNull()
+  })
+
+  it('is null for a flat prescription', () => {
+    expect(nextItemPhase(item({ id: 'i5' }), 3)).toBeNull()
+  })
+})
+
+describe('phase-aware scoring', () => {
+  // Plan starts Mon 2026-07-06, so week 1 = Jul 6-12, week 2 = Jul 13-19.
+  const planStart = '2026-07-06'
+  const ramped = item({
+    id: 'ramp',
+    weekly_target: 3,
+    green_min: 3,
+    yellow_min: 2,
+    phases: [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+  })
+
+  it('scores a correctly-followed week 1 as met, not as red against week 2', () => {
+    // Three checks in week 1 IS the prescription. Under one flat row at 7 this
+    // rated red — a false efficacy claim the weekly-target rulebook forbids.
+    const checks = ['2026-07-06', '2026-07-08', '2026-07-10'].map((d) => check('ramp', d))
+    const summary = currentWeekAdherenceSummary([ramped], checks, '2026-07-12', planStart)
+    expect(summary.rows[0].prescribed).toBe(3)
+    expect(summary.rows[0].acceptable).toBe(3)
+    expect(summary.rows[0].done).toBe(3)
+    expect(summary.pct).toBe(100)
+  })
+
+  it('reports week 2 against the ramped target', () => {
+    const checks = ['2026-07-13', '2026-07-14', '2026-07-15'].map((d) => check('ramp', d))
+    const summary = currentWeekAdherenceSummary([ramped], checks, '2026-07-19', planStart)
+    expect(summary.rows[0].prescribed).toBe(7)
+    expect(summary.rows[0].acceptable).toBe(6)
+    expect(summary.rows[0].done).toBe(3)
+    expect(summary.pct).toBeLessThan(100)
+  })
+
+  it('rates each week by the dose in force then', () => {
+    expect(itemAdherenceRating(3, ramped, 1)).toBe('met')
+    expect(itemAdherenceRating(3, ramped, 2)).toBe('none')
+    expect(itemAdherenceRating(6, ramped, 2)).toBe('met')
+  })
+
+  it('counts an item whose target only appears in a later phase', () => {
+    // weekly_target null until week 2: nothing is due yet, then it is.
+    const late = item({
+      id: 'late',
+      weekly_target: null,
+      green_min: null,
+      yellow_min: null,
+      phases: [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+    })
+    const week1 = currentWeekAdherenceSummary([late], [], '2026-07-12', planStart)
+    expect(week1.rows[0].scored).toBe(false)
+    const week2 = currentWeekAdherenceSummary([late], [], '2026-07-19', planStart)
+    expect(week2.rows[0].scored).toBe(true)
+    expect(week2.rows[0].prescribed).toBe(7)
+  })
+
+  it('doseTarget follows the phase in force', () => {
+    expect(doseTarget(ramped, 1)).toBe(3)
+    expect(doseTarget(ramped, 2)).toBe(6)
   })
 })

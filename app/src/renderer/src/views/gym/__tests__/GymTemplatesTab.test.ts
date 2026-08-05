@@ -129,6 +129,7 @@ describe('GymTemplatesTab active card — glance-only preview', () => {
         position: 0,
         target_sets: 3,
         target_reps: 8,
+        target_duration_seconds: null,
         target_weight_kg: null,
         rest_after_s: null,
         note: null

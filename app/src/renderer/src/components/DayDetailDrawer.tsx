@@ -16,6 +16,8 @@ import { EM_DASH, formatClock, formatPace100 } from '../lib/format'
 import {
   displayBodyPart,
   formatExerciseSetSummary,
+  formatSetDose,
+  setDoseLabel,
   groupExerciseBlocksByBodyPart,
   groupSetsIntoBlocks,
   sessionBodyParts,
@@ -424,14 +426,14 @@ function GymLogExerciseDisclosure({
         <div id={`day-drawer-gymlog-sets-${blockKey}`} className="day-drawer-gymlog-set-table">
           <div className="day-drawer-gymlog-set-row day-drawer-gymlog-set-row--head">
             <span>Set</span>
-            <span>Reps</span>
+            <span>{setDoseLabel(block.sets)}</span>
             <span>Load</span>
             <span>Muscle group</span>
           </div>
           {block.sets.map((set, index) => (
             <div key={set.id} className="day-drawer-gymlog-set-row">
               <span className="tabular-nums">{index + 1}</span>
-              <span className="tabular-nums">{set.reps ?? EM_DASH}</span>
+              <span className="tabular-nums">{formatSetDose(set, EM_DASH)}</span>
               <span className="tabular-nums">
                 {set.weight_kg == null ? 'BW' : `${set.weight_kg} kg`}
               </span>

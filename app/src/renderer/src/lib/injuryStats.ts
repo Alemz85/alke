@@ -6,7 +6,12 @@
 // compared lexicographically (ISO dates sort chronologically as text), with a
 // small UTC-noon Date helper for arithmetic that must not drift across DST.
 
-import type { InjuryLogEntry, PlanItemCheck, RecoveryPlanItem } from '@shared/types'
+import type {
+  InjuryLogEntry,
+  PlanItemCheck,
+  RecoveryPlanItem,
+  RecoveryPlanPhase
+} from '@shared/types'
 
 // ── date primitives ─────────────────────────────────────────────────────────
 // All parsing pins to UTC noon so day arithmetic never lands on a DST boundary.
@@ -209,15 +214,75 @@ export function flareStats(entries: InjuryLogEntry[], now: Date): FlareStats {
 
 // ── plan adherence ───────────────────────────────────────────────────────────
 
+export interface ResolvedTargets {
+  weekly_target: number | null
+  green_min: number | null
+  yellow_min: number | null
+}
+
+/**
+ * The dose in force for a given plan week. An item's scalar targets cover it
+ * from `start_week`; each entry in `phases` overrides them from its `from_week`
+ * onward, so the LAST phase that has started wins.
+ *
+ * Scoring must go through this rather than reading the scalar columns: a plan
+ * that ramps ("3× in week 1, then daily") otherwise rates a correctly-followed
+ * week 1 as red against week 2's target — a false efficacy claim, and exactly
+ * what forced the duplicate "— week 1" / "— daily" rows this replaces.
+ *
+ * planWeek null (a plan with no start date) means no phase has demonstrably
+ * begun, so the scalars stand.
+ */
+export function resolveItemTargets(
+  item: Partial<Pick<RecoveryPlanItem, 'weekly_target' | 'green_min' | 'yellow_min'>> &
+    Pick<RecoveryPlanItem, 'phases'>,
+  planWeek: number | null
+): ResolvedTargets {
+  const base: ResolvedTargets = {
+    weekly_target: item.weekly_target ?? null,
+    green_min: item.green_min ?? null,
+    yellow_min: item.yellow_min ?? null
+  }
+  if (planWeek == null || !item.phases || item.phases.length === 0) return base
+  let active: ResolvedTargets = base
+  for (const phase of [...item.phases].sort((a, b) => a.from_week - b.from_week)) {
+    if (phase.from_week > planWeek) break
+    active = {
+      weekly_target: phase.weekly_target,
+      green_min: phase.green_min,
+      yellow_min: phase.yellow_min
+    }
+  }
+  return active
+}
+
+/**
+ * The next phase that has NOT started yet, for "then N× / week from week X"
+ * copy. Null when the item is flat or already on its final phase.
+ */
+export function nextItemPhase(
+  item: Pick<RecoveryPlanItem, 'phases'>,
+  planWeek: number | null
+): RecoveryPlanPhase | null {
+  if (!item.phases || item.phases.length === 0) return null
+  const upcoming = [...item.phases]
+    .sort((a, b) => a.from_week - b.from_week)
+    .filter((phase) => planWeek == null || phase.from_week > planWeek)
+  return upcoming[0] ?? null
+}
+
 /**
  * Active REHAB items (kind 'exercise') carrying a weekly target — the only ones
  * adherence measures. Activities/habits/constraints are excluded from scoring
  * (activities are allowed training, not rehab work).
  */
+function hasAnyTarget(item: RecoveryPlanItem): boolean {
+  if (item.weekly_target != null && item.weekly_target > 0) return true
+  return (item.phases ?? []).some((phase) => phase.weekly_target > 0)
+}
+
 function targetedItems(items: RecoveryPlanItem[]): RecoveryPlanItem[] {
-  return items.filter(
-    (i) => i.active && i.kind === 'exercise' && i.weekly_target != null && i.weekly_target > 0
-  )
+  return items.filter((i) => i.active && i.kind === 'exercise' && hasAnyTarget(i))
 }
 
 /**
@@ -225,8 +290,9 @@ function targetedItems(items: RecoveryPlanItem[]): RecoveryPlanItem[] {
  * green threshold is authoritative when present; older plans fall back to the
  * requested weekly target.
  */
-function adherenceDose(item: RecoveryPlanItem): number {
-  return item.green_min ?? (item.weekly_target as number)
+function adherenceDose(item: RecoveryPlanItem, planWeek: number | null): number {
+  const targets = resolveItemTargets(item, planWeek)
+  return targets.green_min ?? (targets.weekly_target as number)
 }
 
 /** Count distinct checked days, insulating the score from duplicate rows. */
@@ -284,12 +350,14 @@ export function adherencePct(
 
   const fromInclusive = shiftYMD(todayYMD, -(days - 1))
 
+  const planWeek = currentPlanWeek(planStartedAt, todayYMD)
+
   let sum = 0
   let accountableCount = 0
   for (const item of targeted) {
     const window = accountableWindow(item, planStartedAt, fromInclusive, todayYMD)
     if (window == null) continue
-    const expected = adherenceDose(item) * (window.days / 7)
+    const expected = adherenceDose(item, planWeek) * (window.days / 7)
     const done = checkedDays(checks, item.id, window.fromYMD, todayYMD)
     sum += Math.min(1, expected === 0 ? 0 : done / expected)
     accountableCount++
@@ -326,32 +394,40 @@ export function currentWeekAdherenceSummary(
   planStartedAt: string | null = null
 ): CurrentWeekAdherenceSummary {
   const weekStart = isoWeekStart(todayYMD)
+  const planWeek = currentPlanWeek(planStartedAt, todayYMD)
   const checkable = items.filter(
     (item): item is RecoveryPlanItem & { kind: 'exercise' | 'activity' } =>
       item.active && (item.kind === 'exercise' || item.kind === 'activity')
   )
 
   const rows = checkable.map((item): CurrentWeekAdherenceRow => {
-    const scored = item.kind === 'exercise' && item.weekly_target != null && item.weekly_target > 0
+    // The dose in force THIS week — a ramped item is scored against the phase
+    // it is actually in, never against a later one it has not reached.
+    const targets = resolveItemTargets(item, planWeek)
+    const scored =
+      item.kind === 'exercise' && targets.weekly_target != null && targets.weekly_target > 0
     return {
       itemId: item.id,
       kind: item.kind,
       scored,
       done: checkedDays(checks, item.id, weekStart, todayYMD),
       accountable: isPlanItemAccountable(item, planStartedAt, todayYMD),
-      prescribed: item.weekly_target,
-      acceptable: scored ? item.green_min ?? item.weekly_target : null,
-      minimum: scored ? item.yellow_min : null
+      prescribed: targets.weekly_target,
+      acceptable: scored ? targets.green_min ?? targets.weekly_target : null,
+      minimum: scored ? targets.yellow_min : null
     }
   })
 
   let sum = 0
   let accountableCount = 0
   for (const item of checkable) {
-    if (item.kind !== 'exercise' || item.weekly_target == null || item.weekly_target <= 0) continue
+    const targets = resolveItemTargets(item, planWeek)
+    if (item.kind !== 'exercise' || targets.weekly_target == null || targets.weekly_target <= 0) {
+      continue
+    }
     const window = accountableWindow(item, planStartedAt, weekStart, todayYMD)
     if (window == null) continue
-    const expected = adherenceDose(item) * (window.days / 7)
+    const expected = adherenceDose(item, planWeek) * (window.days / 7)
     const done = checkedDays(checks, item.id, window.fromYMD, todayYMD)
     sum += Math.min(1, expected === 0 ? 0 : done / expected)
     accountableCount++
@@ -390,10 +466,13 @@ export function weeklyAdherence(
       let sum = 0
       let accountableCount = 0
       const scoreEnd = isCurrent ? todayYMD : weekEnd
+      // Each past week is judged by the dose that was in force THEN — a ramped
+      // item's week-1 row must not be graded against week 2's target.
+      const weekPlanWeek = currentPlanWeek(planStartedAt, scoreEnd)
       for (const item of targeted) {
         const window = accountableWindow(item, planStartedAt, weekStart, scoreEnd)
         if (window == null) continue
-        const target = adherenceDose(item) * (window.days / 7)
+        const target = adherenceDose(item, weekPlanWeek) * (window.days / 7)
         const done = checkedDays(checks, item.id, window.fromYMD, scoreEnd)
         sum += Math.min(1, target === 0 ? 0 : done / target)
         accountableCount++
@@ -412,13 +491,15 @@ export function weeklyAdherence(
 export function weeklyProgress(
   item: RecoveryPlanItem,
   checks: PlanItemCheck[],
-  todayYMD: string
+  todayYMD: string,
+  planStartedAt: string | null = null
 ): { done: number; target: number } | null {
-  if (item.weekly_target == null || item.weekly_target <= 0) return null
+  const targets = resolveItemTargets(item, currentPlanWeek(planStartedAt, todayYMD))
+  if (targets.weekly_target == null || targets.weekly_target <= 0) return null
   const weekStart = isoWeekStart(todayYMD)
   const weekEnd = shiftYMD(weekStart, 6)
   const done = checkedDays(checks, item.id, weekStart, weekEnd)
-  return { done, target: item.weekly_target }
+  return { done, target: targets.weekly_target }
 }
 
 /** Human-readable progress that never frames a future phase as currently due. */
@@ -428,7 +509,7 @@ export function weeklyProgressStatus(
   todayYMD: string,
   planStartedAt: string | null = null
 ): string | null {
-  const progress = weeklyProgress(item, checks, todayYMD)
+  const progress = weeklyProgress(item, checks, todayYMD, planStartedAt)
   if (progress == null) return null
   if (!isPlanItemAccountable(item, planStartedAt, todayYMD)) {
     return progress.done > 0 ? `${progress.done} done early` : null
@@ -494,13 +575,15 @@ export function adherenceRating(done: number, target: number | null): AdherenceR
  */
 export function itemAdherenceRating(
   done: number,
-  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min' | 'yellow_min'>
+  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min' | 'yellow_min' | 'phases'>,
+  planWeek: number | null = null
 ): AdherenceRating {
-  if (item.green_min == null || item.yellow_min == null) {
-    return adherenceRating(done, item.weekly_target)
+  const targets = resolveItemTargets(item, planWeek)
+  if (targets.green_min == null || targets.yellow_min == null) {
+    return adherenceRating(done, targets.weekly_target)
   }
-  if (done >= item.green_min) return 'met'
-  if (done >= item.yellow_min) return 'low'
+  if (done >= targets.green_min) return 'met'
+  if (done >= targets.yellow_min) return 'low'
   return 'none'
 }
 
@@ -510,9 +593,11 @@ export function itemAdherenceRating(
  * full weekly target.
  */
 export function doseTarget(
-  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min'>
+  item: Pick<RecoveryPlanItem, 'weekly_target' | 'green_min' | 'phases'>,
+  planWeek: number | null = null
 ): number | null {
-  return item.green_min ?? item.weekly_target
+  const targets = resolveItemTargets(item, planWeek)
+  return targets.green_min ?? targets.weekly_target
 }
 
 // ── weekly matrix (past-weeks history table) ─────────────────────────────────
@@ -557,9 +642,7 @@ export function weeklyMatrix(
   planStartedAt: string | null = null
 ): WeekMatrixRow[] {
   const active = items.filter((i) => i.active)
-  const targeted = active.filter(
-    (i) => i.kind === 'exercise' && i.weekly_target != null && i.weekly_target > 0
-  )
+  const targeted = active.filter((i) => i.kind === 'exercise' && hasAnyTarget(i))
   const currentWeekStart = isoWeekStart(todayYMD)
   const planStartWeek = planStartedAt != null ? isoWeekStart(planStartedAt) : null
   const rows: WeekMatrixRow[] = []
@@ -571,10 +654,12 @@ export function weeklyMatrix(
     const doneFor = (itemId: string): number =>
       checkedDays(checks, itemId, weekStart, weekEnd)
 
+    // Each historical row reports the target that applied in ITS week.
+    const rowPlanWeek = currentPlanWeek(planStartedAt, weekEnd)
     const perItem = active.map((item) => ({
       itemId: item.id,
       done: doneFor(item.id),
-      target: item.weekly_target,
+      target: resolveItemTargets(item, rowPlanWeek).weekly_target,
       accountable: accountableWindow(item, planStartedAt, weekStart, weekEnd) != null
     }))
 
@@ -582,10 +667,11 @@ export function weeklyMatrix(
     if (targeted.length > 0) {
       let sum = 0
       let accountableCount = 0
+      const weekPlanWeek = currentPlanWeek(planStartedAt, weekEnd)
       for (const item of targeted) {
         const window = accountableWindow(item, planStartedAt, weekStart, weekEnd)
         if (window == null) continue
-        const expected = adherenceDose(item) * (window.days / 7)
+        const expected = adherenceDose(item, weekPlanWeek) * (window.days / 7)
         const done = checkedDays(checks, item.id, window.fromYMD, weekEnd)
         sum += Math.min(1, expected === 0 ? 0 : done / expected)
         accountableCount++

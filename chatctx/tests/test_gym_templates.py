@@ -702,3 +702,125 @@ def test_cmd_delete_omits_retraction_summary_when_nothing_was_checked(monkeypatc
 
     out = capsys.readouterr().out
     assert out.strip() == "deleted session session-1"
+
+
+# ── timed doses ────────────────────────────────────────────────────────────
+# A prescribed hold had no representation before `secs`, so it shipped as
+# "3 sets x 1 rep" with the duration buried in a note.
+
+
+def test_validation_accepts_a_timed_hold_instead_of_reps():
+    plan = template()
+    plan["exercises"][0] = {"exercise": "Wall Sit", "sets": 3, "secs": 45}
+    normalized = validate_template_document({"templates": [plan]})
+    assert normalized[0]["exercises"][0]["secs"] == 45
+    assert normalized[0]["exercises"][0]["reps"] is None
+
+
+def test_validation_rejects_both_reps_and_secs():
+    plan = template()
+    plan["exercises"][0]["secs"] = 45
+    with pytest.raises(SystemExit, match="takes one"):
+        validate_template_document({"templates": [plan]})
+
+
+def test_validation_rejects_an_exercise_with_no_dose_measure():
+    plan = template()
+    del plan["exercises"][0]["reps"]
+    with pytest.raises(SystemExit, match="reps .* or secs"):
+        validate_template_document({"templates": [plan]})
+
+
+def test_validation_rejects_an_out_of_range_hold():
+    plan = template()
+    plan["exercises"][0] = {"exercise": "Wall Sit", "sets": 3, "secs": 3601}
+    with pytest.raises(SystemExit, match="secs"):
+        validate_template_document({"templates": [plan]})
+
+
+def test_template_item_row_carries_exactly_one_dose_measure():
+    plan = template()
+    plan["exercises"][0] = {"exercise": "Wall Sit", "sets": 3, "secs": 45}
+    prescription = validate_template_document({"templates": [plan]})[0]["exercises"][0]
+    row = gym.template_item_row("exercise-1", 0, prescription)
+    assert row["target_duration_seconds"] == 45
+    assert row["target_reps"] is None
+
+
+# ── minting a catalog row from a template ──────────────────────────────────
+
+
+def test_validation_accepts_create_with_full_catalog_metadata():
+    plan = template()
+    plan["exercises"][0] = {
+        "exercise": "Pelvic Drop",
+        "sets": 3,
+        "reps": 10,
+        "create": True,
+        "body_part": "legs",
+        "primary_muscles": ["glutes"],
+        "equipment": "bodyweight",
+        "mechanics": "isolation",
+        "movement_pattern": "hinge",
+        "aliases": ["Hip Hitch"],
+    }
+    normalized = validate_template_document({"templates": [plan]})
+    prescription = normalized[0]["exercises"][0]
+    assert prescription["create"] is True
+    assert prescription["attrs"]["primary_muscles"] == ["glutes"]
+    assert prescription["attrs"]["aliases"] == ["hip hitch"]  # stored lowercase
+
+
+def test_validation_rejects_catalog_metadata_without_create():
+    plan = template()
+    plan["exercises"][0]["primary_muscles"] = ["glutes"]
+    with pytest.raises(SystemExit, match="create"):
+        validate_template_document({"templates": [plan]})
+
+
+def test_validation_rejects_a_muscle_outside_the_vocabulary():
+    plan = template()
+    plan["exercises"][0].update({"create": True, "primary_muscles": ["gluteus"]})
+    with pytest.raises(SystemExit, match="primary_muscles"):
+        validate_template_document({"templates": [plan]})
+
+
+def test_validation_defaults_create_to_false_and_attrs_to_empty():
+    normalized = validate_template_document({"templates": [template()]})
+    prescription = normalized[0]["exercises"][0]
+    assert prescription["create"] is False
+    assert prescription["attrs"] == {}
+
+
+# ── catalog metadata normalization ─────────────────────────────────────────
+
+
+def test_normalize_exercise_attrs_accepts_a_comma_separated_muscle_string():
+    attrs = gym.normalize_exercise_attrs({"primary_muscles": "glutes, quadriceps"})
+    assert attrs["primary_muscles"] == ["glutes", "quadriceps"]
+
+
+def test_normalize_exercise_attrs_omits_fields_that_were_not_supplied():
+    assert gym.normalize_exercise_attrs({"body_part": "legs"}) == {"body_part": "legs"}
+
+
+def test_normalize_exercise_attrs_rejects_an_unknown_equipment_value():
+    with pytest.raises(SystemExit, match="equipment"):
+        gym.normalize_exercise_attrs({"equipment": "resistance band"})
+
+
+def test_normalize_exercise_attrs_rejects_an_unknown_movement_pattern():
+    with pytest.raises(SystemExit, match="movement_pattern"):
+        gym.normalize_exercise_attrs({"movement_pattern": "press"})
+
+
+def test_template_dose_text_never_renders_a_hold_as_reps():
+    assert gym.template_dose_text({"target_reps": 8, "target_duration_seconds": None}) == "8"
+    assert gym.template_dose_text({"target_reps": None, "target_duration_seconds": 45}) == "45s"
+    assert gym.template_dose_text({"target_reps": None, "target_duration_seconds": None}) == "—"
+
+
+def test_set_dose_text_never_renders_a_hold_as_reps():
+    assert gym.set_dose_text({"reps": 8, "duration_s": None}) == "8"
+    assert gym.set_dose_text({"reps": None, "duration_s": 45}) == "45s"
+    assert gym.set_dose_text({"reps": None, "duration_s": None}) == "?"

@@ -26,6 +26,7 @@ function set(overrides: Partial<GymSet> = {}): GymSet {
     exercise_name: 'Exercise',
     position: 0,
     reps: 10,
+    duration_s: null,
     weight_kg: 100,
     rpe: null,
     is_warmup: false,

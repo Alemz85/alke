@@ -712,3 +712,123 @@ def test_plan_apply_sets_only_the_initial_plan_start(
 
     assert patches
     assert patches[0].get("plan_started_at") == expected_start
+
+
+# ── phased frequency ───────────────────────────────────────────────────────
+# One weekly_target cannot express "3x in week 1, then daily", which forced a
+# second plan row per exercise. A phase overrides the scalars from its from_week.
+
+
+def _plan(**item_overrides):
+    return {"approach": "Ramp the frequency.", "items": [exercise(**item_overrides)]}
+
+
+def test_plan_accepts_a_ramped_frequency():
+    normalized = validate_plan_document(
+        _plan(start_week=1, phases=[{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}])
+    )
+    assert normalized[0]["phases"] == [
+        {"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}
+    ]
+
+
+def test_plan_accepts_several_ascending_phases():
+    normalized = validate_plan_document(
+        _plan(start_week=1, phases=[
+            {"from_week": 2, "weekly_target": 5, "green_min": 4, "yellow_min": 3},
+            {"from_week": 4, "weekly_target": 7, "green_min": 6, "yellow_min": 4},
+        ])
+    )
+    assert [p["from_week"] for p in normalized[0]["phases"]] == [2, 4]
+
+
+def test_plan_normalizes_absent_and_empty_phases_to_none():
+    assert validate_plan_document(_plan())[0]["phases"] is None
+    assert validate_plan_document(_plan(phases=[]))[0]["phases"] is None
+
+
+def test_plan_rejects_a_phase_starting_at_or_before_the_item():
+    with pytest.raises(SystemExit, match="greater than start_week"):
+        validate_plan_document(
+            _plan(start_week=2, phases=[{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}])
+        )
+
+
+def test_plan_rejects_phases_that_do_not_ascend():
+    with pytest.raises(SystemExit, match="the previous phase"):
+        validate_plan_document(
+            _plan(start_week=1, phases=[
+                {"from_week": 4, "weekly_target": 7, "green_min": 6, "yellow_min": 4},
+                {"from_week": 2, "weekly_target": 5, "green_min": 4, "yellow_min": 3},
+            ])
+        )
+
+
+def test_plan_rejects_a_phase_with_inconsistent_thresholds():
+    with pytest.raises(SystemExit, match="yellow_min <= green_min <= weekly_target"):
+        validate_plan_document(
+            _plan(start_week=1, phases=[{"from_week": 2, "weekly_target": 3, "green_min": 6, "yellow_min": 4}])
+        )
+
+
+def test_plan_requires_every_threshold_on_a_phase():
+    # A ramp changes what counts as an acceptable dose, so inheriting the
+    # previous phase's thresholds would grade week 2 by week 1's standard.
+    with pytest.raises(SystemExit, match="green_min"):
+        validate_plan_document(_plan(start_week=1, phases=[{"from_week": 2, "weekly_target": 7}]))
+
+
+def test_plan_rejects_more_phases_than_the_ceiling():
+    steps = [
+        {"from_week": w, "weekly_target": 7, "green_min": 6, "yellow_min": 4}
+        for w in range(2, 2 + injuries.MAX_PHASES + 1)
+    ]
+    with pytest.raises(SystemExit, match="at most"):
+        validate_plan_document(_plan(start_week=1, phases=steps))
+
+
+def test_plan_rejects_phases_on_a_constraint_item():
+    plan = {"approach": "Avoid.", "items": [{
+        "name": "No downhill running", "kind": "constraint", "start_week": 1,
+        "phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}],
+    }]}
+    with pytest.raises(SystemExit, match="constraint"):
+        validate_plan_document(plan)
+
+
+# ── phase resolution (mirrors resolveItemTargets in lib/injuryStats.ts) ──────
+
+
+def test_resolve_targets_uses_the_scalars_before_any_phase_starts():
+    row = {"weekly_target": 3, "green_min": 3, "yellow_min": 2,
+           "phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}]}
+    assert injuries.resolve_targets(row, 1) == {"weekly_target": 3, "green_min": 3, "yellow_min": 2}
+
+
+def test_resolve_targets_switches_once_the_phase_begins():
+    row = {"weekly_target": 3, "green_min": 3, "yellow_min": 2,
+           "phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}]}
+    assert injuries.resolve_targets(row, 2) == {"weekly_target": 7, "green_min": 6, "yellow_min": 4}
+    assert injuries.resolve_targets(row, 9) == {"weekly_target": 7, "green_min": 6, "yellow_min": 4}
+
+
+def test_resolve_targets_takes_the_last_phase_that_has_started():
+    row = {"weekly_target": 3, "green_min": 3, "yellow_min": 2, "phases": [
+        {"from_week": 2, "weekly_target": 5, "green_min": 4, "yellow_min": 3},
+        {"from_week": 4, "weekly_target": 7, "green_min": 6, "yellow_min": 4},
+    ]}
+    assert injuries.resolve_targets(row, 3)["weekly_target"] == 5
+    assert injuries.resolve_targets(row, 4)["weekly_target"] == 7
+
+
+def test_resolve_targets_falls_back_to_scalars_without_a_plan_week():
+    # A legacy plan with no start date cannot show that any phase has begun.
+    row = {"weekly_target": 3, "green_min": 3, "yellow_min": 2,
+           "phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}]}
+    assert injuries.resolve_targets(row, None)["weekly_target"] == 3
+
+
+def test_phases_text_renders_the_ramp():
+    row = {"phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}]}
+    assert injuries.phases_text(row) == "w2: 7 (4-6)"
+    assert injuries.phases_text({"phases": None}) == ""

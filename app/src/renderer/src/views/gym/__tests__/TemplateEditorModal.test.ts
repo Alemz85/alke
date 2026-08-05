@@ -34,6 +34,7 @@ function makeTemplateItem(overrides: Partial<GymTemplateItem> = {}): GymTemplate
     position: 0,
     target_sets: 3,
     target_reps: 8,
+    target_duration_seconds: null,
     target_weight_kg: null,
     rest_after_s: null,
     note: null,
@@ -89,6 +90,35 @@ describe('itemsFromTemplate', () => {
     expect(rows[0].bodyPartFilter).toBeNull()
   })
 
+  it('reopens a rep-counted item on the reps unit', () => {
+    const template = makeTemplate([makeTemplateItem({ target_sets: 3, target_reps: 8 })])
+
+    const rows = itemsFromTemplate(template, new Map())
+
+    expect(rows[0].doseUnit).toBe('reps')
+    expect(rows[0].targetDose).toBe('8')
+  })
+
+  it('reopens a timed item on the seconds unit, so editing cannot downgrade a hold to reps', () => {
+    const template = makeTemplate([
+      makeTemplateItem({ target_sets: 3, target_reps: null, target_duration_seconds: 45 })
+    ])
+
+    const rows = itemsFromTemplate(template, new Map())
+
+    expect(rows[0].doseUnit).toBe('secs')
+    expect(rows[0].targetDose).toBe('45')
+  })
+
+  it('leaves the dose blank (on reps) when the item prescribes neither', () => {
+    const template = makeTemplate([makeTemplateItem({ target_reps: null })])
+
+    const rows = itemsFromTemplate(template, new Map())
+
+    expect(rows[0].doseUnit).toBe('reps')
+    expect(rows[0].targetDose).toBe('')
+  })
+
   it('resolves each item independently by its own exercise_id', () => {
     const template = makeTemplate([
       makeTemplateItem({ id: 'item-1', exercise_id: 'exercise-1', position: 0 }),
@@ -117,7 +147,8 @@ function rows(...names: string[]): ItemRow[] {
     exerciseName: name,
     bodyPartFilter: null,
     targetSets: '',
-    targetReps: '',
+    targetDose: '',
+    doseUnit: 'reps' as const,
     targetWeightKg: '',
     restAfterSeconds: '',
     note: ''

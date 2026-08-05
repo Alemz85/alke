@@ -1,4 +1,4 @@
-import type { RecoveryPlanStep } from '@shared/types'
+import type { RecoveryPlanItem, RecoveryPlanStep } from '@shared/types'
 
 export function formatRecoveryDose(sets: number | null, reps: number | null): string | null {
   if (sets != null && reps != null) return `${sets} sets × ${reps} reps`
@@ -9,6 +9,28 @@ export function formatRecoveryDose(sets: number | null, reps: number | null): st
 
 function formatMeasure(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+/**
+ * The dose chip for one plan item. `recovery_plan_items` counts reps only, so a
+ * prescribed hold has to carry its real dose in a structured step — and the
+ * rep column then holds a placeholder 1, which rendered as "3 sets × 1 reps"
+ * directly above a step table reading "3 × 45 sec".
+ *
+ * When the item is a single non-rep step (a hold or a distance), that step IS
+ * the dose, so the chip reads from it. Multi-step routines keep the
+ * sets × reps summary for the loggable block: their per-movement detail is the
+ * step table's job, and collapsing it into one chip would drop movements.
+ */
+export function formatRecoveryItemDose(
+  item: Pick<RecoveryPlanItem, 'target_sets' | 'target_reps' | 'steps'>
+): string | null {
+  const steps = item.steps ?? []
+  const only = steps.length === 1 ? steps[0] : null
+  if (only && only.reps == null && (only.duration_seconds != null || only.distance_m != null)) {
+    return formatRecoveryStepDose({ ...only, sets: only.sets ?? item.target_sets })
+  }
+  return formatRecoveryDose(item.target_sets, item.target_reps)
 }
 
 export function formatRecoveryStepDose(step: RecoveryPlanStep): string {

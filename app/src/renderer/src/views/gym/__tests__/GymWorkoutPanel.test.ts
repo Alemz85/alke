@@ -44,6 +44,7 @@ describe('GymWorkoutPanel read view', () => {
         exercise_name: exercise.name,
         position: id - 1,
         reps: 8,
+        duration_s: null,
         weight_kg: 60,
         rpe: id === 2 ? 8.5 : null,
         is_warmup: false,

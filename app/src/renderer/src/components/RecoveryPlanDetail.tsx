@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { RecoveryPlanItem } from '@shared/types'
-import { formatRecoveryDose, formatRecoveryStepDose } from '../lib/recoveryPlan'
+import { formatRecoveryItemDose, formatRecoveryStepDose } from '../lib/recoveryPlan'
+import { nextItemPhase, resolveItemTargets } from '../lib/injuryStats'
 import './RecoveryPlanDetail.css'
 
 const GUIDANCE_LABEL: Record<Exclude<RecoveryPlanItem['kind'], 'exercise'>, string> = {
@@ -21,6 +22,33 @@ export function RecoveryRoutineTable({ item }: { item: RecoveryPlanItem }): Reac
         </div>
       ))}
     </div>
+  )
+}
+
+/**
+ * The frequency in force now, plus the next step when the prescription ramps.
+ * A ramped item ("3× in week 1, then daily") used to need two plan rows to say
+ * this; one row now carries the schedule, so the card states both.
+ */
+function FrequencyLine({
+  item,
+  currentWeek
+}: {
+  item: RecoveryPlanItem
+  currentWeek: number | null
+}): ReactElement | null {
+  const targets = resolveItemTargets(item, currentWeek)
+  const next = nextItemPhase(item, currentWeek)
+  if (targets.weekly_target == null) return null
+  return (
+    <>
+      <span className="tabular-nums">{targets.weekly_target}× / week</span>
+      {next && (
+        <span className="recovery-detail-next-phase tabular-nums">
+          then {next.weekly_target}× from week {next.from_week}
+        </span>
+      )}
+    </>
   )
 }
 
@@ -72,7 +100,7 @@ export function RecoveryPlanDetail({
                 </div>
                 <ol className="recovery-detail-list">
                   {phaseItems.map((item, index) => {
-                    const itemDose = formatRecoveryDose(item.target_sets, item.target_reps)
+                    const itemDose = formatRecoveryItemDose(item)
                     return (
                       <li key={item.id} className="recovery-detail-row">
                         <span className="recovery-detail-index tabular-nums">{index + 1}</span>
@@ -84,7 +112,7 @@ export function RecoveryPlanDetail({
                         </div>
                         <span className="recovery-detail-prescription">
                           {statusFor?.(item) && <span>{statusFor(item)}</span>}
-                          {item.weekly_target != null && <span className="tabular-nums">{item.weekly_target}× / week</span>}
+                          <FrequencyLine item={item} currentWeek={currentWeek ?? null} />
                         </span>
                       </li>
                     )

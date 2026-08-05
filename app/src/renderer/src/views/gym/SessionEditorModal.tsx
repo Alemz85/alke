@@ -33,12 +33,16 @@ import { formatDurationHM } from '../../lib/format'
 import {
   formatLocalTime,
   formatZonedDateTimeLocal,
+  todayYMD,
+  ymdKey,
   zonedDateTimeLocalToIso
 } from '../../hooks/sessionsDate'
+import { currentPlanWeek, resolveItemTargets } from '../../lib/injuryStats'
 import type { RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
 import { Dropdown } from '../../components/Dropdown'
 import { RecoveryRoutineTable } from '../../components/RecoveryPlanDetail'
 import { ExercisePicker } from './ExercisePicker'
+import type { DoseUnit } from './TemplateEditorModal'
 import '../GymView.css'
 
 const BODY_PART_OPTIONS = [
@@ -61,6 +65,9 @@ export interface SetRow extends PrefillSetRow {
   rpe: number | null
   note: string
   isEccentric: boolean
+  /** Which dose the row is counting. Editor-local: the payload carries whichever
+   *  of reps / durationS this selects, and null for the other. */
+  doseUnit: DoseUnit
 }
 
 export interface Block {
@@ -197,6 +204,8 @@ function blankRow(exerciseId: string, exerciseName: string): SetRow {
     exerciseId,
     exerciseName,
     reps: null,
+    durationS: null,
+    doseUnit: 'reps',
     weightKg: null,
     rpe: null,
     note: '',
@@ -216,7 +225,11 @@ function blocksFromSession(session: GymSession): Block[] {
       key: nextKey(),
       exerciseId: s.exercise_id,
       exerciseName: s.exercise_name,
+      // A saved hold reopens as a hold — re-editing must not quietly convert
+      // 45 seconds into 45 reps.
       reps: s.reps,
+      durationS: s.duration_s,
+      doseUnit: s.duration_s != null ? 'secs' : 'reps',
       weightKg: s.weight_kg,
       rpe: s.rpe,
       note: s.note ?? '',
@@ -234,6 +247,7 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
       last.rows.push({
         ...row,
         key: nextKey(),
+        doseUnit: row.durationS != null ? 'secs' : 'reps',
         rpe: row.rpe ?? null,
         note: row.note ?? '',
         isEccentric: false
@@ -246,7 +260,14 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
         bodyPartFilter: null,
         isEccentric: false,
         rows: [
-          { ...row, key: nextKey(), rpe: row.rpe ?? null, note: row.note ?? '', isEccentric: false }
+          {
+            ...row,
+            key: nextKey(),
+            doseUnit: row.durationS != null ? 'secs' : 'reps',
+            rpe: row.rpe ?? null,
+            note: row.note ?? '',
+            isEccentric: false
+          }
         ]
       })
     }
@@ -261,7 +282,10 @@ function blocksToNewSets(blocks: Block[]): NewGymSession['sets'] {
     for (const row of block.rows) {
       out.push({
         exercise_id: block.exerciseId,
-        reps: row.reps,
+        // Exactly one dose measure reaches the DB — the unit switch decides
+        // which, so the pair can never both be set.
+        reps: row.doseUnit === 'reps' ? row.reps : null,
+        duration_s: row.doseUnit === 'secs' ? row.durationS ?? null : null,
         weight_kg: row.weightKg,
         rpe: row.rpe,
         note: row.note.trim() || null,
@@ -316,14 +340,37 @@ function SetRowEditor({
   return (
     <div className="gym-set-row">
       <span className="gym-set-index tabular-nums">{index + 1}</span>
-      <input
-        className="gym-input gym-set-input"
-        type="number"
-        aria-label={`Set ${index + 1} reps`}
-        placeholder="reps"
-        value={row.reps ?? ''}
-        onChange={(e) => onChange({ reps: e.target.value === '' ? null : Number(e.target.value) })}
-      />
+      {/* One dose field plus the unit it counts in. A set is rep-counted or
+          time-counted, so the unit is a switch rather than a rival input the
+          user could fill in at the same time. */}
+      <span className="gym-template-dose">
+        <input
+          className="gym-input gym-set-input gym-template-dose-input"
+          type="number"
+          aria-label={`Set ${index + 1} ${row.doseUnit === 'secs' ? 'hold in seconds' : 'reps'}`}
+          placeholder={row.doseUnit === 'secs' ? 'secs' : 'reps'}
+          value={(row.doseUnit === 'secs' ? row.durationS : row.reps) ?? ''}
+          onChange={(e) => {
+            const value = e.target.value === '' ? null : Number(e.target.value)
+            onChange(row.doseUnit === 'secs' ? { durationS: value } : { reps: value })
+          }}
+        />
+        <button
+          type="button"
+          className="gym-template-dose-unit"
+          aria-label={`Set ${index + 1} dose unit: ${row.doseUnit === 'secs' ? 'seconds' : 'reps'} — click to switch`}
+          title="Switch between reps and a timed hold"
+          onClick={() =>
+            onChange(
+              row.doseUnit === 'secs'
+                ? { doseUnit: 'reps', durationS: null }
+                : { doseUnit: 'secs', reps: null }
+            )
+          }
+        >
+          {row.doseUnit === 'secs' ? 'secs' : 'reps'}
+        </button>
+      </span>
       <input
         className="gym-input gym-set-input"
         type="number"
@@ -455,6 +502,8 @@ function ExerciseBlockEditor({
       rows: rows.map((row, index) => ({
         ...row,
         key: nextKey(),
+        // The Sets × Reps shortcut is rep-counted by construction.
+        doseUnit: 'reps' as const,
         rpe: null,
         note: '',
         isEccentric: eccentricFlags[index]
@@ -865,15 +914,19 @@ export function SessionEditorModal({
     [exercisesQuery.data]
   )
   const usage = useMemo(() => exerciseUsage(sessions), [sessions])
+  // Each routine carries its OWN plan's week: a ramped item's frequency has to
+  // be read against the plan it belongs to, and a log can pull from several.
   const recoveryRoutineItems = useMemo(
     () =>
-      recoveryTemplateIds.flatMap(
-        (templateId) =>
-          recoveryTemplates
-            .find((template) => template.id === templateId)
-            ?.exerciseItems.filter((item) => item.steps != null && item.steps.length > 0) ?? []
-      ),
-    [recoveryTemplateIds, recoveryTemplates]
+      recoveryTemplateIds.flatMap((templateId) => {
+        const template = recoveryTemplates.find((entry) => entry.id === templateId)
+        if (!template) return []
+        const planWeek = currentPlanWeek(template.planStartedAt, ymdKey(todayYMD(timezone)))
+        return template.exerciseItems
+          .filter((item) => item.steps != null && item.steps.length > 0)
+          .map((item) => ({ item, planWeek }))
+      }),
+    [recoveryTemplateIds, recoveryTemplates, timezone]
   )
 
   // With set rows present the chips are display-only, derived from the blocks'
@@ -1200,20 +1253,23 @@ export function SessionEditorModal({
                 </div>
                 <span>Complete alongside the logged exercises</span>
               </div>
-              {recoveryRoutineItems.map((item) => (
-                <article className="gym-recovery-routine" key={item.id}>
-                  <div className="gym-recovery-routine-title">
-                    <div>
-                      <strong>{item.name}</strong>
-                      {item.note && <p>{item.note}</p>}
+              {recoveryRoutineItems.map(({ item, planWeek }) => {
+                const weeklyTarget = resolveItemTargets(item, planWeek).weekly_target
+                return (
+                  <article className="gym-recovery-routine" key={item.id}>
+                    <div className="gym-recovery-routine-title">
+                      <div>
+                        <strong>{item.name}</strong>
+                        {item.note && <p>{item.note}</p>}
+                      </div>
+                      {weeklyTarget != null && (
+                        <span className="tabular-nums">{weeklyTarget}× / week</span>
+                      )}
                     </div>
-                    {item.weekly_target != null && (
-                      <span className="tabular-nums">{item.weekly_target}× / week</span>
-                    )}
-                  </div>
-                  <RecoveryRoutineTable item={item} />
-                </article>
-              ))}
+                    <RecoveryRoutineTable item={item} />
+                  </article>
+                )
+              })}
             </section>
           )}
 

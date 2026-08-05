@@ -29,6 +29,7 @@ function templateItems(
     position,
     target_sets: item.target_sets,
     target_reps: item.target_reps,
+    target_duration_seconds: item.target_duration_seconds ?? null,
     target_weight_kg: item.target_weight_kg,
     rest_after_s: item.rest_after_s ?? null,
     note: item.note ?? null
@@ -43,6 +44,7 @@ function sessionSets(sessionId: string, sets: NewGymSet[], exercises: Exercise[]
     exercise_name: exerciseName(exercises, set.exercise_id),
     position,
     reps: set.reps,
+    duration_s: set.duration_s ?? null,
     weight_kg: set.weight_kg,
     rpe: set.rpe ?? null,
     is_warmup: set.is_warmup ?? false,

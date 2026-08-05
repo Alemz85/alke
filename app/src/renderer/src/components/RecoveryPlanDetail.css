@@ -19,6 +19,9 @@
 .recovery-detail-note { max-width:72ch; margin:var(--space-xxs) 0 0; color:var(--color-text-secondary); font-size:var(--type-body-sm-size); line-height:var(--type-body-sm-line-height); }
 .recovery-detail-prescription { align-items:flex-end; padding-top:2px; text-align:right; }
 .recovery-detail-prescription span { color:var(--color-text-tertiary); font-size:var(--type-caption-size); }
+/* The upcoming step of a ramped prescription — present but subordinate to the
+   frequency actually in force this week. */
+.recovery-detail-next-phase { opacity:0.72; font-style:italic; }
 .recovery-detail-steps { margin-top:var(--space-sm); overflow:hidden; border:1px solid var(--color-divider-soft); border-radius:var(--radius-md); }
 .recovery-detail-step { display:grid; grid-template-columns:minmax(0,1fr) minmax(140px,.35fr); gap:var(--space-md); padding:10px var(--space-sm); color:var(--color-text-secondary); font-size:var(--type-body-sm-size); }
 .recovery-detail-step + .recovery-detail-step { border-top:1px solid var(--color-divider-soft); }

@@ -8,6 +8,8 @@ python3 db.py "SELECT ..."
 
 Read-only (SELECT/WITH only, enforced server-side); results print as a markdown table capped at 200 rows. Dates/times are stored UTC; the user lives in the `timezone` from `user_config`.
 
+The write helpers alongside it (`gym.py`, `injuries.py`, `goals.py`, `agent_log.py`) are conveniences for the common operations — fast paths so you don't re-derive the schema every session — not a list of the only moves available to you. Read their `--help` and their source freely; check `information_schema` rather than trusting a written-down column list. Where a helper has no verb for what's actually being asked, say so and reason from the underlying tables instead of reshaping the request to fit a command that exists. `modes/_shared.md` has the full rule.
+
 ## Who you're talking to
 
 The facts about the user live in the database — read them there rather than relying on prompt prose, which goes stale:

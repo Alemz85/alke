@@ -590,7 +590,7 @@ const INJURY_LOG_COLUMNS =
 const INJURY_LOG_NUMERIC_KEYS: (keyof InjuryLogEntry)[] = ['pain_level']
 
 const RECOVERY_PLAN_ITEM_COLUMNS =
-  'id, injury_id, name, kind, weekly_target, green_min, yellow_min, start_week, target_sets, target_reps, steps, note, active, exercise_id, created_at, updated_at'
+  'id, injury_id, name, kind, weekly_target, green_min, yellow_min, phases, start_week, target_sets, target_reps, steps, note, active, exercise_id, created_at, updated_at'
 
 const RECOVERY_PLAN_ITEM_NUMERIC_KEYS: (keyof RecoveryPlanItem)[] = [
   'weekly_target',
@@ -986,12 +986,13 @@ const GYM_TEMPLATE_COLUMNS =
 const GYM_TEMPLATE_RUN_COLUMNS = 'id, template_id, started_at, ended_at, source'
 
 const GYM_TEMPLATE_ITEM_COLUMNS =
-  'id, template_id, exercise_id, position, target_sets, target_reps, target_weight_kg, rest_after_s, note'
+  'id, template_id, exercise_id, position, target_sets, target_reps, target_duration_seconds, target_weight_kg, rest_after_s, note'
 
 const GYM_TEMPLATE_ITEM_NUMERIC_KEYS: (keyof GymTemplateItem)[] = [
   'position',
   'target_sets',
   'target_reps',
+  'target_duration_seconds',
   'target_weight_kg',
   'rest_after_s'
 ]
@@ -1000,9 +1001,15 @@ const GYM_SESSION_COLUMNS =
   'id, workout_id, template_id, performed_at, title, notes, source, body_parts, created_at, updated_at'
 
 const GYM_SET_COLUMNS =
-  'id, session_id, exercise_id, position, reps, weight_kg, rpe, is_warmup, is_eccentric, note'
+  'id, session_id, exercise_id, position, reps, duration_s, weight_kg, rpe, is_warmup, is_eccentric, note'
 
-const GYM_SET_NUMERIC_KEYS: (keyof GymSet)[] = ['position', 'reps', 'weight_kg', 'rpe']
+const GYM_SET_NUMERIC_KEYS: (keyof GymSet)[] = [
+  'position',
+  'reps',
+  'duration_s',
+  'weight_kg',
+  'rpe'
+]
 
 function assertInstant(value: unknown, label: string): void {
   if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
@@ -1034,6 +1041,12 @@ function assertGymSets(sets: unknown): asserts sets is NewGymSet[] {
   for (const set of sets) {
     assertUuid(set.exercise_id, 'sets[].exercise_id')
     assertOptionalInt(set.reps, 'sets[].reps', 0, 500)
+    assertOptionalInt(set.duration_s, 'sets[].duration_s', 1, 3600)
+    // One dose measure per set, matching the DB constraint. Caught here so the
+    // failure names the field instead of surfacing as a raw Postgres violation.
+    if (set.reps != null && set.duration_s != null) {
+      throw new Error('sets[] carries both reps and duration_s — pick one')
+    }
     assertOptionalNumber(set.weight_kg, 'sets[].weight_kg', 0, 1500)
     assertOptionalNumber(set.rpe, 'sets[].rpe', 1, 10)
     if (set.is_warmup !== undefined && typeof set.is_warmup !== 'boolean') {
@@ -1066,6 +1079,12 @@ function assertTemplateItems(items: unknown): asserts items is NewGymTemplateIte
     assertUuid(item.exercise_id, 'items[].exercise_id')
     assertOptionalInt(item.target_sets, 'items[].target_sets', 1, 50)
     assertOptionalInt(item.target_reps, 'items[].target_reps', 1, 500)
+    assertOptionalInt(item.target_duration_seconds, 'items[].target_duration_seconds', 1, 3600)
+    // One dose measure per line, matching the DB constraint. Caught here so the
+    // failure names the field instead of surfacing as a raw Postgres violation.
+    if (item.target_reps != null && item.target_duration_seconds != null) {
+      throw new Error('items[] carries both target_reps and target_duration_seconds — pick one')
+    }
     assertOptionalNumber(item.target_weight_kg, 'items[].target_weight_kg', 0, 1500)
     assertOptionalInt(item.rest_after_s, 'items[].rest_after_s', 0, 3600)
     assertOptionalText(item.note, 'items[].note', 500)
@@ -1269,6 +1288,7 @@ async function insertTemplateItems(templateId: string, items: NewGymTemplateItem
     position: index,
     target_sets: item.target_sets,
     target_reps: item.target_reps,
+    target_duration_seconds: item.target_duration_seconds ?? null,
     target_weight_kg: item.target_weight_kg,
     rest_after_s: item.rest_after_s ?? null,
     note: item.note ?? null
@@ -1850,6 +1870,7 @@ async function insertGymSets(sessionId: string, sets: NewGymSet[]): Promise<void
     exercise_id: set.exercise_id,
     position: index,
     reps: set.reps,
+    duration_s: set.duration_s ?? null,
     weight_kg: set.weight_kg,
     rpe: set.rpe ?? null,
     is_warmup: set.is_warmup ?? false,
@@ -1864,6 +1885,7 @@ async function replaceGymSetsAtomically(sessionId: string, sets: NewGymSet[]): P
   const rows = sets.map((set) => ({
     exercise_id: set.exercise_id,
     reps: set.reps,
+    duration_s: set.duration_s ?? null,
     weight_kg: set.weight_kg,
     rpe: set.rpe ?? null,
     is_warmup: set.is_warmup ?? false,

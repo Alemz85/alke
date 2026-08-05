@@ -11,7 +11,12 @@ import {
   useUpdateGymTemplate
 } from '../../hooks/useGymData'
 import { displayBodyPart, formatRest } from '../../lib/gymLog'
-import { estimateTemplateDurationSeconds, formatEstimatedDuration } from './gymFormat'
+import {
+  estimateTemplateDurationSeconds,
+  formatEstimatedDuration,
+  formatTemplateDose,
+  hasNoTemplateTarget
+} from './gymFormat'
 import '../GymView.css'
 
 type Item = GymTemplate['items'][number]
@@ -29,10 +34,9 @@ function fmtRunDate(dateIso: string): string {
 }
 
 function targetLine(item: Item): string {
-  const hasSR = item.target_sets != null || item.target_reps != null
-  const sr = hasSR ? `${item.target_sets ?? '—'} × ${item.target_reps ?? '—'}` : null
+  const dose = hasNoTemplateTarget(item) ? null : formatTemplateDose(item)
   const w = item.target_weight_kg != null ? `${item.target_weight_kg} kg` : null
-  return [sr, w].filter(Boolean).join(' · ') || 'no target'
+  return [dose, w].filter(Boolean).join(' · ') || 'no target'
 }
 
 /** Effective rest for a template item: its own override, else the template default. */

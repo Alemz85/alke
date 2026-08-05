@@ -6,6 +6,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { useDeleteGymTemplate, useUpdateGymTemplate } from '../../hooks/useGymData'
 import { useCardOrder } from '../../hooks/useCardOrder'
 import { formatRest } from '../../lib/gymLog'
+import { formatTemplateDose } from './gymFormat'
 import { recoveryOverviewPreview, type RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
 import { RecoveryTemplateViewModal } from './RecoveryTemplateViewModal'
 
@@ -219,7 +220,7 @@ function TemplateCard({
               <li key={i} className="gym-tpl-card-item">
                 <span className="gym-tpl-card-item-name">{it.exercise_name}</span>
                 <span className="gym-tpl-card-item-target tabular-nums">
-                  {it.target_sets ?? '—'}×{it.target_reps ?? '—'}
+                  {formatTemplateDose(it, { compact: true })}
                 </span>
               </li>
             ))}
@@ -290,7 +291,7 @@ function ArchivedTemplateCard({
               <li key={i} className="gym-tpl-card-item">
                 <span className="gym-tpl-card-item-name">{it.exercise_name}</span>
                 <span className="gym-tpl-card-item-target tabular-nums">
-                  {it.target_sets ?? '—'}×{it.target_reps ?? '—'}
+                  {formatTemplateDose(it, { compact: true })}
                 </span>
               </li>
             ))}

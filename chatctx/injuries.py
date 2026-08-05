@@ -298,7 +298,7 @@ def cmd_show(args) -> None:
     })
     items = _request("GET", "recovery_plan_items", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "id,name,kind,start_week,weekly_target,green_min,yellow_min,target_sets,target_reps,steps,note,active,exercise:exercises(name)",
+        "select": "id,name,kind,start_week,weekly_target,green_min,yellow_min,phases,target_sets,target_reps,steps,note,active,exercise:exercises(name)",
         "order": "active.desc,start_week,kind,name",
     })
 
@@ -328,14 +328,17 @@ def cmd_show(args) -> None:
     if not items:
         print("_no recovery plan items_")
         return
-    print("| id | name | kind | starts | phase | weekly target | thresholds | dose / steps | note | active |")
-    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    print("| id | name | kind | starts | phase | weekly target | thresholds | later phases | dose / steps | note | active |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in items:
         starts = row.get("start_week") or 1
         phase = "future" if plan_week is not None and starts > plan_week else "accountable"
-        target = "" if row.get("weekly_target") is None else row["weekly_target"]
-        yellow = "" if row.get("yellow_min") is None else row["yellow_min"]
-        green = "" if row.get("green_min") is None else row["green_min"]
+        # Targets shown are the ones in force THIS week, not the item's
+        # week-1 values — a ramped item is judged by the phase it is in.
+        current = resolve_targets(row, plan_week)
+        target = "" if current["weekly_target"] is None else current["weekly_target"]
+        yellow = "" if current["yellow_min"] is None else current["yellow_min"]
+        green = "" if current["green_min"] is None else current["green_min"]
         exercise = (row.get("exercise") or {}).get("name")
         if exercise:
             dose = f"{exercise}: {row.get('target_sets') or '?'}x{row.get('target_reps') or '?'}"
@@ -346,7 +349,8 @@ def cmd_show(args) -> None:
         dose = dose.replace("|", "\\|")
         note = (row.get("note") or "").replace("|", "\\|").replace("\n", " ")
         print(f"| {row['id']} | {row.get('name') or ''} | {row.get('kind') or ''} | week {starts} | "
-              f"{phase} | {target} | {yellow}-{green} | {dose} | {note} | {row.get('active')} |")
+              f"{phase} | {target} | {yellow}-{green} | {phases_text(row)} | {dose} | {note} | "
+              f"{row.get('active')} |")
 
 
 def resolve_exercise(name: str, *, create: bool = False, body_part: str | None = None) -> dict:
@@ -411,6 +415,81 @@ def parse_optional_count(value: str, label: str, maximum: int) -> int | None:
     return number
 
 
+MAX_PHASES = 8
+
+
+def resolve_targets(row: dict, plan_week: int | None) -> dict:
+    """The dose in force for `plan_week`. The scalar columns cover the item from
+    its start_week; each phase overrides them from its own from_week, so the
+    LAST phase that has started wins. Mirrors resolveItemTargets() in the app's
+    lib/injuryStats.ts — keep the two in step."""
+    active = {field: row.get(field) for field in ("weekly_target", "green_min", "yellow_min")}
+    phases = row.get("phases") or []
+    if plan_week is None or not phases:
+        return active
+    for phase in sorted(phases, key=lambda p: p.get("from_week", 0)):
+        if phase.get("from_week", 0) > plan_week:
+            break
+        active = {field: phase.get(field) for field in ("weekly_target", "green_min", "yellow_min")}
+    return active
+
+
+def phases_text(row: dict) -> str:
+    """"w2: 7 (4-6)" per later step — the ramp, readable at a glance."""
+    phases = row.get("phases") or []
+    if not phases:
+        return ""
+    return "; ".join(
+        f"w{p.get('from_week')}: {p.get('weekly_target')} ({p.get('yellow_min')}-{p.get('green_min')})"
+        for p in sorted(phases, key=lambda p: p.get("from_week", 0))
+    )
+
+
+def validate_phases(phases: object, start_week: int, at: str) -> list[dict] | None:
+    """Validate an item's frequency SCHEDULE — the later dose steps.
+
+    Clinicians ramp rehab ("3x in week 1, then daily"), and a single
+    weekly_target cannot say that. Each phase overrides the item's scalar
+    targets from its own `from_week`; the scalars cover `start_week` until the
+    first phase begins. None/[] means a flat prescription.
+
+    Every phase carries a COMPLETE threshold set on purpose: a ramp changes what
+    counts as an acceptable dose, so inheriting green_min/yellow_min from the
+    previous phase would silently keep grading week 2 by week 1's standard.
+    """
+    if phases is None:
+        return None
+    if not isinstance(phases, list):
+        sys.exit(f"invalid plan: {at}.phases must be an array or null")
+    if not phases:
+        return None
+    if len(phases) > MAX_PHASES:
+        sys.exit(f"invalid plan: {at}.phases must contain at most {MAX_PHASES} steps")
+    normalized: list[dict] = []
+    previous_from = start_week
+    for k, raw in enumerate(phases):
+        where = f"{at}.phases[{k}]"
+        if not isinstance(raw, dict):
+            sys.exit(f"invalid plan: {where} must be an object")
+        phase = {key: raw.get(key) for key in ("from_week", "weekly_target", "green_min", "yellow_min")}
+        for field, maximum in (("from_week", 52), ("weekly_target", 14), ("green_min", 14), ("yellow_min", 14)):
+            value = phase[field]
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+                sys.exit(f"invalid plan: {where}.{field} must be an integer 1-{maximum}")
+        # Strictly increasing, and after the item's own start: a phase at or
+        # before start_week would be dead weight the scalars already cover.
+        if phase["from_week"] <= previous_from:
+            sys.exit(
+                f"invalid plan: {where}.from_week must be greater than "
+                f"{'the previous phase' if k else 'start_week'} ({previous_from})"
+            )
+        previous_from = phase["from_week"]
+        if not phase["yellow_min"] <= phase["green_min"] <= phase["weekly_target"]:
+            sys.exit(f"invalid plan: {where} requires yellow_min <= green_min <= weekly_target")
+        normalized.append(phase)
+    return normalized
+
+
 def validate_plan_document(plan: object) -> list[dict]:
     """Validate the complete canonical plan before any network mutation."""
     if not isinstance(plan, dict) or not isinstance(plan.get("approach"), str) or not plan["approach"].strip():
@@ -427,7 +506,8 @@ def validate_plan_document(plan: object) -> list[dict]:
             sys.exit(f"invalid plan: items[{i}] must be an object")
         item = {key: raw.get(key) for key in (
             "name", "kind", "weekly_target", "green_min", "yellow_min", "note",
-            "start_week", "exercise", "create", "body_part", "target_sets", "target_reps", "steps")}
+            "start_week", "exercise", "create", "body_part", "target_sets", "target_reps",
+            "steps", "phases")}
         name = item["name"].strip() if isinstance(item["name"], str) else ""
         if not name or name.lower() in names:
             sys.exit(f"invalid plan: items[{i}] name is empty or duplicated")
@@ -476,8 +556,9 @@ def validate_plan_document(plan: object) -> list[dict]:
                 sys.exit(f"invalid plan: items[{i}].steps[{j}].note must be a string or null")
             normalized_step["name"] = normalized_step["name"].strip()
             steps[j] = normalized_step
+        item["phases"] = validate_phases(item["phases"], item["start_week"], f"items[{i}]")
         if item["kind"] == "constraint":
-            if any(item[field] is not None for field in ("weekly_target", "green_min", "yellow_min", "exercise", "body_part", "target_sets", "target_reps", "steps")) or item["create"]:
+            if any(item[field] is not None for field in ("weekly_target", "green_min", "yellow_min", "exercise", "body_part", "target_sets", "target_reps", "steps", "phases")) or item["create"]:
                 sys.exit(f"invalid plan: items[{i}] constraint carries targets or Gym fields")
         elif item["kind"] == "exercise":
             if any(item[field] is None for field in ("weekly_target", "green_min", "yellow_min")):
@@ -497,7 +578,7 @@ def validate_plan_document(plan: object) -> list[dict]:
                 sys.exit(f"invalid plan: items[{i}] linked exercise lacks target_sets/target_reps")
             if item["body_part"] is not None and not item["create"]:
                 sys.exit(f"invalid plan: items[{i}].body_part only applies when \"create\": true")
-        elif any(item[field] is not None for field in ("exercise", "body_part", "target_sets", "target_reps", "steps")) or item["create"]:
+        elif any(item[field] is not None for field in ("exercise", "body_part", "target_sets", "target_reps", "steps", "phases")) or item["create"]:
             sys.exit(f"invalid plan: items[{i}] only exercises may carry Gym fields")
         normalized.append(item)
     return normalized
@@ -562,26 +643,39 @@ def cmd_plan_list(args) -> None:
     plan_week = current_plan_week(plan_started_at, user_today())
     rows = _request("GET", "recovery_plan_items", params={
         "injury_id": f"eq.{args.injury_id}",
-        "select": "id,name,kind,start_week,weekly_target,green_min,yellow_min,target_sets,target_reps,steps,note,active,exercise:exercises(name)",
+        "select": "id,name,kind,start_week,weekly_target,green_min,yellow_min,phases,target_sets,target_reps,steps,note,active,exercise:exercises(name)",
         "order": "active.desc,start_week,kind,name",
     })
     if not rows:
         print("_no recovery plan items_")
         return
     print(f"Plan start: {plan_started_at or 'not set'} · current plan week: {plan_week if plan_week is not None else 'legacy'}")
-    print("| id | name | kind | starts | phase | weekly target | thresholds | gym dose | note | active | gym exercise |")
-    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    print("| id | name | kind | starts | phase | weekly target | thresholds | later phases | gym dose | note | active | gym exercise |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in rows:
-        target = "" if r.get("weekly_target") is None else r["weekly_target"]
-        green = "" if r.get("green_min") is None else r["green_min"]
-        yellow = "" if r.get("yellow_min") is None else r["yellow_min"]
+        current = resolve_targets(r, plan_week)
+        target = "" if current["weekly_target"] is None else current["weekly_target"]
+        green = "" if current["green_min"] is None else current["green_min"]
+        yellow = "" if current["yellow_min"] is None else current["yellow_min"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
         exercise = (r.get("exercise") or {}).get("name") or ""
         dose = f"{r['target_sets']}x{r['target_reps']}" if r.get("target_sets") and r.get("target_reps") else ""
         starts = r.get("start_week") or 1
         phase = "future" if plan_week is not None and starts > plan_week else "accountable"
         print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | week {starts} | {phase} | {target} | "
-              f"{yellow}-{green} | {dose} | {note} | {r.get('active')} | {exercise} |")
+              f"{yellow}-{green} | {phases_text(r)} | {dose} | {note} | {r.get('active')} | {exercise} |")
+
+
+def parse_phases_arg(value: str, start_week: int, at: str) -> list[dict] | None:
+    """--phases takes either 'none' (clear the ramp) or inline JSON, so a single
+    item can be given a schedule without authoring a whole plan document."""
+    if value.strip().lower() == "none":
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        sys.exit(f"invalid --phases JSON: {exc}")
+    return validate_phases(parsed, start_week, at)
 
 
 def cmd_plan_add(args) -> None:
@@ -604,6 +698,9 @@ def cmd_plan_add(args) -> None:
         body["target_sets"] = parse_optional_count(args.target_sets, "target-sets", 20)
     if args.target_reps is not None:
         body["target_reps"] = parse_optional_count(args.target_reps, "target-reps", 100)
+    phases_arg = getattr(args, "phases", None)
+    if phases_arg is not None:
+        body["phases"] = parse_phases_arg(phases_arg, args.start_week, "plan-add")
     rows = _request("POST", "recovery_plan_items", body=body, prefer="return=representation")
     print(f"created plan item {rows[0]['id']}")
 
@@ -633,6 +730,19 @@ def cmd_plan_update(args) -> None:
         body["target_sets"] = parse_optional_count(args.target_sets, "target-sets", 20)
     if args.target_reps is not None:
         body["target_reps"] = parse_optional_count(args.target_reps, "target-reps", 100)
+    phases_arg = getattr(args, "phases", None)
+    if phases_arg is not None:
+        # An update may not know the row's start_week, so read it back — the
+        # first phase must begin AFTER the item becomes accountable.
+        start_week = args.start_week
+        if start_week is None:
+            current = _request("GET", "recovery_plan_items", params={
+                "id": f"eq.{args.id}", "select": "start_week", "limit": "1",
+            })
+            if not current:
+                sys.exit(f"plan item {args.id} not found")
+            start_week = current[0].get("start_week") or 1
+        body["phases"] = parse_phases_arg(phases_arg, start_week, "plan-update")
     if args.steps_file is not None:
         if args.steps_file == "none":
             body["steps"] = None
@@ -772,6 +882,11 @@ def main() -> None:
                             help="weekly count that is the minimum-effective dose (1-14)")
     p_plan_add.add_argument("--target-sets", dest="target_sets", help="Gym prescription sets (1-20)")
     p_plan_add.add_argument("--target-reps", dest="target_reps", help="Gym prescription reps (1-100)")
+    p_plan_add.add_argument(
+        "--phases",
+        help="JSON array of later dose steps, e.g. "
+             '\'[{"from_week":2,"weekly_target":7,"green_min":6,"yellow_min":4}]\''
+    )
     p_plan_add.set_defaults(func=cmd_plan_add)
 
     p_plan_upd = sub.add_parser("plan-update", help="Update an existing recovery plan item")
@@ -795,6 +910,10 @@ def main() -> None:
                             help="minimum-effective dose per week (1-14), or 'none' to clear")
     p_plan_upd.add_argument("--target-sets", dest="target_sets", help="Gym prescription sets (1-20), or 'none'")
     p_plan_upd.add_argument("--target-reps", dest="target_reps", help="Gym prescription reps (1-100), or 'none'")
+    p_plan_upd.add_argument(
+        "--phases",
+        help="JSON array of later dose steps (same shape as plan-add), or 'none' to clear"
+    )
     p_plan_upd.add_argument("--steps-file", dest="steps_file",
                             help="JSON array of structured routine steps, or 'none' to clear")
     p_plan_upd.set_defaults(func=cmd_plan_update)

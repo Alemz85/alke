@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { validatePlan } from '../recovery_plan_contract.mjs'
 
 // Every exercise-kind item is catalog-backed now, so the default fixture
@@ -132,4 +134,74 @@ test('rejects create on habit items', () => {
 test('rejects a blank exercise link', () => {
   const plan = { approach: 'Stack phases.', items: [exercise({ exercise: '  ' })] }
   assert.ok(validatePlan(plan).some((error) => error.includes('must not be blank')))
+})
+
+// ── phased frequency ───────────────────────────────────────────────────────
+function validPlan() {
+  return { approach: 'Ramp the frequency.', items: [exercise()] }
+}
+
+// One weekly_target cannot say "3× in week 1, then daily", which forced
+// duplicate rows per exercise. A phase overrides the scalars from its from_week.
+
+test('accepts an item whose frequency ramps by plan week', () => {
+  const plan = validPlan()
+  plan.items[0].phases = [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+  assert.deepEqual(validatePlan(plan), [])
+})
+
+test('accepts several ascending phases', () => {
+  const plan = validPlan()
+  plan.items[0].start_week = 1
+  plan.items[0].phases = [
+    { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 },
+    { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 }
+  ]
+  assert.deepEqual(validatePlan(plan), [])
+})
+
+test('rejects a phase that starts at or before the item does', () => {
+  const plan = validPlan()
+  plan.items[0].start_week = 2
+  plan.items[0].phases = [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+  assert.ok(validatePlan(plan).some((e) => e.includes('greater than start_week')))
+})
+
+test('rejects phases that do not ascend', () => {
+  const plan = validPlan()
+  plan.items[0].start_week = 1
+  plan.items[0].phases = [
+    { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 },
+    { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 }
+  ]
+  assert.ok(validatePlan(plan).some((e) => e.includes('the previous phase')))
+})
+
+test('rejects a phase with inconsistent thresholds', () => {
+  const plan = validPlan()
+  plan.items[0].phases = [{ from_week: 2, weekly_target: 3, green_min: 6, yellow_min: 4 }]
+  assert.ok(validatePlan(plan).some((e) => e.includes('yellow_min ≤ green_min ≤ weekly_target')))
+})
+
+test('requires every threshold on a phase — a ramp changes what counts as a dose', () => {
+  const plan = validPlan()
+  plan.items[0].phases = [{ from_week: 2, weekly_target: 7 }]
+  const errors = validatePlan(plan)
+  assert.ok(errors.some((e) => e.includes('green_min')))
+  assert.ok(errors.some((e) => e.includes('yellow_min')))
+})
+
+test('rejects phases on a constraint item', () => {
+  const plan = validPlan()
+  const constraint = plan.items.find((i) => i.kind === 'constraint')
+  if (constraint) {
+    constraint.phases = [{ from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }]
+    assert.ok(validatePlan(plan).length > 0)
+  }
+})
+
+test('the shipped starter plan validates against its own contract', () => {
+  const script = fileURLToPath(new URL('../recovery_plan_contract.mjs', import.meta.url))
+  const out = execFileSync('node', [script, 'template'])
+  assert.deepEqual(validatePlan(JSON.parse(out.toString())), [])
 })

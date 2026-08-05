@@ -13,6 +13,7 @@ function item(id: string, name: string, startWeek: number): RecoveryPlanItem {
     weekly_target: 3,
     green_min: 2,
     yellow_min: 1,
+    phases: null,
     start_week: startWeek,
     target_sets: 3,
     target_reps: 12,

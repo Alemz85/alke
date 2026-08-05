@@ -279,6 +279,19 @@ export interface RecoveryPlanStep {
   note: string | null
 }
 
+/**
+ * One later step in an item's frequency schedule. Clinicians ramp rehab —
+ * "3× in week 1, then daily" — and a single weekly_target cannot say that, so
+ * a phase overrides the item's scalar targets from `from_week` onward.
+ */
+export interface RecoveryPlanPhase {
+  /** Cumulative plan week this dose starts in. Always after the item's start_week. */
+  from_week: number
+  weekly_target: number
+  green_min: number
+  yellow_min: number
+}
+
 export interface RecoveryPlanItem {
   id: string
   injury_id: string
@@ -296,6 +309,12 @@ export interface RecoveryPlanItem {
   yellow_min: number | null
   // Cumulative plan phase: week 1 starts at injury.plan_started_at.
   start_week: number
+  // Later dose steps, ordered by from_week. The scalar targets above cover
+  // `start_week` until the first phase begins; each phase then overrides them
+  // from its own from_week. Null/empty = a flat prescription, the prior
+  // behaviour. Resolve with resolveItemTargets() — never read the scalars
+  // directly when scoring a specific week.
+  phases: RecoveryPlanPhase[] | null
   // Structured exercise dose authored by the recovery-plan agent. When the
   // item is linked to the exercise catalog these values prefill Gym logging.
   target_sets: number | null
@@ -352,7 +371,8 @@ export interface Exercise {
   created_at: string | null
 }
 
-// One line of a gym template: an exercise plus optional targets ("3×8 @ 60kg").
+// One line of a gym template: an exercise plus optional targets ("3×8 @ 60kg",
+// or "3 × 45s" for a hold).
 export interface GymTemplateItem {
   id: string
   template_id: string
@@ -360,7 +380,12 @@ export interface GymTemplateItem {
   exercise_name: string // joined from exercises at read time
   position: number
   target_sets: number | null
+  // A template line carries ONE dose measure: reps OR duration, never both
+  // (DB constraint gym_template_exercises_single_dose_measure). A prescribed
+  // hold — "wall sit 3 × 45s" — is time-counted; encoding it as 1 rep would
+  // misreport it everywhere it renders.
   target_reps: number | null
+  target_duration_seconds: number | null
   target_weight_kg: number | null
   // Per-exercise rest override in seconds. null = fall back to the template's
   // default_rest_s. The effective rest is `rest_after_s ?? default_rest_s`.
@@ -405,7 +430,12 @@ export interface GymSet {
   exercise_id: string
   exercise_name: string // joined from exercises at read time
   position: number
+  // A set records ONE dose measure: reps OR a held duration, never both (DB
+  // constraint gym_sets_single_dose_measure). Both null is still valid — a
+  // blank row is an existing granularity tier. Logging a 45-second wall sit as
+  // `reps: 1` is what this column exists to stop.
   reps: number | null
+  duration_s: number | null
   weight_kg: number | null // null = bodyweight
   rpe: number | null
   is_warmup: boolean
@@ -439,7 +469,9 @@ export interface GymSession {
 
 export interface NewGymSet {
   exercise_id: string
+  // One dose measure per set — reps OR duration. Sending both is rejected.
   reps: number | null
+  duration_s?: number | null
   weight_kg: number | null
   rpe?: number | null
   is_warmup?: boolean
@@ -480,7 +512,9 @@ export interface GymSessionPatch {
 export interface NewGymTemplateItem {
   exercise_id: string
   target_sets: number | null
+  // One dose measure per item — reps OR duration. Sending both is rejected.
   target_reps: number | null
+  target_duration_seconds?: number | null
   target_weight_kg: number | null
   // Per-exercise rest override in seconds; null/omitted = use the template default.
   rest_after_s?: number | null

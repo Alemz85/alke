@@ -60,6 +60,7 @@ import {
   currentPlanWeek,
   currentWeekAdherenceSummary,
   itemAdherenceRating,
+  resolveItemTargets,
   isPlanItemAccountable,
   phaseStartYMD,
   dailyPainSeries,
@@ -73,6 +74,7 @@ import {
   weeklyAdherence,
   weeklyMatrix,
   weeklyProgressStatus,
+  type CurrentWeekAdherenceRow,
   type FlareStats
 } from '../lib/injuryStats'
 import {
@@ -1156,6 +1158,45 @@ function checkableColumns(plan: RecoveryPlanItem[]): {
   }
 }
 
+/**
+ * The week's completed count, with a meter reading it against the prescribed
+ * dose. The bar is the point: a bare "1" says nothing about whether the week is
+ * on track, while a fill sitting short of the first tick reads instantly as
+ * below minimum. Ticks mark the minimum and acceptable thresholds — the same
+ * numbers as the two columns to the right, in the order they are reached.
+ *
+ * The fill colour is inherited from the row's rating class, so the meter can
+ * never disagree with the row tint or the status label. Unscored rows (an
+ * activity, or an exercise with no weekly target) get the number alone: there
+ * is no dose to measure against, and a full-looking bar would invent one.
+ */
+function CompletedMeter({ row }: { row: CurrentWeekAdherenceRow | undefined }): ReactElement {
+  const done = row?.done ?? 0
+  const prescribed = row?.prescribed ?? null
+  if (row == null || prescribed == null || prescribed <= 0) {
+    return <span className="tabular-nums">{done}</span>
+  }
+  const pct = (value: number): number => Math.max(0, Math.min(100, (value / prescribed) * 100))
+  return (
+    <span className="injury-completed-meter">
+      <span className="injury-completed-meter-value tabular-nums">
+        {done}
+        <span className="injury-completed-meter-of"> / {prescribed}</span>
+      </span>
+      {/* Decorative: every number it encodes is already text in this row. */}
+      <span className="injury-completed-meter-track" aria-hidden="true">
+        <span className="injury-completed-meter-fill" style={{ width: `${pct(done)}%` }} />
+        {row.minimum != null && row.minimum < prescribed && (
+          <span className="injury-completed-meter-tick" style={{ left: `${pct(row.minimum)}%` }} />
+        )}
+        {row.acceptable != null && row.acceptable < prescribed && (
+          <span className="injury-completed-meter-tick" style={{ left: `${pct(row.acceptable)}%` }} />
+        )}
+      </span>
+    </span>
+  )
+}
+
 function ThisWeekTable({
   injuryId,
   plan,
@@ -1226,6 +1267,12 @@ function ThisWeekTable({
   const summary = currentWeekAdherenceSummary(plan, checks, todayYMD, planStartedAt)
   const summaryByItem = new Map(summary.rows.map((row) => [row.itemId, row]))
 
+  // The scorecard scores THIS week: an item whose phase starts later is not
+  // accountable yet, so it belongs under the table rather than in it. The daily
+  // grid below still carries every column, so nothing becomes uncheckable.
+  const accountableColumns = columns.filter((item) => summaryByItem.get(item.id)?.accountable !== false)
+  const upcomingColumns = columns.filter((item) => summaryByItem.get(item.id)?.accountable === false)
+
   // checked ids per YMD, and day-max pain per YMD.
   const checkedByDay = useMemo(() => {
     const m = new Map<string, Set<string>>()
@@ -1280,19 +1327,13 @@ function ThisWeekTable({
     return row.minimum != null ? 'none' : 'untargeted'
   }
 
+  // Only accountable rows reach the table (future phases are listed beneath it),
+  // so every status here is a verdict on work that is actually due this week.
   const renderStatus = (item: RecoveryPlanItem): ReactElement => {
     const row = summaryByItem.get(item.id)
-    if (row == null) return <span className="injury-scorecard-status--unscored">Unscored</span>
-    if (!row.accountable) {
-      const phaseStart = phaseStartYMD(item, planStartedAt)
-      return (
-        <span className="injury-scorecard-status injury-scorecard-status--future">
-          {phaseStart && <span>Starts {formatDateShort(phaseStart)}</span>}
-          {row.done > 0 && <span className="tabular-nums">{`${row.done} done early`}</span>}
-        </span>
-      )
+    if (row == null || !row.scored) {
+      return <span className="injury-scorecard-status--unscored">Unscored</span>
     }
-    if (!row.scored) return <span className="injury-scorecard-status--unscored">Unscored</span>
     if (row.acceptable != null && row.done >= row.acceptable) {
       return <span className="injury-scorecard-status injury-scorecard-status--met">Acceptable</span>
     }
@@ -1374,14 +1415,17 @@ function ThisWeekTable({
               <tr>
                 <th>Item</th>
                 <th>Completed</th>
-                <th>Prescribed</th>
-                <th>Acceptable</th>
+                {/* Thresholds ascend left to right, in the order they are
+                    reached: you pass Minimum, then Acceptable, then the full
+                    Prescribed dose. */}
                 <th>Minimum</th>
+                <th>Acceptable</th>
+                <th>Prescribed</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {columns.map((item) => {
+              {accountableColumns.map((item) => {
                 const row = summaryByItem.get(item.id)
                 return (
                   <tr
@@ -1389,10 +1433,12 @@ function ThisWeekTable({
                     className={`injury-current-week-scorecard-row injury-current-week-scorecard-row--${scorecardRowRating(item)}`}
                   >
                     <td>{item.name}</td>
-                    <td className="tabular-nums">{row?.done ?? 0}</td>
-                    <td className="tabular-nums">{row?.prescribed ?? '—'}</td>
-                    <td className="tabular-nums">{row?.acceptable ?? '—'}</td>
+                    <td>
+                      <CompletedMeter row={row} />
+                    </td>
                     <td className="tabular-nums">{row?.minimum ?? '—'}</td>
+                    <td className="tabular-nums">{row?.acceptable ?? '—'}</td>
+                    <td className="tabular-nums">{row?.prescribed ?? '—'}</td>
                     <td>{renderStatus(item)}</td>
                   </tr>
                 )
@@ -1400,6 +1446,28 @@ function ThisWeekTable({
             </tbody>
           </table>
         </div>
+        {upcomingColumns.length > 0 && (
+          // Later-phase items are NOT part of this week's adherence, so they do
+          // not get scorecard rows — listing them there read as work being
+          // missed. They stay visible here, and stay checkable in the daily
+          // grid below (a check done early still counts as done, never as due).
+          <p className="injury-current-week-upcoming">
+            <span className="injury-current-week-upcoming-label">Starts later</span>
+            {upcomingColumns.map((item) => {
+              const row = summaryByItem.get(item.id)
+              const phaseStart = phaseStartYMD(item, planStartedAt)
+              return (
+                <span key={item.id} className="injury-current-week-upcoming-item">
+                  {item.name}
+                  {phaseStart && <span className="tabular-nums"> · {formatDateShort(phaseStart)}</span>}
+                  {row != null && row.done > 0 && (
+                    <span className="tabular-nums"> · {row.done} done early</span>
+                  )}
+                </span>
+              )
+            })}
+          </p>
+        )}
       </div>
       <div className="injury-adh-wrap">
         <table className="injury-adh-table">
@@ -1457,9 +1525,19 @@ function ThisWeekTable({
 
 // ── past-weeks history table ──────────────────────────────────────────────────
 
-function RatingChip({ done, item }: { done: number; item: RecoveryPlanItem }): ReactElement {
-  const rating = itemAdherenceRating(done, item)
-  const target = item.weekly_target
+/** `planWeek` is the plan week of the row being rendered — a past week is judged
+ *  by the dose that applied THEN, not by the item's current phase. */
+function RatingChip({
+  done,
+  item,
+  planWeek
+}: {
+  done: number
+  item: RecoveryPlanItem
+  planWeek: number | null
+}): ReactElement {
+  const rating = itemAdherenceRating(done, item, planWeek)
+  const target = resolveItemTargets(item, planWeek).weekly_target
   return (
     <span className={`injury-rate-chip injury-rate--${rating} tabular-nums`}>
       {target != null && target > 0 ? `${done}/${target}` : `${done}`}
@@ -1541,6 +1619,9 @@ function PastWeeksTable({
         <tbody>
           {rows.map((row) => {
             const anyExisted = columns.some((item) => existedIn(item, row.weekEnd))
+            // Plan week of THIS row, so a ramped item is rated against the dose
+            // that was in force then rather than its current phase.
+            const rowPlanWeek = currentPlanWeek(planStartedAt, row.weekEnd)
             return (
               <tr key={row.weekStart} className="injury-adh-row">
                 <td className="injury-wk-label tabular-nums">{row.label}</td>
@@ -1569,7 +1650,7 @@ function PastWeeksTable({
                   return (
                     <td key={item.id} className={tdCls}>
                       {existedIn(item, row.weekEnd) && cell.accountable ? (
-                        <RatingChip done={cell.done} item={item} />
+                        <RatingChip done={cell.done} item={item} planWeek={rowPlanWeek} />
                       ) : (
                         <span className="injury-adh-score-empty">—</span>
                       )}

@@ -33,6 +33,7 @@ describe('optimistic Gym records', () => {
         exercise_id: 'exercise-1',
         target_sets: 3,
         target_reps: 8,
+        target_duration_seconds: null,
         target_weight_kg: 60,
         rest_after_s: 120,
         note: null
