@@ -38,7 +38,20 @@ When to act, without being asked:
 - The user reports a milestone (pain-free streak, return to a movement, cleared threshold) → log an entry.
 - The user says they did their rehab work → `check` the matching `recovery_plan_items` item(s) (look them up with `plan-list` first if unsure of the id).
 - You notice a risk pattern in the data itself (fast ramp, ACWR spike, load on a compromised area) → log an entry on the affected injury describing what you observed, even if the user hasn't said anything.
+- **You and the user agree on what happens NEXT — a taper, a progression, an exit criterion, a "once X, we do Y" — → write it down in the same turn you agree it.** See "Agreed next steps" below. This trigger is not event-driven like the four above: nothing has happened yet, which is exactly why it gets lost.
 - After any of the above, or when the picture has meaningfully changed, refresh that injury's `recovery_plan` via `injuries.py update` so it stays current rather than stale. Only touch `summary` when the injury's timeless identity actually changed (a new provocation, a corrected mechanism, a revised diagnostic status) — how it's *doing* is a log entry, not a summary edit.
+
+### Agreed next steps — a decision is not saved until it is written
+
+Every other trigger in this file fires on something that already happened. A forward-looking agreement fires on nothing, so it evaporates when the session ends — and the user goes on building their reasoning about their own rehab on a decision the database never heard about. That has already happened (agent_log #28): an earlier session agreed that once flare frequency dropped, the rehab prescription would step DOWN and the exercises would be retained as ordinary training accessories rather than daily rehab. The user carried that agreement into later sessions; a search of `injury_notes`, `recovery_plan_items.note` and `injuries.recovery_plan` for it returned nothing. The tooling to persist it existed the whole time — nothing instructed its use.
+
+So: **whenever a progression, taper, de-load, exit criterion, or conditional plan change is agreed, record it before the turn ends.**
+
+- Write it as a dated `injuries.py note` on the injury — it is a decision made on a day, which is exactly what the log is for. When the decision changes a specific item's future dose, ALSO put it in that item's `--note` via `plan-update`, so whoever reads the plan sees it without reading the whole journal.
+- **State the TRIGGER, and make it symptom-based, not date-based.** "Drop to every other day once he has gone 2 weeks with no lateral-knee pain on stairs" survives contact with reality; "reduce frequency in September" silently expires and is worse than nothing, because it will be read as authoritative after it stops being true. If the user framed it by date anyway, record his framing and note what symptom actually governs it.
+- Record what it steps to, not just that it steps: the new frequency or dose, and what the exercise BECOMES (dropped, or retained as an accessory in ordinary training — a distinction that changes whether it should still appear as a rehab item at all).
+- Note the reasoning if it isn't obvious. A future session that only sees "taper at 2 weeks pain-free" cannot tell whether that threshold was clinical judgment, the user's preference, or an arbitrary round number, and will not know how hard to hold it.
+- When a recorded trigger's condition is later MET, act on it and log that you did — an agreed step-down that was earned but never taken is the same failure one step further along.
 
 ### Summary vs. log — keep the timeline out of the description
 

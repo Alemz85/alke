@@ -918,6 +918,221 @@ Deno.test("state_of_mind metric name is unmapped (column dropped) and ignored gr
 });
 
 // ---------------------------------------------------------------------------
+// Empty-metric filtering (Health Auto Export "select all" sends every metric
+// type, including ones the watch has never recorded)
+// ---------------------------------------------------------------------------
+
+Deno.test("a metric with an empty data array writes nothing and creates no row", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        { name: "resting_heart_rate", units: "bpm", data: [] },
+        { name: "step_count", units: "count", data: [] },
+        { name: "sleep_analysis", units: "hr", data: [] },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  // No date was ever named, so there is no row to write at all -- an empty
+  // metric must never produce an all-null daily_metrics row.
+  assertEquals(result.dailyMetrics.length, 0);
+});
+
+Deno.test("a zero quantity never overwrites a real value: dropped for every column but wrist temp", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        {
+          name: "weight_body_mass",
+          units: "kg",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        {
+          name: "vo2_max",
+          units: "ml/(kg*min)",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        {
+          name: "flights_climbed",
+          units: "count",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        {
+          name: "walking_running_distance",
+          units: "km",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        // Wrist temperature is a signed deviation from baseline: 0.0 is a real
+        // reading ("exactly at baseline"), not a placeholder.
+        {
+          name: "apple_sleeping_wrist_temperature",
+          units: "degC",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 1);
+  const dm = result.dailyMetrics[0];
+  assertEquals(dm.resting_hr, null);
+  assertEquals(dm.weight_kg, null);
+  assertEquals(dm.vo2max, null);
+  assertEquals(dm.flights_climbed, null);
+  assertEquals(dm.walking_running_distance_m, null);
+  assertEquals(dm.wrist_temp_deviation_c, 0);
+});
+
+Deno.test("a zero entry alongside real entries is omitted from the sum, not counted", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "step_count",
+          units: "count",
+          data: [
+            { date: "2026-07-08 08:00:00 +0200", qty: 0 },
+            { date: "2026-07-08 18:00:00 +0200", qty: 3200 },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics[0].steps, 3200);
+});
+
+Deno.test("a zeroed daily_metrics column stays null so the merge cannot clobber a stored value", () => {
+  // The regression this guards: mergeDailyMetric lets any non-null incoming
+  // value win, so a placeholder 0 arriving in a later sync would overwrite a
+  // real stored reading. Dropping it at parse time keeps the column null,
+  // which the merge already knows never to write over.
+  const zeroSync = parseIngestPayload({
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [{ date: "2026-07-08 00:00:00 +0200", qty: 0 }],
+        },
+        // A real value on another column, so the date still produces a row
+        // that reaches the merge -- the zero must not ride along with it.
+        {
+          name: "step_count",
+          units: "count",
+          data: [{ date: "2026-07-08 09:00:00 +0200", qty: 2400 }],
+        },
+      ],
+    },
+  });
+  const merged = mergeDailyMetric(
+    { date: "2026-07-08", resting_hr: 54, steps: 100 },
+    zeroSync.dailyMetrics[0],
+  );
+  assertEquals(merged.resting_hr, 54); // stored value survives the zero
+  assertEquals(merged.steps, 2400); // real incoming value still wins
+});
+
+Deno.test("a 0-hour sleep entry is a placeholder: no sleep group is written", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [{
+        name: "sleep_analysis",
+        units: "hr",
+        data: [{ date: "2026-07-08 07:00:00 +0200", totalSleep: 0 }],
+      }],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 0);
+});
+
+Deno.test("a sleep entry with only a date and no usable fields creates no row", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [{
+        name: "sleep_analysis",
+        units: "hr",
+        data: [{ date: "2026-07-08 07:00:00 +0200", source: "Apple Watch" }],
+      }],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 0);
+});
+
+Deno.test("a real sleep night still parses in full after the placeholder guard", () => {
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [{
+        name: "sleep_analysis",
+        units: "hr",
+        data: [{
+          date: "2026-07-08 07:00:00 +0200",
+          sleepStart: "2026-07-07 23:10:00 +0200",
+          sleepEnd: "2026-07-08 07:00:00 +0200",
+          totalSleep: 7.5,
+          deep: 1.2,
+        }],
+      }],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 1);
+  assertEquals(result.dailyMetrics[0].sleep_duration_min, 450);
+});
+
+Deno.test("maps body_fat_percentage as a percent scalar (last value per date wins)", () => {
+  // Enabling every metric type in Health Auto Export added this stream partway
+  // through the record. HAE sends it as a percentage 0-100 with units "%", NOT a
+  // 0-1 fraction, and it must not be rescaled.
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "body_fat_percentage",
+          units: "%",
+          data: [
+            { date: "2026-07-20 07:00:00 +0200", qty: 22.3 },
+            { date: "2026-07-20 21:00:00 +0200", qty: 22.0 },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 1);
+  assertEquals(result.dailyMetrics[0].body_fat_pct, 22.0); // last wins, not summed
+});
+
+Deno.test("a zero body_fat_percentage is a placeholder and never overwrites a stored reading", () => {
+  const result = parseIngestPayload({
+    data: {
+      workouts: [],
+      metrics: [{
+        name: "body_fat_percentage",
+        units: "%",
+        data: [{ date: "2026-07-20 00:00:00 +0200", qty: 0 }],
+      }],
+    },
+  });
+  assertEquals(result.dailyMetrics.length, 0);
+});
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

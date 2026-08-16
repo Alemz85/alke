@@ -188,6 +188,28 @@
   }
 }
 
+/* Panel label for stacked small multiples (body composition: weight over body
+   fat). Names the measure and its unit so each panel is identified by text, not
+   by colour alone — and so the shared date axis only needs labelling once, on
+   the bottom panel. */
+.recovery-panel-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-xs);
+  /* Breathing room above so a stacked panel reads as its own plot rather than
+     as a caption floating inside the one above it. */
+  margin: var(--space-md) 0 var(--space-xxs);
+}
+
+.recovery-panel-label:first-child {
+  margin-top: 0;
+}
+
 /* Required captions under HRV / VO2max charts */
 .recovery-chart-caption {
   font-family: var(--font-body);

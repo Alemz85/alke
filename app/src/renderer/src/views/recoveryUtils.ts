@@ -264,40 +264,85 @@ export interface WeightPoint {
    * honestly blank, like the VO₂max scatter.
    */
   trend: number | null
+  /** Body fat as a percentage 0-100 on this date, null when none was reported. */
+  bodyFat: number | null
+  /** The same bridged rolling mean, computed over the body-fat readings. */
+  bodyFatTrend: number | null
+}
+
+/** One sparse series pulled off the daily rows, oldest first. */
+function readingsOf(
+  rows: DailyMetric[],
+  read: (r: DailyMetric) => number | null
+): { date: string; value: number }[] {
+  const out: { date: string; value: number }[] = []
+  for (const r of rows) {
+    const value = read(r)
+    if (typeof value === 'number') out.push({ date: r.date, value })
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date))
 }
 
 /**
- * Builds the body-weight chart series from sparse weigh-ins. Only rows with a
- * non-null `weight_kg` become points (there is one point per weigh-in, not one
- * per calendar day). Each point carries a trailing rolling mean over the prior
- * `windowDays` of *readings*; that trend is set to null whenever the gap to the
- * previous reading exceeds `maxGapDays`, breaking the line across long gaps.
+ * Trailing rolling mean over the readings within `windowDays` of each point,
+ * nulled wherever the gap to the previous reading exceeds `maxGapDays` so the
+ * line breaks instead of bridging a void. Shared by the weight and body-fat
+ * series so both trends are computed the same way.
+ */
+function bridgedTrend(
+  readings: { date: string; value: number }[],
+  windowDays: number,
+  maxGapDays: number
+): Map<string, number | null> {
+  const out = new Map<string, number | null>()
+  readings.forEach((r, i) => {
+    const windowVals: number[] = []
+    for (let j = i; j >= 0; j--) {
+      if (daysBetween(readings[j].date, r.date) > windowDays - 1) break
+      windowVals.push(readings[j].value)
+    }
+    const rollingMean =
+      windowVals.length > 0 ? windowVals.reduce((s, v) => s + v, 0) / windowVals.length : null
+    const prevGap = i > 0 ? daysBetween(readings[i - 1].date, r.date) : 0
+    out.set(r.date, i > 0 && prevGap > maxGapDays ? null : rollingMean)
+  })
+  return out
+}
+
+/**
+ * Builds the body-composition chart series from sparse weigh-ins. There is one
+ * point per date that carried a weight OR a body-fat reading — not one per
+ * calendar day — and both measures share that single date axis so the weight
+ * and body-fat panels stay aligned as small multiples. Each measure carries a
+ * trailing rolling mean over the prior `windowDays` of its own *readings*, cut
+ * to null wherever the gap to the previous reading exceeds `maxGapDays`.
+ *
+ * Body fat is kept on its own timeline rather than read off the weight points:
+ * it can begin syncing later than weight, so earlier weigh-ins carry a weight
+ * with no body fat beside it.
  */
 export function buildWeightSeries(
   rows: DailyMetric[],
   windowDays = 7,
   maxGapDays = 7
 ): WeightPoint[] {
-  const readings = rows
-    .filter((r): r is DailyMetric & { weight_kg: number } => typeof r.weight_kg === 'number')
-    .sort((a, b) => a.date.localeCompare(b.date))
+  const weights = readingsOf(rows, (r) => r.weight_kg)
+  const bodyFats = readingsOf(rows, (r) => r.body_fat_pct)
 
-  return readings.map((r, i) => {
-    // Rolling mean over readings whose date is within windowDays of this one.
-    const windowVals: number[] = []
-    for (let j = i; j >= 0; j--) {
-      if (daysBetween(readings[j].date, r.date) > windowDays - 1) break
-      windowVals.push(readings[j].weight_kg)
-    }
-    const rollingMean =
-      windowVals.length > 0 ? windowVals.reduce((s, v) => s + v, 0) / windowVals.length : null
+  const weightTrend = bridgedTrend(weights, windowDays, maxGapDays)
+  const bodyFatTrend = bridgedTrend(bodyFats, windowDays, maxGapDays)
 
-    // Break the trend line where this reading is too far from the previous one.
-    const prevGap = i > 0 ? daysBetween(readings[i - 1].date, r.date) : 0
-    const trend = i > 0 && prevGap > maxGapDays ? null : rollingMean
+  const weightByDate = new Map(weights.map((r) => [r.date, r.value]))
+  const bodyFatByDate = new Map(bodyFats.map((r) => [r.date, r.value]))
+  const dates = [...new Set([...weightByDate.keys(), ...bodyFatByDate.keys()])].sort()
 
-    return { date: r.date, weight: r.weight_kg, trend }
-  })
+  return dates.map((date) => ({
+    date,
+    weight: weightByDate.get(date) ?? null,
+    trend: weightTrend.get(date) ?? null,
+    bodyFat: bodyFatByDate.get(date) ?? null,
+    bodyFatTrend: bodyFatTrend.get(date) ?? null
+  }))
 }
 
 /**

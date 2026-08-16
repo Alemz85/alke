@@ -65,8 +65,12 @@ export interface MuscleFatigueResult {
 }
 
 // ---------------------------------------------------------------------------
-// Muscle vocabulary (the 20-muscle vocab enforced by the gym_exercise_catalog
-// CHECK constraint; primary/secondary values come from this set).
+// Muscle vocabulary (enforced by the exercises CHECK constraint; primary/
+// secondary values come from this set). Adding a value here requires a
+// migration extending that constraint, plus the same list in chatctx/gym.py,
+// chatctx/workout_template_contract.mjs and scripts/seed_exercises.ts — and an
+// entry in GROUP_MEMBERSHIP below, or the muscle deposits stimulus that no
+// group ever rolls up.
 // ---------------------------------------------------------------------------
 
 export const MUSCLES = [
@@ -78,6 +82,15 @@ export const MUSCLES = [
   'front delts',
   'side delts',
   'rear delts',
+  // Deep glenohumeral stabilizers (supraspinatus, infraspinatus, teres minor,
+  // subscapularis). Added because without them in the vocab, frequent
+  // cuff work was credited to the deltoids, inflating every
+  // rear/front-delt volume figure with work that is not delt training
+  // (agent_log #22).
+  'rotator cuff',
+  // Serratus anterior — scapular protraction and upward rotation, the other
+  // half of the force couple with lower trapezius.
+  'serratus',
   'biceps',
   'triceps',
   'forearms',
@@ -102,8 +115,19 @@ export type Muscle = (typeof MUSCLES)[number]
 
 export const GROUP_MEMBERSHIP: Record<MuscleGroup, Partial<Record<Muscle, number>>> = {
   chest: { chest: 1.0 },
-  back: { lats: 1.0, 'upper back': 1.0, 'lower back': 0.6, traps: 0.5, 'rear delts': 0.4 },
-  shoulders: { 'front delts': 1.0, 'side delts': 1.0, 'rear delts': 0.6, traps: 0.5 },
+  // Serratus mirrors traps' even split: both are scapulothoracic muscles
+  // trained as often from a pulling session as from a shoulder one.
+  back: { lats: 1.0, 'upper back': 1.0, 'lower back': 0.6, traps: 0.5, 'rear delts': 0.4, serratus: 0.5 },
+  shoulders: {
+    'front delts': 1.0,
+    'side delts': 1.0,
+    'rear delts': 0.6,
+    traps: 0.5,
+    // Wholly a shoulder muscle: the cuff does nothing but stabilize and rotate
+    // the glenohumeral joint, so unlike traps/serratus it does not split.
+    'rotator cuff': 1.0,
+    serratus: 0.5
+  },
   arms: { biceps: 1.0, triceps: 1.0, forearms: 1.0 },
   legs: {
     quadriceps: 1.0,
@@ -146,6 +170,8 @@ export const MUSCLE_ISO_JOINT: Partial<Record<Muscle, IsoJoint>> = {
   'front delts': 'shoulder',
   'side delts': 'shoulder',
   'rear delts': 'shoulder',
+  'rotator cuff': 'shoulder',
+  serratus: 'shoulder',
   traps: 'shoulder',
   lats: 'shoulder',
   'upper back': 'shoulder',
@@ -346,6 +372,10 @@ export const MUSCLE_FATIGUE_PARAMS = {
     'front delts': 0.85,
     'side delts': 0.85,
     'rear delts': 0.85,
+    // Small deep stabilizers, trained light and near-daily: they clear faster
+    // than the delts they sit under. Lowest in the table alongside tibialis.
+    'rotator cuff': 0.75,
+    serratus: 0.85,
     biceps: 0.85,
     triceps: 0.9,
     forearms: 0.8

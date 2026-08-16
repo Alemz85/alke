@@ -19,7 +19,17 @@ export interface BodyWeightPillProps {
 }
 
 export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): ReactElement {
-  const { latestKg, latestDateLabel, stalenessLabel, isStale, deltaKg, deltaLabel } = summary
+  const {
+    latestKg,
+    latestDateLabel,
+    stalenessLabel,
+    isStale,
+    deltaKg,
+    deltaLabel,
+    latestBodyFatPct,
+    bodyFatDeltaPct,
+    bodyFatDeltaLabel
+  } = summary
 
   // Quiet empty state — no weigh-in has ever synced.
   if (latestKg === null) {
@@ -35,6 +45,14 @@ export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): Re
 
   const deltaTone =
     deltaKg === null ? 'neutral' : deltaKg > 0 ? 'up' : deltaKg < 0 ? 'down' : 'neutral'
+  const bodyFatTone =
+    bodyFatDeltaPct === null
+      ? 'neutral'
+      : bodyFatDeltaPct > 0
+        ? 'up'
+        : bodyFatDeltaPct < 0
+          ? 'down'
+          : 'neutral'
 
   return (
     <div className={`bodyweight-pill${isStale ? ' bodyweight-pill--stale' : ''}`}>
@@ -49,6 +67,27 @@ export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): Re
           </span>
         )}
       </div>
+      {/* Body fat is the SECOND series of the recovery domain, so it wears
+          neutral ink rather than the domain accent (DESIGN.md: "domain accent
+          plus text-tertiary gray for secondary series") — weight stays the one
+          accented headline. The whole row is absent when no reading has synced,
+          so the tile is byte-identical to before for anyone without a scale
+          that reports body fat. */}
+      {latestBodyFatPct !== null && (
+        <div className="bodyweight-pill-subfigure">
+          <span className="bodyweight-pill-subvalue tabular-nums">
+            {latestBodyFatPct.toFixed(1)}%
+          </span>
+          <span className="bodyweight-pill-sublabel">body fat</span>
+          {bodyFatDeltaLabel && (
+            <span
+              className={`bodyweight-pill-delta bodyweight-pill-delta--${bodyFatTone} tabular-nums`}
+            >
+              {bodyFatDeltaLabel}
+            </span>
+          )}
+        </div>
+      )}
       <Sparkline points={trend} domain="recovery" ariaLabel="Body weight over recent months" />
       <span className="bodyweight-pill-meta">
         {stalenessLabel ? `Weighed ${stalenessLabel.toLowerCase()}` : latestDateLabel}

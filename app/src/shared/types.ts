@@ -97,6 +97,8 @@ export interface DailyMetric {
   active_energy_kcal: number | null
   wrist_temp_deviation_c: number | null
   weight_kg: number | null
+  /** Body fat as a percentage 0-100 (not a 0-1 fraction), paired with weight_kg. */
+  body_fat_pct: number | null
   walking_running_distance_m: number | null
   flights_climbed: number | null
 }
@@ -436,7 +438,11 @@ export interface GymSet {
   // `reps: 1` is what this column exists to stop.
   reps: number | null
   duration_s: number | null
-  weight_kg: number | null // null = bodyweight
+  // null is OVERLOADED: no external load (a pelvic drop) OR a weight nobody
+  // recorded (a leg extension logged in a hurry). Nothing in the row tells the
+  // two apart — read the exercise's catalog `equipment` before calling a blank
+  // "bodyweight" (see formatSetLine; chatctx agent_log #17).
+  weight_kg: number | null
   rpe: number | null
   is_warmup: boolean
   is_eccentric: boolean

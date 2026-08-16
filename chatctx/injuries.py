@@ -28,16 +28,33 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import http.client
 import json
 import os
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zoneinfo
 
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
+
+# See gym.py for the full rationale (agent_log #25). Short version: PostgREST
+# chunked responses abort mid-read as http.client.IncompleteRead, which is a
+# dead connection rather than a server error, so nothing in the HTTPError path
+# catches it and the agent gets a traceback where rows should be.
+#
+# Retries are GET-only on purpose: a POST/PATCH whose response truncated may
+# already have been applied server-side, and replaying it would duplicate a
+# note or double-check a plan item. Writes surface the error instead.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 0.5
+# json.JSONDecodeError belongs here for the same reason: a body that arrives
+# truncated but with a clean connection close fails at the parse, not the read.
+TRANSIENT_ERRORS = (http.client.HTTPException, urllib.error.URLError, OSError,
+                    json.JSONDecodeError)
 VALID_CONTEXTS = ("during_workout", "post_workout", "at_rest", "on_waking")
 VALID_PLAN_KINDS = ("exercise", "activity", "habit", "constraint")
 VALID_PRECISIONS = ("day", "month", "year")
@@ -144,18 +161,26 @@ def _request(method: str, path: str, *, params: dict | None = None, body: dict |
     if prefer:
         headers["Prefer"] = prefer
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else []
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()
+    attempts = RETRY_ATTEMPTS if method == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            detail = json.loads(detail).get("message", detail)
-        except json.JSONDecodeError:
-            pass
-        sys.exit(f"request failed ({e.code}): {detail}")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            return json.loads(raw) if raw else []
+        except urllib.error.HTTPError as e:
+            # A real HTTP status: deterministic, so report it rather than retry.
+            detail = e.read().decode()
+            try:
+                detail = json.loads(detail).get("message", detail)
+            except json.JSONDecodeError:
+                pass
+            sys.exit(f"request failed ({e.code}): {detail}")
+        except TRANSIENT_ERRORS as e:
+            if attempt == attempts:
+                sys.exit(f"request failed after {attempt} attempt(s): {type(e).__name__}: {e}")
+            time.sleep(RETRY_BACKOFF_S * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")  # the loop returns or sys.exits
 
 
 def cmd_list(_args) -> None:
@@ -340,13 +365,10 @@ def cmd_show(args) -> None:
         yellow = "" if current["yellow_min"] is None else current["yellow_min"]
         green = "" if current["green_min"] is None else current["green_min"]
         exercise = (row.get("exercise") or {}).get("name")
+        dose = plan_item_dose_text(row)
         if exercise:
-            dose = f"{exercise}: {row.get('target_sets') or '?'}x{row.get('target_reps') or '?'}"
-        elif row.get("steps"):
-            dose = json.dumps(row["steps"], separators=(",", ":"))
-        else:
-            dose = ""
-        dose = dose.replace("|", "\\|")
+            dose = f"{exercise}: {dose or '?'}"
+        dose = dose.replace("|", "\\|").replace("\n", " ")
         note = (row.get("note") or "").replace("|", "\\|").replace("\n", " ")
         print(f"| {row['id']} | {row.get('name') or ''} | {row.get('kind') or ''} | week {starts} | "
               f"{phase} | {target} | {yellow}-{green} | {phases_text(row)} | {dose} | {note} | "
@@ -443,6 +465,63 @@ def phases_text(row: dict) -> str:
         f"w{p.get('from_week')}: {p.get('weekly_target')} ({p.get('yellow_min')}-{p.get('green_min')})"
         for p in sorted(phases, key=lambda p: p.get("from_week", 0))
     )
+
+
+def _measure_text(value) -> str:
+    """Drop a trailing .0 so 45.0 seconds prints as "45 sec"."""
+    return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+
+
+def step_dose_text(step: dict) -> str:
+    """One step's prescription: "3 × 45 sec", "2 × 20 m", "10 reps / side"."""
+    if step.get("duration_seconds") is not None:
+        measure = f"{_measure_text(step['duration_seconds'])} sec"
+    elif step.get("distance_m") is not None:
+        measure = f"{_measure_text(step['distance_m'])} m"
+    elif step.get("reps") is not None:
+        measure = f"{step['reps']} reps"
+    else:
+        measure = "as directed"
+    if step.get("sets") is not None:
+        measure = f"{step['sets']} × {measure}"
+    if step.get("per_side"):
+        measure += " / side"
+    return measure
+
+
+def plan_item_dose_text(row: dict) -> str:
+    """The prescription for one plan item, in the measure it was actually given.
+
+    `recovery_plan_items` has no duration column, so a timed or measured dose
+    lives in a structured `steps` entry and `target_reps` is left holding a
+    placeholder 1. Printing the columns raw therefore rendered a 3 × 45-second
+    wall sit as "3x1" — a real 45-second hold surfaced as a single rep, which is
+    precisely the misreading `_shared.md` forbids when logging holds
+    (agent_log #26). The steps carry the truth, so they are read first.
+
+    A single step IS the item's dose. A multi-step routine has no one dose, so
+    every movement is named rather than collapsed into a number that would be
+    wrong for all of them.
+    """
+    steps = row.get("steps") or []
+    if len(steps) == 1:
+        step = dict(steps[0])
+        # The item's set count stands in when the step itself omits one.
+        if step.get("sets") is None and row.get("target_sets") is not None:
+            step["sets"] = row["target_sets"]
+        return step_dose_text(step)
+    if steps:
+        return "; ".join(
+            f"{s.get('name') or '?'} {step_dose_text(s)}" for s in steps
+        )
+    sets, reps = row.get("target_sets"), row.get("target_reps")
+    if sets is not None and reps is not None:
+        return f"{sets}x{reps}"
+    if sets is not None:
+        return f"{sets} sets"
+    if reps is not None:
+        return f"{reps} reps"
+    return ""
 
 
 def validate_phases(phases: object, start_week: int, at: str) -> list[dict] | None:
@@ -659,7 +738,7 @@ def cmd_plan_list(args) -> None:
         yellow = "" if current["yellow_min"] is None else current["yellow_min"]
         note = (r.get("note") or "").replace("|", "\\|").replace("\n", " ")
         exercise = (r.get("exercise") or {}).get("name") or ""
-        dose = f"{r['target_sets']}x{r['target_reps']}" if r.get("target_sets") and r.get("target_reps") else ""
+        dose = plan_item_dose_text(r).replace("|", "\\|").replace("\n", " ")
         starts = r.get("start_week") or 1
         phase = "future" if plan_week is not None and starts > plan_week else "accountable"
         print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | week {starts} | {phase} | {target} | "

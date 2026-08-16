@@ -30,7 +30,7 @@ train?" vs "what's recovered enough to train today?").
 | Input | Source | Notes |
 | --- | --- | --- |
 | Sets: reps, weight_kg, is_warmup, is_eccentric, exercise_id | `gym_sets` (via `useGymData`) | warmups excluded from volume + stimulus; explicitly eccentric working sets get the conservative fatigue multiplier |
-| Exercise → muscles | `exercises.primary_muscles` / `secondary_muscles` (20-muscle vocab) | primary weight 1.0, secondary 0.5 (matches `muscleSetVolume`) |
+| Exercise → muscles | `exercises.primary_muscles` / `secondary_muscles` (23-muscle vocab) | primary weight 1.0, secondary 0.5 (matches `muscleSetVolume`) |
 | Exercise → group | `exercises.body_part` (6 groups) + the §4 muscle→group map | |
 | rpe | `gym_sets.rpe` (nullable, usually null) | reserved for a later refinement; v1 works without it |
 | Cardio session load | `workouts` + `computed.time_in_zones` (z1..z5 sec), `computed.trimp`, `workouts.type` | TRIMP is zone-weighted, already computed |
@@ -153,16 +153,16 @@ fatigue_m(d)  = 1 − exp( − acute_m(d) / (capacityForFatigue_m(d)·κ_scale +
 
 ## 4. Muscle → group rollup (the map that didn't exist yet)
 
-Compute at the 20-muscle level; roll up to the 6 groups for the card; expand a group to reveal
+Compute at the 23-muscle level; roll up to the 6 groups for the card; expand a group to reveal
 its muscles. A few muscles split across two groups (fractional membership):
 
 | group | muscles (fraction) |
 | --- | --- |
 | chest | chest 1.0 |
-| back | lats 1.0, upper back 1.0, lower back 0.6, traps 0.5, rear delts 0.4 |
-| shoulders | front delts 1.0, side delts 1.0, rear delts 0.6, traps 0.5 |
+| back | lats 1.0, upper back 1.0, lower back 0.6, traps 0.5, rear delts 0.4, serratus 0.5 |
+| shoulders | front delts 1.0, side delts 1.0, rear delts 0.6, traps 0.5, rotator cuff 1.0, serratus 0.5 |
 | arms | biceps 1.0, triceps 1.0, forearms 1.0 |
-| legs | quadriceps, hamstrings, glutes, calves, adductors, abductors 1.0 each |
+| legs | quadriceps, hamstrings, glutes, calves, tibialis, adductors, abductors 1.0 each |
 | core | abs 1.0, obliques 1.0, hip flexors 1.0, lower back 0.4 |
 
 - A `full body` exercise is distributed via its own primary/secondary muscles; it is not a seventh group.

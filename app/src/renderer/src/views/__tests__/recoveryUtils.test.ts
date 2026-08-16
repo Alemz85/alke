@@ -3,6 +3,7 @@ import type { ComputedDaily, DailyMetric } from '@shared/types'
 import {
   buildLoadChartData,
   bucketAggregate,
+  buildWeightSeries,
   chartAxis,
   clockGoalMinutesOnSleepAxis,
   clockMinutesOnSleepAxis,
@@ -59,6 +60,7 @@ function makeMetric(overrides: Partial<DailyMetric> & { date: string }): DailyMe
     sleep_end: null,
     sleep_duration_min: overrides.sleep_duration_min ?? null,
     sleep_stages: overrides.sleep_stages ?? null,
+    body_fat_pct: overrides.body_fat_pct ?? null,
     vo2max: null,
     steps: null,
     active_energy_kcal: null,
@@ -509,5 +511,70 @@ describe('buildLoadChartData', () => {
     ]
     const data = buildLoadChartData(rows, TODAY, 90)
     expect(data.map((d) => d.date)).toEqual(['2026-07-16'])
+  })
+})
+
+describe('buildWeightSeries (body composition)', () => {
+  it('emits one point per weigh-in with a bridged trend, unchanged by body fat', () => {
+    const rows = [
+      makeMetric({ date: '2026-08-10', weight_kg: 70.0 }),
+      makeMetric({ date: '2026-08-11', weight_kg: 70.4 })
+    ]
+    const series = buildWeightSeries(rows)
+    expect(series.map((p) => p.date)).toEqual(['2026-08-10', '2026-08-11'])
+    expect(series[0].weight).toBe(70.0)
+    expect(series[1].trend).toBeCloseTo(70.2, 5) // mean of the 2 in-window readings
+    expect(series[0].bodyFat).toBeNull()
+    expect(series[0].bodyFatTrend).toBeNull()
+  })
+
+  it('breaks the trend across a gap longer than maxGapDays', () => {
+    const rows = [
+      makeMetric({ date: '2026-06-01', weight_kg: 70.0 }),
+      makeMetric({ date: '2026-08-10', weight_kg: 71.0 }) // ~70d later
+    ]
+    const series = buildWeightSeries(rows)
+    expect(series[0].trend).toBe(70.0)
+    expect(series[1].trend).toBeNull() // line must not bridge the void
+  })
+
+  it('carries body fat on the same date axis so the two panels align', () => {
+    const rows = [
+      makeMetric({ date: '2026-08-14', weight_kg: 70.8, body_fat_pct: 22.1 }),
+      makeMetric({ date: '2026-08-15', weight_kg: 70.4, body_fat_pct: 21.8 })
+    ]
+    const series = buildWeightSeries(rows)
+    expect(series.map((p) => p.date)).toEqual(['2026-08-14', '2026-08-15'])
+    expect(series[1].bodyFat).toBe(21.8)
+    expect(series[1].bodyFatTrend).toBeCloseTo(21.95, 5)
+    // Body fat is NOT rescaled into the weight's units -- separate panels.
+    expect(series[1].weight).toBe(70.4)
+  })
+
+  it('includes a date that has body fat but no weigh-in', () => {
+    const rows = [
+      makeMetric({ date: '2026-08-14', weight_kg: 70.8 }),
+      makeMetric({ date: '2026-08-15', body_fat_pct: 21.8 })
+    ]
+    const series = buildWeightSeries(rows)
+    expect(series.map((p) => p.date)).toEqual(['2026-08-14', '2026-08-15'])
+    expect(series[1].weight).toBeNull()
+    expect(series[1].bodyFat).toBe(21.8)
+  })
+
+  it('computes each measure trend over its own readings, not the shared dates', () => {
+    // Weight on both days, body fat only on the second: the body-fat trend must
+    // average one reading, not treat the missing day as a gap or a zero.
+    const rows = [
+      makeMetric({ date: '2026-08-14', weight_kg: 71.0 }),
+      makeMetric({ date: '2026-08-15', weight_kg: 70.0, body_fat_pct: 21.8 })
+    ]
+    const series = buildWeightSeries(rows)
+    expect(series[1].trend).toBeCloseTo(70.5, 5) // both weigh-ins
+    expect(series[1].bodyFatTrend).toBeCloseTo(21.8, 5) // the single reading
+  })
+
+  it('returns an empty series when nothing has been weighed', () => {
+    expect(buildWeightSeries([makeMetric({ date: '2026-08-15' })])).toEqual([])
   })
 })

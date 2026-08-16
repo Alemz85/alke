@@ -375,7 +375,10 @@ function SetRowEditor({
         className="gym-input gym-set-input"
         type="number"
         aria-label={`Set ${index + 1} load in kilograms`}
-        placeholder="kg (bw)"
+        // Not "kg (bw)": a blank here is an unrecorded weight as often as a
+        // bodyweight one, and the placeholder shouldn't teach the reading that
+        // made a blank machine set look like a real performance (agent_log #17).
+        placeholder="kg"
         value={row.weightKg ?? ''}
         onChange={(e) =>
           onChange({ weightKg: e.target.value === '' ? null : Number(e.target.value) })
@@ -945,7 +948,8 @@ export function SessionEditorModal({
     if (!block.exerciseId) return null
     const last = lastPerformance(block.exerciseId, sessions, existingSession?.id ?? null)
     if (!last) return null
-    return `Last: ${formatSetLine(last.sets)} — ${shortDate(last.performedAt)}`
+    const equipment = exercisesById.get(block.exerciseId)?.equipment ?? null
+    return `Last: ${formatSetLine(last.sets, equipment)} — ${shortDate(last.performedAt)}`
   }
 
   const finishSave = (): void => {

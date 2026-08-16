@@ -70,7 +70,8 @@ leave the DB mid-way through a logical operation if a later step fails:
     "body_parts": ["legs", "core"],    // optional; the lazy tier — valid with empty sets
     "sets": [                          // optional; [] + body_parts = quick log
       {"exercise": "back squat", "sets": 3, "reps": 8, "kg": 80},
-      {"exercise": "lat machine", "reps": 12},              // one set; kg omitted = bodyweight
+      {"exercise": "lat machine", "reps": 12, "kg": 45},    // one set (no "sets" key)
+      {"exercise": "pelvic drop", "sets": 3, "reps": 10},   // kg omitted: carries no load
       {"exercise": "wall sit", "sets": 3, "secs": 45},      // a HOLD, not "1 rep"
       {"exercise": "heel walk", "warmup": true, "create": true,   // create mints a catalog row
        "body_part": "legs", "primary_muscles": ["tibialis"],      // …fill it in while you are here
@@ -79,6 +80,12 @@ leave the DB mid-way through a logical operation if a later step fails:
   }
 Exercise names resolve case-insensitively against the catalog (aliases work).
 An unknown name aborts with near-matches unless that entry says "create": true.
+Omitting "kg" does NOT mean bodyweight — it means no weight was recorded, and
+the two are not interchangeable for a machine or a barbell. Log the number the
+user actually gave and ask for it when it is missing; `log` prints a warning
+naming any working set left without a weight on a loaded movement, because a
+blank there is later indistinguishable from a real bodyweight set (agent_log
+#17). Omit "kg" freely for movements that carry no external load.
 Sets of an exercise linked to an active recovery-plan item (of a non-resolved
 injury) auto-check the item for that day (source='gym') — mirrors the app's
 Gym tab exactly, including the name-fallback match for plan items missing an
@@ -145,10 +152,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import http.client
 import json
 import os
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -165,13 +174,19 @@ BODY_PARTS = ("chest", "back", "shoulders", "arms", "legs", "core", "full body")
 # changes, this list is the thing to re-sync.
 MUSCLES = (
     "chest", "lats", "upper back", "traps", "lower back", "front delts", "side delts",
-    "rear delts", "biceps", "triceps", "forearms", "quadriceps", "hamstrings", "glutes",
-    "calves", "tibialis", "adductors", "abductors", "hip flexors", "abs", "obliques",
+    "rear delts", "rotator cuff", "serratus", "biceps", "triceps", "forearms",
+    "quadriceps", "hamstrings", "glutes", "calves", "tibialis", "adductors", "abductors",
+    "hip flexors", "abs", "obliques",
 )
 EQUIPMENT = (
     "barbell", "dumbbell", "kettlebell", "machine", "cable", "bodyweight", "band",
     "smith machine", "ez bar", "trap bar", "other",
 )
+# The only equipment for which a null weight is a READING rather than a blank:
+# these movements carry no kilogram to record in the first place. Every other
+# value — and an unknown/uncatalogued one — means the weight was simply never
+# entered. See load_text() for why the difference has to survive into display.
+UNLOADED_EQUIPMENT = ("bodyweight", "band")
 MECHANICS = ("compound", "isolation")
 MOVEMENT_PATTERNS = (
     "squat", "hinge", "lunge", "horizontal push", "vertical push", "horizontal pull",
@@ -367,6 +382,24 @@ def load_env() -> dict:
     return env
 
 
+# A response body that ends before its declared length raises
+# http.client.IncompleteRead — the connection died mid-transfer, not a server
+# error, so nothing in the HTTPError path catches it. It hit `list --days 45`
+# and `--days 21` reproducibly (agent_log #18) and left the agent working
+# around the helper. The partial bytes are truncated JSON and must never be
+# parsed, so the whole request is retried.
+#
+# Retries are GET-only on purpose: a POST/PATCH whose body truncated may well
+# have been applied server-side already, and replaying it would double-log a
+# session or double-check a plan item. Writes surface the error instead.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 0.5
+# json.JSONDecodeError belongs here for the same reason: a body that arrives
+# truncated but with a clean connection close fails at the parse, not the read.
+TRANSIENT_ERRORS = (http.client.HTTPException, urllib.error.URLError, OSError,
+                    json.JSONDecodeError)
+
+
 def _request(method: str, path: str, *, params: dict | None = None, body=None,
              prefer: str | None = None, on_conflict: str | None = None) -> list[dict]:
     env = load_env()
@@ -385,18 +418,26 @@ def _request(method: str, path: str, *, params: dict | None = None, body=None,
     if prefer:
         headers["Prefer"] = prefer
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else []
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()
+    attempts = RETRY_ATTEMPTS if method == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            detail = json.loads(detail).get("message", detail)
-        except json.JSONDecodeError:
-            pass
-        sys.exit(f"request failed ({e.code}): {detail}")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            return json.loads(raw) if raw else []
+        except urllib.error.HTTPError as e:
+            # A real HTTP status: deterministic, so report it rather than retry.
+            detail = e.read().decode()
+            try:
+                detail = json.loads(detail).get("message", detail)
+            except json.JSONDecodeError:
+                pass
+            sys.exit(f"request failed ({e.code}): {detail}")
+        except TRANSIENT_ERRORS as e:
+            if attempt == attempts:
+                sys.exit(f"request failed after {attempt} attempt(s): {type(e).__name__}: {e}")
+            time.sleep(RETRY_BACKOFF_S * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")  # the loop returns or sys.exits
 
 
 def user_timezone() -> str | None:
@@ -493,12 +534,14 @@ def resolve_exercise(
     primary_muscles is invisible to the muscle/volume analytics that join
     gym_sets → exercises, and nothing errors to say so."""
     key = name.strip().lower()
+    # `equipment` rides along so callers can tell a load-bearing movement from
+    # one that carries none (the missing-weight warning in cmd_log).
     rows = _request("GET", "exercises", params={
-        "name_key": f"eq.{key}", "select": "id,name", "limit": "1",
+        "name_key": f"eq.{key}", "select": "id,name,equipment", "limit": "1",
     })
     if not rows:
         rows = _request("GET", "exercises", params={
-            "aliases": f"cs.{{{key}}}", "select": "id,name", "limit": "2",
+            "aliases": f"cs.{{{key}}}", "select": "id,name,equipment", "limit": "2",
         })
     if len(rows) == 1:
         return rows[0]
@@ -790,6 +833,30 @@ def set_dose_text(row: dict) -> str:
     return str(reps) if reps is not None else "?"
 
 
+def load_text(weight_kg, equipment: str | None, *, missing: str = "?kg") -> str:
+    """The load half of a set or prescription line: the kilograms, "bw" when the
+    movement genuinely carries none, or `missing` when there is no number.
+
+    `missing` differs by surface: a logged set with no weight on a loaded
+    movement is unrecorded data ("?kg"), while a template exercise with no
+    weight is simply an unprescribed load ("—"), which is legitimate.
+
+    A null weight_kg is overloaded in the schema — it means both "no external
+    load" (pelvic drop, prone T-raise) and "nobody typed the number yet" (a Leg
+    Extension logged in a hurry). Printing "bw" for both taught a reading that
+    was flatly wrong: a blank Leg Extension set read as a bodyweight
+    prescription, so the next session's real weight looked like a load INCREASE and
+    a rep drop that never happened, and a coaching observation got built on top
+    of it (agent_log #17). The catalog's `equipment` already separates the two
+    cases, so use it — and treat an uncatalogued exercise as unknown rather than
+    guessing bodyweight, since asserting a load the user never entered is the
+    failure being fixed. Fill the gap with `exercise-update --equipment ..`.
+    """
+    if weight_kg is not None:
+        return str(weight_kg)
+    return "bw" if equipment in UNLOADED_EQUIPMENT else missing
+
+
 def template_dose_text(item: dict) -> str:
     """The dose half of a template line for CLI display: reps, or "45s" for a
     prescribed hold. Never renders a hold as a rep count."""
@@ -803,7 +870,7 @@ def cmd_template_list(_args) -> None:
     rows = _request("GET", "gym_templates", params={
         "select": "id,name,notes,default_rest_s,archived,"
                   "gym_template_exercises(position,target_sets,target_reps,target_duration_seconds,"
-                  "target_weight_kg,note,rest_after_s,exercises(name))",
+                  "target_weight_kg,note,rest_after_s,exercises(name,equipment))",
         "order": "archived,created_at",
     })
     if not rows:
@@ -813,9 +880,13 @@ def cmd_template_list(_args) -> None:
     print("| --- | --- | --- | --- | --- | --- |")
     for row in rows:
         items = sorted(row.get("gym_template_exercises") or [], key=lambda item: item.get("position", 0))
+        # The prescribed load is shown, not just selected: reviewing a plan means
+        # seeing what weight it asks for. "—" here reads as "no load prescribed"
+        # (a legitimate state), never as bodyweight — see load_text.
         exercise_text = "; ".join(
             f"{(item.get('exercises') or {}).get('name') or '?'} "
             f"{item.get('target_sets') or '—'}x{template_dose_text(item)}"
+            f"x{load_text(item.get('target_weight_kg'), (item.get('exercises') or {}).get('equipment'), missing='—')}"
             + (f" (rest {item['rest_after_s']}s)" if item.get("rest_after_s") is not None else "")
             for item in items
         )
@@ -853,19 +924,24 @@ def _print_exercise_rows(rows: list[dict]) -> None:
         )
 
 
+# Rows with no primary muscle contribute nothing to the muscle/volume analytics.
+# The filter has to run SERVER-side: applied client-side after the limit, it
+# filtered one alphabetical page and reported 4 of 10 incomplete rows as if that
+# were all of them — the one flag whose whole job is completeness, quietly
+# incomplete. Postgres stores "no muscles" as either NULL or an empty array, so
+# both spellings are matched.
+INCOMPLETE_FILTER = "(primary_muscles.is.null,primary_muscles.eq.{})"
+
+
 def cmd_exercise_list(args) -> None:
     params = {"select": EXERCISE_SELECT, "order": "name", "limit": str(args.limit)}
     if args.query:
         params["name"] = f"ilike.*{args.query}*"
     if args.source:
         params["source"] = f"eq.{args.source}"
-    rows = _request("GET", "exercises", params=params)
     if args.incomplete:
-        # Rows with no primary muscle contribute nothing to the muscle/volume
-        # analytics — this filter is how you find them before they silently
-        # under-report a body part.
-        rows = [row for row in rows if not (row.get("primary_muscles") or [])]
-    _print_exercise_rows(rows)
+        params["or"] = INCOMPLETE_FILTER
+    _print_exercise_rows(_request("GET", "exercises", params=params))
 
 
 def _exercise_attr_args(args) -> dict:
@@ -977,7 +1053,8 @@ def cmd_list(args) -> None:
     since = (datetime.date.today() - datetime.timedelta(days=args.days)).isoformat()
     rows = _request("GET", "gym_sessions", params={
         "select": "id,performed_at,title,notes,source,body_parts,workout_id,"
-                  "gym_sets(exercise_id,reps,duration_s,weight_kg,is_warmup,exercises(name))",
+                  "gym_sets(exercise_id,reps,duration_s,weight_kg,is_warmup,"
+                  "exercises(name,equipment))",
         "performed_at": f"gte.{since}",
         "order": "performed_at.desc",
     })
@@ -998,7 +1075,7 @@ def cmd_list(args) -> None:
             content = "; ".join(
                 f"{name} " + " ".join(
                     f"{set_dose_text(s)}"
-                    f"x{s['weight_kg'] if s.get('weight_kg') is not None else 'bw'}"
+                    f"x{load_text(s.get('weight_kg'), (s.get('exercises') or {}).get('equipment'))}"
                     for s in ex_sets
                 )
                 for name, ex_sets in by_ex.items()
@@ -1066,6 +1143,7 @@ def cmd_log(args) -> None:
     # name aborts with nothing written.
     set_rows: list[dict] = []
     exercise_ids: list[str] = []
+    unweighted: list[str] = []
     for entry in payload.get("sets") or []:
         if not isinstance(entry, dict) or not entry.get("exercise"):
             sys.exit('each sets[] entry needs an "exercise" name')
@@ -1087,6 +1165,12 @@ def cmd_log(args) -> None:
             sys.exit(f"{exercise['name']}: a set takes reps or secs, not both")
         if secs is not None and not (isinstance(secs, int) and 1 <= secs <= 3600):
             sys.exit(f"{exercise['name']}: secs must be an integer 1-3600")
+        # A working set on a loaded movement with no kg is a blank, not a
+        # bodyweight reading — warn rather than abort, since "log only what the
+        # user said" still wins over inventing a number (agent_log #17).
+        if (entry.get("kg") is None and not entry.get("warmup")
+                and exercise.get("equipment") not in UNLOADED_EQUIPMENT):
+            unweighted.append(exercise["name"])
         for _ in range(count):
             set_rows.append({
                 "exercise_id": exercise["id"],
@@ -1117,6 +1201,12 @@ def cmd_log(args) -> None:
     if checked:
         summary += " — auto-checked rehab: " + ", ".join(checked)
     print(summary)
+    if unweighted:
+        names = ", ".join(dict.fromkeys(unweighted))
+        print(f"warning: no weight recorded for {names} — these are loaded movements, "
+              "so the blank will read as unrecorded, not bodyweight. Ask the user for "
+              "the kg and re-log, or fix the catalog if the equipment is wrong.",
+              file=sys.stderr)
 
 
 def remove_gym_plan_checks_for_session(session_id: str) -> list[str]:

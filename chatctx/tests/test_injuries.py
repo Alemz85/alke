@@ -832,3 +832,60 @@ def test_phases_text_renders_the_ramp():
     row = {"phases": [{"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4}]}
     assert injuries.phases_text(row) == "w2: 7 (4-6)"
     assert injuries.phases_text({"phases": None}) == ""
+
+
+# --- plan_item_dose_text (agent_log #26) -----------------------------------
+# recovery_plan_items has no duration column, so a timed or measured dose lives
+# in `steps` and target_reps holds a placeholder 1. Rendering the columns raw
+# printed a 3 x 45-second wall sit as "3x1".
+
+def test_dose_text_reads_a_timed_hold_from_its_step():
+    row = {"target_sets": 3, "target_reps": 1, "steps": [
+        {"name": "Wall sit hold", "sets": 3, "reps": None,
+         "duration_seconds": 45, "distance_m": None, "per_side": False},
+    ]}
+    assert injuries.plan_item_dose_text(row) == "3 × 45 sec"
+
+
+def test_dose_text_reads_a_distance_step():
+    row = {"target_sets": 2, "target_reps": 1, "steps": [
+        {"name": "Heel walks", "sets": 2, "reps": None,
+         "duration_seconds": None, "distance_m": 20, "per_side": None},
+    ]}
+    assert injuries.plan_item_dose_text(row) == "2 × 20 m"
+
+
+def test_dose_text_borrows_the_item_set_count_when_the_step_omits_one():
+    row = {"target_sets": 3, "target_reps": 1, "steps": [
+        {"name": "Hold", "sets": None, "reps": None,
+         "duration_seconds": 30, "distance_m": None, "per_side": None},
+    ]}
+    assert injuries.plan_item_dose_text(row) == "3 × 30 sec"
+
+
+def test_dose_text_names_every_movement_of_a_multi_step_routine():
+    # No single number is right for four different stretches, so none is shown.
+    row = {"target_sets": 2, "target_reps": 1, "steps": [
+        {"name": "Calf stretch", "sets": 2, "reps": None,
+         "duration_seconds": 30, "distance_m": None, "per_side": True},
+        {"name": "Ankle circles", "sets": None, "reps": 10,
+         "duration_seconds": None, "distance_m": None, "per_side": True},
+    ]}
+    assert injuries.plan_item_dose_text(row) == (
+        "Calf stretch 2 × 30 sec / side; Ankle circles 10 reps / side"
+    )
+
+
+def test_dose_text_falls_back_to_the_columns_without_steps():
+    assert injuries.plan_item_dose_text(
+        {"target_sets": 3, "target_reps": 15, "steps": None}) == "3x15"
+    assert injuries.plan_item_dose_text(
+        {"target_sets": None, "target_reps": None, "steps": None}) == ""
+
+
+def test_dose_text_drops_a_trailing_zero_from_a_float_duration():
+    row = {"target_sets": None, "target_reps": None, "steps": [
+        {"name": "Hold", "sets": 2, "reps": None,
+         "duration_seconds": 45.0, "distance_m": None, "per_side": None},
+    ]}
+    assert injuries.plan_item_dose_text(row) == "2 × 45 sec"

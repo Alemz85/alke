@@ -279,16 +279,31 @@ export function lastPerformance(
   return null
 }
 
+/** The only equipment for which a blank weight is a reading rather than a gap:
+ * these movements carry no kilogram to record. Mirrors UNLOADED_EQUIPMENT in
+ * chatctx/gym.py — keep the two in step. */
+const UNLOADED_EQUIPMENT = new Set(['bodyweight', 'band'])
+
 /**
- * "8×80 · 8×80 · 8×77.5" — compact reps×kg rendering of a working-set list
- * ("×12" when weight is blank = bodyweight). A time-counted set renders its
- * hold ("45s×bw") rather than the '?' an absent rep count would otherwise show.
+ * "8×80 · 8×80 · 8×77.5" — compact reps×kg rendering of a working-set list. A
+ * time-counted set renders its hold ("45s×bw") rather than the '?' an absent
+ * rep count would otherwise show.
+ *
+ * A blank weight_kg means two different things and the difference matters: no
+ * external load (a pelvic drop) versus a weight nobody typed (a leg extension
+ * logged in a hurry). Rendering both as "bw" made a blank machine set read as a
+ * real bodyweight performance, so the next session at 10 kg looked like a load
+ * increase that never happened (chatctx agent_log #17). Pass the exercise's
+ * catalog `equipment` and the two render apart: "bw" only where the movement
+ * genuinely carries none, "?kg" everywhere else — including an uncatalogued
+ * exercise, where guessing bodyweight is the mistake being fixed.
  */
-export function formatSetLine(sets: GymSet[]): string {
+export function formatSetLine(sets: GymSet[], equipment?: string | null): string {
+  const blank = equipment != null && UNLOADED_EQUIPMENT.has(equipment) ? 'bw' : '?kg'
   return sets
     .map((s) => {
       const dose = s.duration_s != null ? `${s.duration_s}s` : (s.reps ?? '?')
-      return s.weight_kg === null ? `${dose}×bw` : `${dose}×${s.weight_kg}`
+      return `${dose}×${s.weight_kg === null ? blank : s.weight_kg}`
     })
     .join(' · ')
 }

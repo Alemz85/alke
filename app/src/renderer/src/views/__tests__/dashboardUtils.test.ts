@@ -33,9 +33,14 @@ function makeWorkout(overrides: Partial<Workout> & { type: string }): Workout {
 }
 
 /** A daily_metrics row with only the fields these tests read; rest defaulted null. */
-function makeMetric(date: string, weight_kg: number | null): DailyMetric {
+function makeMetric(
+  date: string,
+  weight_kg: number | null,
+  body_fat_pct: number | null = null
+): DailyMetric {
   return {
     date,
+    body_fat_pct,
     resting_hr: null,
     hrv_sdnn_ms: null,
     respiratory_rate: null,
@@ -331,6 +336,50 @@ describe('computeBodyWeightSummary', () => {
     )
     expect(summary.latestKg).toBe(74.2)
     expect(summary.deltaLabel).toBe('−0.8 kg vs 1 mo ago')
+  })
+
+  it('reports body fat with a delta in percentage POINTS, not percent', () => {
+    const summary = computeBodyWeightSummary(
+      [makeMetric('2026-06-01', 75.0, 19.4), makeMetric('2026-07-10', 74.2, 18.2)],
+      '2026-07-16'
+    )
+    expect(summary.latestBodyFatPct).toBe(18.2)
+    expect(summary.bodyFatDeltaPct).toBeCloseTo(-1.2, 5)
+    // "pp" — 19.4% -> 18.2% is a 1.2-POINT drop, not a 1.2% relative one.
+    expect(summary.bodyFatDeltaLabel).toBe('−1.2 pp vs 1 mo ago')
+  })
+
+  it('leaves body fat null across the history that predates the metric', () => {
+    // body_fat_percentage can start in the export later than weight, so weigh-ins
+    // before it carry a weight and no body fat at all.
+    const summary = computeBodyWeightSummary(
+      [makeMetric('2026-06-01', 75.0), makeMetric('2026-07-10', 74.2)],
+      '2026-07-16'
+    )
+    expect(summary.latestKg).toBe(74.2)
+    expect(summary.latestBodyFatPct).toBeNull()
+    expect(summary.bodyFatDeltaPct).toBeNull()
+    expect(summary.bodyFatDeltaLabel).toBeNull()
+  })
+
+  it('tracks body fat on its own timeline when the latest weigh-in lacks it', () => {
+    // A scale can report weight without a body-fat reading, so the two series
+    // go stale independently -- the body fat shown is the latest one that
+    // exists, not whatever sat on the latest weight row (which is null here).
+    const summary = computeBodyWeightSummary(
+      [makeMetric('2026-07-01', 75.0, 25.1), makeMetric('2026-07-10', 74.2)],
+      '2026-07-16'
+    )
+    expect(summary.latestKg).toBe(74.2)
+    expect(summary.latestBodyFatPct).toBe(25.1)
+    expect(summary.bodyFatDeltaPct).toBeNull() // only one body-fat reading
+  })
+
+  it('still surfaces body fat in the no-weigh-in empty shape', () => {
+    const summary = computeBodyWeightSummary([makeMetric('2026-07-10', null, 18.2)], '2026-07-16')
+    expect(summary.latestKg).toBeNull()
+    expect(summary.latestDateLabel).toBe(EM_DASH)
+    expect(summary.latestBodyFatPct).toBe(18.2)
   })
 })
 

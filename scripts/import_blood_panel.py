@@ -186,6 +186,7 @@ def main() -> None:
         "POST",
         "blood_panels",
         body=[panel],
+        params="on_conflict=collected_on,panel_name",
         prefer="resolution=merge-duplicates,return=representation",
     )
     panel_id = rows[0]["id"]

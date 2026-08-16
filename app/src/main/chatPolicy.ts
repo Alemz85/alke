@@ -7,6 +7,7 @@ export const CHAT_ALLOWED_TOOLS = [
   'Bash(python3 injuries.py:*)',
   'Bash(python3 goals.py:*)',
   'Bash(python3 agent_log.py:*)',
+  'Bash(python3 session.py:*)',
   'Bash(python3 gym.py:*)',
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'

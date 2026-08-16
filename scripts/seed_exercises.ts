@@ -11,10 +11,14 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const BODY_PARTS = ["chest", "back", "shoulders", "arms", "legs", "core", "full body"];
+// NOTE: 'tibialis' was added to the DB vocab by 20260722120000 but never
+// mirrored here, so this validator would have rejected a valid shin entry.
+// Re-synced along with 'rotator cuff' / 'serratus' (20260816120000).
 const MUSCLES = [
   "chest", "lats", "upper back", "traps", "lower back",
-  "front delts", "side delts", "rear delts", "biceps", "triceps", "forearms",
-  "quadriceps", "hamstrings", "glutes", "calves", "adductors", "abductors",
+  "front delts", "side delts", "rear delts", "rotator cuff", "serratus",
+  "biceps", "triceps", "forearms",
+  "quadriceps", "hamstrings", "glutes", "calves", "tibialis", "adductors", "abductors",
   "hip flexors", "abs", "obliques",
 ];
 const EQUIPMENT = [

@@ -18,6 +18,7 @@ const EXPECTED_HEALTH_HELPERS = [
   'Bash(python3 injuries.py:*)',
   'Bash(python3 goals.py:*)',
   'Bash(python3 agent_log.py:*)',
+  'Bash(python3 session.py:*)',
   'Bash(python3 gym.py:*)',
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'
@@ -158,7 +159,7 @@ describe('interactive Claude policy', () => {
 describe('fixed goal-worker policy', () => {
   it('keeps exactly the existing eight health helper commands', () => {
     expect(CHAT_ALLOWED_TOOLS).toEqual(EXPECTED_HEALTH_HELPERS)
-    expect(CHAT_ALLOWED_TOOLS).toHaveLength(8)
+    expect(CHAT_ALLOWED_TOOLS).toHaveLength(9)
 
     const args = buildGoalClaudeArgs('build it')
     expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'dontAsk']))

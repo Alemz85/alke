@@ -602,12 +602,28 @@ describe('lastPerformance', () => {
 })
 
 describe('formatSetLine', () => {
-  it('renders reps×kg per set, bodyweight when weight is null', () => {
+  it('renders reps×kg per set, bodyweight when an unloaded movement has no weight', () => {
     const sets = [
       set({ exercise_id: 'squat', position: 0, reps: 8, weight_kg: 77.5 }),
       set({ exercise_id: 'squat', position: 1, reps: 10, weight_kg: null })
     ]
-    expect(formatSetLine(sets)).toBe('8×77.5 · 10×bw')
+    expect(formatSetLine(sets, 'bodyweight')).toBe('8×77.5 · 10×bw')
+    expect(formatSetLine(sets, 'band')).toBe('8×77.5 · 10×bw')
+  })
+
+  // The agent_log #17 regression: a blank weight on a machine is a missing
+  // number, and calling it "bw" turned the next weighted session into a
+  // load increase that never happened.
+  it('renders a blank weight on a loaded movement as unrecorded, never as bodyweight', () => {
+    const sets = [set({ exercise_id: 'leg-ext', position: 0, reps: 15, weight_kg: null })]
+    expect(formatSetLine(sets, 'machine')).toBe('15×?kg')
+    expect(formatSetLine(sets, 'cable')).toBe('15×?kg')
+  })
+
+  it('treats an uncatalogued exercise as unknown rather than bodyweight', () => {
+    const sets = [set({ exercise_id: 'custom', position: 0, reps: 12, weight_kg: null })]
+    expect(formatSetLine(sets, null)).toBe('12×?kg')
+    expect(formatSetLine(sets)).toBe('12×?kg')
   })
 })
 
@@ -725,7 +741,7 @@ describe('timed sets', () => {
 
   it('formatSetLine renders a held set with its unit instead of "?"', () => {
     const hold = set({ exercise_id: 'wall-sit', position: 0, reps: null, duration_s: 45 })
-    expect(formatSetLine([hold])).toBe('45s×bw')
+    expect(formatSetLine([hold], 'bodyweight')).toBe('45s×bw')
   })
 
   it('formatExerciseSetSummary summarises a uniform block of holds', () => {

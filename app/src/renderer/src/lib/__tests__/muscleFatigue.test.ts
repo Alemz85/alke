@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { Exercise, GymSession, GymSet, Workout } from '@shared/types'
 import {
+  GROUP_MEMBERSHIP,
+  MUSCLES,
+  MUSCLE_GROUPS,
+  MUSCLE_ISO_JOINT,
   computeMuscleFatigue,
   exerciseLoadCoefficient,
   isBodyweightBearing,
@@ -1676,5 +1680,46 @@ describe('relIntensityFactor with holds', () => {
       MUSCLE_FATIGUE_PARAMS.relIntensity.max
     )
     expect(relIntensityFactor(weighted, [90, 90, 90, 90], [30, 30, 30, 30])).toBeCloseTo(100 / 90, 5)
+  })
+})
+
+// The tibialis bug (20260722120000) and the rotator-cuff/serratus one
+// (agent_log #22) had the same shape: a muscle that exists in the vocabulary
+// but belongs to no group deposits stimulus nothing ever rolls up, and nothing
+// errors to say so. These lock the vocabulary and its rollup together.
+describe('muscle vocabulary completeness', () => {
+  it('rolls every muscle up into at least one group', () => {
+    const grouped = new Set(
+      MUSCLE_GROUPS.flatMap((group) => Object.keys(GROUP_MEMBERSHIP[group]))
+    )
+    expect(MUSCLES.filter((muscle) => !grouped.has(muscle))).toEqual([])
+  })
+
+  it('gives every muscle a total group membership of exactly 1', () => {
+    for (const muscle of MUSCLES) {
+      const total = MUSCLE_GROUPS.reduce(
+        (sum, group) => sum + (GROUP_MEMBERSHIP[group][muscle] ?? 0),
+        0
+      )
+      expect([muscle, total]).toEqual([muscle, 1])
+    }
+  })
+
+  it('references no muscle outside the vocabulary in any group', () => {
+    const vocab = new Set<string>(MUSCLES)
+    for (const group of MUSCLE_GROUPS) {
+      for (const muscle of Object.keys(GROUP_MEMBERSHIP[group])) {
+        expect([group, muscle, vocab.has(muscle)]).toEqual([group, muscle, true])
+      }
+    }
+  })
+
+  it('carries the shoulder-stabilizer additions that cuff rehab needs', () => {
+    // Without these, cuff and scapular work lands on the delts and inflates
+    // rear/front-delt volume with rehab that is not delt training.
+    expect(MUSCLES).toContain('rotator cuff')
+    expect(MUSCLES).toContain('serratus')
+    expect(GROUP_MEMBERSHIP.shoulders['rotator cuff']).toBe(1)
+    expect(MUSCLE_ISO_JOINT['rotator cuff']).toBe('shoulder')
   })
 })

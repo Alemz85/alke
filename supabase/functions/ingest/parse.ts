@@ -64,6 +64,7 @@ export interface NormalizedDailyMetric {
   active_energy_kcal: number | null;
   wrist_temp_deviation_c: number | null;
   weight_kg: number | null;
+  body_fat_pct: number | null;
   walking_running_distance_m: number | null;
   flights_climbed: number | null;
 }
@@ -89,11 +90,23 @@ const FIELD_MAP = {
     active_energy: "active_energy_kcal", // summed per date; unit-converted to kcal
     apple_sleeping_wrist_temperature: "wrist_temp_deviation_c",
     weight_body_mass: "weight_kg", // scalar per date, last-wins; unit-converted to kg
+    body_fat_percentage: "body_fat_pct", // scalar per date, last-wins; percent 0-100
     walking_running_distance: "walking_running_distance_m", // summed per date; unit-converted to meters
     flights_climbed: "flights_climbed", // summed per date; integer count
     // sleep_analysis is handled specially (multi-field).
   } as Record<string, keyof NormalizedDailyMetric>,
   sleepAnalysisMetricName: "sleep_analysis",
+  // A quantity of exactly 0 means "this export window held no samples", not
+  // "zero was measured". Health Auto Export omits a metric entirely for a day
+  // with nothing to report — a day with no flights climbed, no weigh-in or no
+  // steps arrives with the metric absent, never as a 0 entry (verified across
+  // the full raw_payloads history: no daily_metrics column has ever stored a
+  // 0). Since the daily_metrics merge lets any non-null incoming value win,
+  // an unfiltered 0 would silently overwrite a real stored value, so such
+  // entries are dropped. Listed here are the columns where 0 IS a real
+  // reading: wrist temperature is a signed deviation from baseline, so 0.0
+  // legitimately means "at baseline".
+  zeroIsRealValueColumns: ["wrist_temp_deviation_c"],
   // Workout field candidates, in preference order, for values that may
   // appear under different keys or as flat numbers vs {qty, units} objects.
   workout: {
@@ -173,6 +186,8 @@ const MAX_RAW_ARRAY_ENTRIES = 50;
 // SWIM_MIN_SET_DISTANCE_M are sensor artifacts, not sets.
 const SWIM_REST_SPLIT_S = 10;
 const SWIM_MIN_SET_DISTANCE_M = 10;
+
+const ZERO_IS_REAL_VALUE = new Set<string>(FIELD_MAP.zeroIsRealValueColumns);
 
 // ===========================================================================
 // Date parsing
@@ -721,6 +736,7 @@ function emptyDailyMetric(date: string): NormalizedDailyMetric {
     active_energy_kcal: null,
     wrist_temp_deviation_c: null,
     weight_kg: null,
+    body_fat_pct: null,
     walking_running_distance_m: null,
     flights_climbed: null,
   };
@@ -761,6 +777,11 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
     const name = typeof metric.name === "string" ? metric.name : null;
     const data = Array.isArray(metric.data) ? metric.data : [];
     if (!name) continue;
+    // A metric block carrying no entries contributes nothing, so drop it
+    // before it can reach getRow() and conjure an all-null row for a date.
+    // Exporting every metric type (Health Auto Export's "select all") makes
+    // this the normal shape for data types the watch has never recorded.
+    if (data.length === 0) continue;
 
     if (name === FIELD_MAP.sleepAnalysisMetricName) {
       for (const entry of data) parseSleepEntry(entry, getRow);
@@ -787,6 +808,11 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
       if (!date) continue;
       let qty = toNumber(entry.qty);
       if (qty === null) continue;
+      // Placeholder zero (see FIELD_MAP.zeroIsRealValueColumns). Checked
+      // before unit conversion — 0 is 0 in any unit. For a summed column this
+      // simply omits the entry from the running total, so a date whose
+      // entries are all zero leaves the column null rather than writing 0.
+      if (qty === 0 && !ZERO_IS_REAL_VALUE.has(column)) continue;
 
       if (isWeight) {
         const entryUnits = typeof entry.units === "string"
@@ -836,16 +862,17 @@ function parseSleepEntry(
   if (!isPlainObject(entry)) return;
   const date = localDatePart(entry.date);
   if (!date) return;
-  const row = getRow(date);
 
   const sleepStart = parseHaeDate(entry[FIELD_MAP.sleep.start]);
   const sleepEnd = parseHaeDate(entry[FIELD_MAP.sleep.end]);
-  if (sleepStart) row.sleep_start = toIso(sleepStart);
-  if (sleepEnd) row.sleep_end = toIso(sleepEnd);
 
-  const totalHours = toNumber(entry[FIELD_MAP.sleep.totalHours]) ??
+  const totalHoursRaw = toNumber(entry[FIELD_MAP.sleep.totalHours]) ??
     toNumber(entry[FIELD_MAP.sleep.totalHoursAlt]);
-  if (totalHours !== null) row.sleep_duration_min = totalHours * 60;
+  // A 0-hour night is the same placeholder as a 0-quantity metric entry: the
+  // export window held no sleep samples, not that the night was sleepless.
+  const totalHours = totalHoursRaw !== null && totalHoursRaw > 0
+    ? totalHoursRaw
+    : null;
 
   const stages: Record<string, unknown> = {};
   let hasStage = false;
@@ -864,6 +891,16 @@ function parseSleepEntry(
   if (sleepEndOffset !== null) {
     stages._sleep_end_timezone_offset_min = sleepEndOffset;
   }
+
+  // Nothing usable in this entry — return without touching the row map, so an
+  // empty sleep_analysis block cannot create an all-null row (or a row whose
+  // only content is the derived timezone-offset stub).
+  if (!sleepStart && !sleepEnd && totalHours === null && !hasStage) return;
+
+  const row = getRow(date);
+  if (sleepStart) row.sleep_start = toIso(sleepStart);
+  if (sleepEnd) row.sleep_end = toIso(sleepEnd);
+  if (totalHours !== null) row.sleep_duration_min = totalHours * 60;
   if (hasStage || sleepEndOffset !== null) row.sleep_stages = stages;
 }
 
@@ -918,6 +955,7 @@ const MERGEABLE_COLUMNS = [
   "active_energy_kcal",
   "wrist_temp_deviation_c",
   "weight_kg",
+  "body_fat_pct",
   "walking_running_distance_m",
   "flights_climbed",
 ] as const;

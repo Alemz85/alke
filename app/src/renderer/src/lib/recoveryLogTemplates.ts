@@ -31,6 +31,40 @@ export function recoveryOverviewPreview(summary: string, maxChars = 90): string 
 }
 
 /**
+ * The set rows one linked plan item prescribes.
+ *
+ * `recovery_plan_items` has no duration column, so a timed or measured dose
+ * lives in a structured `steps` entry and the rep column is left holding a
+ * placeholder 1. Reading `target_reps` blindly therefore prefilled a 45-second
+ * wall sit as "1 rep" — the exact hold-as-a-single-rep encoding the chat
+ * helpers refuse to write, arriving through the app's own prefill instead
+ * (agent_log #26). So the step, when it carries the real dose, wins.
+ *
+ * Only a SINGLE step can be collapsed into uniform set rows. A multi-movement
+ * routine (a sequence of several stretches) has no one dose, and a distance
+ * step has no measure a set row can hold at all — both yield blank rows, which
+ * is the honest answer and consistent with never inventing a prescription.
+ */
+function prescribedRows(item: RecoveryPlanItem, exercise: Exercise): PrefillSetRow[] {
+  const steps = item.steps ?? []
+  const only = steps.length === 1 ? steps[0] : null
+  // A single step's own `sets` outranks the item's: it is the more specific
+  // prescription, and the item's value is often just the same number mirrored.
+  const setCount = only?.sets ?? item.target_sets ?? 1
+  const base = { exerciseId: exercise.id, exerciseName: exercise.name, weightKg: null, isWarmup: false }
+
+  let dose: { reps: number | null; durationS?: number | null }
+  if (only?.duration_seconds != null) dose = { reps: null, durationS: only.duration_seconds }
+  else if (only?.reps != null) dose = { reps: only.reps }
+  // Steps present but not collapsible (multi-step, or a distance-only step):
+  // blank the dose rather than fall through to the placeholder rep count.
+  else if (steps.length > 0) dose = { reps: null }
+  else dose = { reps: item.target_reps }
+
+  return Array.from({ length: setCount }, () => ({ ...base, ...dose }))
+}
+
+/**
  * Project an injury's active plan into a logging-safe template. A linked rehab
  * exercise contributes its prescribed set rows. Legacy items without a
  * structured dose retain one blank row; the app never invents a prescription.
@@ -55,15 +89,7 @@ export function buildRecoveryLogTemplate(
     planStartedAt: injury.plan_started_at,
     name: `${injury.name} recovery`,
     summary: injury.recovery_plan,
-    rows: linked.flatMap(({ item, exercise }) =>
-      Array.from({ length: item.target_sets ?? 1 }, () => ({
-        exerciseId: exercise.id,
-        exerciseName: exercise.name,
-        reps: item.target_reps,
-        weightKg: null,
-        isWarmup: false
-      }))
-    ),
+    rows: linked.flatMap(({ item, exercise }) => prescribedRows(item, exercise)),
     exerciseItems,
     guidance,
     unlinkedExerciseCount: exerciseItems.length - linked.length

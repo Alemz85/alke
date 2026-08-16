@@ -480,7 +480,31 @@ export function RecoveryView(): ReactElement {
   // --- Body weight: sparse scatter + 7-day-bridged trend line ---
   const weightWindow = sliceLastNDays(allMetrics, RANGE_DAYS[weightRange], timezone)
   const weightChartData = buildWeightSeries(weightWindow)
-  const hasWeightData = weightChartData.length > 0
+  const hasWeightData = weightChartData.some((p) => p.weight !== null)
+  // Body fat can start syncing later than weight, so the panel draws from the
+  // very first reading rather than waiting for a trend to form: the point of
+  // stacking it under weight on a shared date axis is watching the percentage
+  // move against the kg, and that reading starts the moment there is one dot to
+  // line up. The caption says so while it is still a single point.
+  const bodyFatReadings = weightChartData.filter(
+    (p): p is typeof p & { bodyFat: number } => p.bodyFat !== null
+  )
+  const hasBodyFatData = bodyFatReadings.length > 0
+  const singleBodyFatReading = bodyFatReadings.length === 1
+  // D3 `nice` domain + tick count rather than Recharts' defaults, which turned
+  // ['dataMin - 1', 'dataMax + 1'] into 17.6 / 18.6 / 19.6 ticks on a range
+  // this narrow.
+  const bodyFatAxis = chartAxis(
+    bodyFatReadings.map((p) => p.bodyFat),
+    { padding: 0.4, tickCount: 4 }
+  )
+  // The weight panel gets the same treatment so the two stacked panels agree:
+  // Recharts' ['dataMin - 1', 'dataMax + 1'] produced a ragged 71.4 top tick
+  // next to body fat's clean 18 / 19 / 20.
+  const weightAxis = chartAxis(
+    weightChartData.flatMap((p) => (p.weight === null ? [] : [p.weight])),
+    { padding: 0.4, tickCount: 4 }
+  )
 
   return (
     <div className="view">
@@ -1251,19 +1275,31 @@ export function RecoveryView(): ReactElement {
 
         <div className="recovery-grid--span-12">
           <ChartCard
-            title="Body weight"
+            title="Body composition"
             span={12}
             headerRight={<ChipFilter value={weightRange} onChange={setWeightRange} options={['90d', '1y']} />}
           >
             {hasWeightData ? (
               <>
-                <ResponsiveContainer width="100%" height={220}>
+                {/* Weight (kg) and body fat (%) are different scales, so they get
+                    one panel each over a shared date axis — never two y-axes on
+                    one plot. Both panels are driven by the same series array, so
+                    their categories line up and a date reads straight down. */}
+                {hasBodyFatData && <p className="recovery-panel-label">Weight · kg</p>}
+                <ResponsiveContainer width="100%" height={hasBodyFatData ? 168 : 220}>
                   <ComposedChart data={weightChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid stroke="var(--color-divider-soft)" vertical={false} />
                     <XAxis
                       dataKey="date"
                       type="category"
-                      tick={AXIS_TICK}
+                      /* Small-multiples convention: only the bottom panel of the
+                         stack carries the date labels. `height` is SPREAD in
+                         rather than passed as `undefined` — Recharts has no
+                         defaultProps backfill under React 19, so an explicit
+                         undefined height computes a NaN <rect> and silently
+                         renders an empty plot. */
+                      tick={hasBodyFatData ? false : AXIS_TICK}
+                      {...(hasBodyFatData ? { height: 8 } : {})}
                       axisLine={AXIS_LINE}
                       tickLine={false}
                       minTickGap={32}
@@ -1275,9 +1311,11 @@ export function RecoveryView(): ReactElement {
                       axisLine={false}
                       tickLine={false}
                       width={40}
-                      domain={['dataMin - 1', 'dataMax + 1']}
-                      allowDecimals={false}
-                      label={{ value: 'kg', position: 'insideTopLeft', fill: 'var(--color-text-tertiary)', fontSize: 12 }}
+                      domain={weightAxis.domain}
+                      ticks={weightAxis.ticks}
+                      {...(hasBodyFatData
+                        ? {}
+                        : { label: { value: 'kg', position: 'insideTopLeft' as const, fill: 'var(--color-text-tertiary)', fontSize: 12 } })}
                     />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
@@ -1310,9 +1348,77 @@ export function RecoveryView(): ReactElement {
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
+                {hasBodyFatData && (
+                  <>
+                    <p className="recovery-panel-label">Body fat · %</p>
+                    <ResponsiveContainer width="100%" height={132}>
+                      <ComposedChart data={weightChartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid stroke="var(--color-divider-soft)" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          type="category"
+                          tick={AXIS_TICK}
+                          axisLine={AXIS_LINE}
+                          tickLine={false}
+                          minTickGap={32}
+                          tickFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                          allowDuplicatedCategory={false}
+                        />
+                        <YAxis
+                          tick={AXIS_TICK}
+                          axisLine={false}
+                          tickLine={false}
+                          width={40}
+                          domain={bodyFatAxis.domain}
+                          ticks={bodyFatAxis.ticks}
+                        />
+                        <Tooltip
+                          contentStyle={TOOLTIP_STYLE}
+                          labelStyle={TOOLTIP_LABEL_STYLE}
+                          itemStyle={TOOLTIP_ITEM_STYLE}
+                          labelFormatter={(d: string) => fmtLocalDate(d, timezone)}
+                          formatter={(value: number, name: string) => [
+                            `${value.toFixed(1)}%`,
+                            name === 'bodyFatTrend' ? '7d trend' : 'Body fat'
+                          ]}
+                        />
+                        {/* Same recovery accent as the weight panel above, not a
+                            second hue and not the secondary-series gray: these
+                            are two measures of ONE domain, and the panel label
+                            (not colour) is what tells them apart. DESIGN.md's
+                            gray-for-secondary rule governs series sharing a
+                            single plot; here each has its own panel and axis,
+                            and graying one would read as "less real data". */}
+                        <Line
+                          type="monotone"
+                          dataKey="bodyFat"
+                          name="bodyFat"
+                          stroke="var(--color-recovery)"
+                          strokeWidth={0}
+                          dot={{ r: 2.5, fill: 'var(--color-recovery)', strokeWidth: 0 }}
+                          connectNulls={false}
+                          isAnimationActive={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="bodyFatTrend"
+                          name="bodyFatTrend"
+                          stroke="var(--color-recovery)"
+                          strokeWidth={1.5}
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </>
+                )}
                 <p className="recovery-chart-caption">
                   Sparse weigh-ins — the trend line only draws where readings cluster. Weigh in
                   near-daily to activate the weight-trend insight.
+                  {hasBodyFatData &&
+                    ' Body fat comes from the same scale reading and shares this date axis, so a weigh-in reads straight down across both panels.'}
+                  {singleBodyFatReading &&
+                    ' Only one body-fat reading so far, so the shape fills in as more weigh-ins sync.'}
                 </p>
               </>
             ) : (

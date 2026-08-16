@@ -105,6 +105,87 @@ describe('buildRecoveryLogTemplate', () => {
     expect(template.rows).toHaveLength(3)
     expect(template.rows.every((row) => row.reps === 15)).toBe(true)
   })
+
+  // agent_log #26: with no duration column on recovery_plan_items, a timed hold
+  // stores its real dose in `steps` and parks a placeholder 1 in target_reps.
+  // Prefilling from the column turned a 45-second wall sit into a 1-rep set.
+  it('prefills a timed hold from its step, not the placeholder rep count', () => {
+    const template = buildRecoveryLogTemplate(
+      injury,
+      [item({
+        id: 'hold',
+        name: 'Wall sit',
+        kind: 'exercise',
+        exercise_id: calfRaise.id,
+        target_sets: 3,
+        target_reps: 1,
+        steps: [{
+          name: 'Wall sit hold',
+          sets: 3,
+          reps: null,
+          duration_seconds: 45,
+          distance_m: null,
+          per_side: false,
+          note: null
+        }]
+      })],
+      new Map([[calfRaise.id, calfRaise]])
+    )
+
+    expect(template.rows).toHaveLength(3)
+    expect(template.rows.every((row) => row.durationS === 45 && row.reps === null)).toBe(true)
+  })
+
+  it('leaves a multi-movement routine blank rather than collapsing it to one dose', () => {
+    const template = buildRecoveryLogTemplate(
+      injury,
+      [item({
+        id: 'routine',
+        name: 'Mobility routine',
+        kind: 'exercise',
+        exercise_id: calfRaise.id,
+        target_sets: 2,
+        target_reps: 1,
+        steps: [
+          { name: 'Calf stretch', sets: 2, reps: null, duration_seconds: 30, distance_m: null, per_side: true, note: null },
+          { name: 'Ankle circles', sets: null, reps: 10, duration_seconds: null, distance_m: null, per_side: true, note: null }
+        ]
+      })],
+      new Map([[calfRaise.id, calfRaise]])
+    )
+
+    expect(template.rows).toHaveLength(2)
+    expect(template.rows.every((row) => row.reps === null && row.durationS == null)).toBe(true)
+  })
+
+  // A distance step has no measure a set row can carry, so the row stays blank
+  // instead of inheriting target_reps=1 and asserting a one-rep heel walk.
+  it('leaves a distance-only step blank rather than reading the placeholder', () => {
+    const template = buildRecoveryLogTemplate(
+      injury,
+      [item({
+        id: 'distance',
+        name: 'Heel walks',
+        kind: 'exercise',
+        exercise_id: calfRaise.id,
+        target_sets: 2,
+        target_reps: 1,
+        steps: [{
+          name: 'Heel walks',
+          sets: 2,
+          reps: null,
+          duration_seconds: null,
+          distance_m: 20,
+          per_side: null,
+          note: null
+        }]
+      })],
+      new Map([[calfRaise.id, calfRaise]])
+    )
+
+    expect(template.rows).toHaveLength(2)
+    expect(template.rows.every((row) => row.reps === null && row.durationS == null)).toBe(true)
+  })
 })
 
 describe('recoveryOverviewPreview', () => {

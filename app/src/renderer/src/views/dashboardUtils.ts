@@ -151,6 +151,62 @@ export interface BodyWeightSummary {
   deltaKg: number | null
   /** Terse trend label, e.g. "−0.8 kg vs 1 mo ago" (null when no comparison). */
   deltaLabel: string | null
+  /**
+   * Latest body-fat reading as a percentage 0-100, or null. Tracked on its own
+   * timeline rather than read off the latest weigh-in's row: body fat only
+   * started syncing after weight did and a scale can report weight without it, so
+   * the two series go stale independently.
+   */
+  latestBodyFatPct: number | null
+  /** Signed delta in percentage POINTS vs the comparison reading, or null. */
+  bodyFatDeltaPct: number | null
+  /** Terse trend label, e.g. "−1.2 pp vs 1 mo ago" (null when no comparison). */
+  bodyFatDeltaLabel: string | null
+}
+
+/**
+ * Latest reading of one sparse daily series plus its trend vs an earlier one.
+ * The comparison reading is the one closest to but >= 30 days older than the
+ * latest; when nothing is that old it falls back to the oldest reading, and
+ * when there is only a single reading there is no delta at all. Shared by the
+ * weight and body-fat halves of the pill so the two read consistently.
+ */
+function latestWithDelta(
+  metricsAsc: DailyMetric[],
+  read: (m: DailyMetric) => number | null,
+  unit: string
+): {
+  latest: { date: string; value: number } | null
+  delta: number | null
+  deltaLabel: string | null
+} {
+  const readings: { date: string; value: number }[] = []
+  for (const m of metricsAsc) {
+    const value = read(m)
+    if (typeof value === 'number') readings.push({ date: m.date, value })
+  }
+  if (readings.length === 0) return { latest: null, delta: null, deltaLabel: null }
+
+  const latest = readings[readings.length - 1]
+  const olderByMonth = readings
+    .filter((r) => daysBetweenDates(r.date, latest.date) >= 30)
+    .sort((a, b) => daysBetweenDates(a.date, latest.date) - daysBetweenDates(b.date, latest.date))
+  const comparison =
+    olderByMonth.length > 0 ? olderByMonth[0] : readings.length > 1 ? readings[0] : undefined
+
+  if (!comparison || comparison.date === latest.date) {
+    return { latest, delta: null, deltaLabel: null }
+  }
+
+  const delta = latest.value - comparison.value
+  const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±'
+  const gapDays = daysBetweenDates(comparison.date, latest.date)
+  const spanLabel = gapDays >= 30 ? `${Math.max(1, Math.round(gapDays / 30))} mo` : `${gapDays}d`
+  return {
+    latest,
+    delta,
+    deltaLabel: `${sign}${Math.abs(delta).toFixed(1)} ${unit} vs ${spanLabel} ago`
+  }
 }
 
 /** Humanizes a non-negative day count as "Today" / "Yesterday" / "N days ago" / "N weeks ago". */
@@ -173,11 +229,12 @@ export function computeBodyWeightSummary(
   metricsAsc: DailyMetric[],
   todayKey: string
 ): BodyWeightSummary {
-  const readings = metricsAsc.filter(
-    (m): m is DailyMetric & { weight_kg: number } => typeof m.weight_kg === 'number'
-  )
+  const weight = latestWithDelta(metricsAsc, (m) => m.weight_kg, 'kg')
+  // Percentage POINTS, not percent: 25.0% -> 23.8% is "−1.2 pp", never "−1.2%"
+  // (which would read as a relative change).
+  const bodyFat = latestWithDelta(metricsAsc, (m) => m.body_fat_pct, 'pp')
 
-  if (readings.length === 0) {
+  if (weight.latest === null) {
     return {
       latestKg: null,
       latestDate: null,
@@ -186,45 +243,27 @@ export function computeBodyWeightSummary(
       stalenessLabel: null,
       isStale: false,
       deltaKg: null,
-      deltaLabel: null
+      deltaLabel: null,
+      latestBodyFatPct: bodyFat.latest?.value ?? null,
+      bodyFatDeltaPct: bodyFat.delta,
+      bodyFatDeltaLabel: bodyFat.deltaLabel
     }
   }
 
-  const latest = readings[readings.length - 1]
-  const daysSince = Math.max(0, daysBetweenDates(latest.date, todayKey))
-
-  // Comparison reading: closest to but >= 30 days older than the latest;
-  // otherwise the oldest reading; otherwise (single reading) none.
-  const olderByMonth = readings
-    .filter((m) => daysBetweenDates(m.date, latest.date) >= 30)
-    .sort((a, b) => daysBetweenDates(a.date, latest.date) - daysBetweenDates(b.date, latest.date))
-  const comparison =
-    olderByMonth.length > 0
-      ? olderByMonth[0]
-      : readings.length > 1
-        ? readings[0]
-        : undefined
-
-  let deltaKg: number | null = null
-  let deltaLabel: string | null = null
-  if (comparison && comparison.date !== latest.date) {
-    deltaKg = latest.weight_kg - comparison.weight_kg
-    const sign = deltaKg > 0 ? '+' : deltaKg < 0 ? '−' : '±'
-    const gapDays = daysBetweenDates(comparison.date, latest.date)
-    const spanLabel =
-      gapDays >= 30 ? `${Math.max(1, Math.round(gapDays / 30))} mo` : `${gapDays}d`
-    deltaLabel = `${sign}${Math.abs(deltaKg).toFixed(1)} kg vs ${spanLabel} ago`
-  }
+  const daysSince = Math.max(0, daysBetweenDates(weight.latest.date, todayKey))
 
   return {
-    latestKg: latest.weight_kg,
-    latestDate: latest.date,
-    latestDateLabel: fmtShortDate(latest.date),
+    latestKg: weight.latest.value,
+    latestDate: weight.latest.date,
+    latestDateLabel: fmtShortDate(weight.latest.date),
     daysSince,
     stalenessLabel: humanizeDaysSince(daysSince),
     isStale: daysSince > 7,
-    deltaKg,
-    deltaLabel
+    deltaKg: weight.delta,
+    deltaLabel: weight.deltaLabel,
+    latestBodyFatPct: bodyFat.latest?.value ?? null,
+    bodyFatDeltaPct: bodyFat.delta,
+    bodyFatDeltaLabel: bodyFat.deltaLabel
   }
 }
 

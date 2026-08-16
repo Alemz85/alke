@@ -51,6 +51,32 @@
   color: var(--color-recovery-text);
 }
 
+/* Body-fat sub-figure. Neutral ink, not the recovery accent: it is the domain's
+   SECONDARY series (DESIGN.md → "domain accent plus text-tertiary gray for
+   secondary series"), so weight keeps the tile's only accented number. */
+.bodyweight-pill-subfigure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.bodyweight-pill-subvalue {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.bodyweight-pill-sublabel {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line-height);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
 .bodyweight-pill-delta {
   font-family: var(--font-body);
   font-size: var(--type-body-sm-size);
@@ -80,6 +106,10 @@
 /* A weigh-in older than a week fades so it never masquerades as fresh. */
 .bodyweight-pill--stale .bodyweight-pill-value {
   color: var(--color-text-secondary);
+}
+
+.bodyweight-pill--stale .bodyweight-pill-subvalue {
+  color: var(--color-text-tertiary);
 }
 
 .bodyweight-pill--stale .bodyweight-pill-meta {

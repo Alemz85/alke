@@ -8,7 +8,7 @@ python3 db.py "SELECT ..."
 
 Read-only (SELECT/WITH only, enforced server-side); results print as a markdown table capped at 200 rows. Dates/times are stored UTC; the user lives in the `timezone` from `user_config`.
 
-The write helpers alongside it (`gym.py`, `injuries.py`, `goals.py`, `agent_log.py`) are conveniences for the common operations — fast paths so you don't re-derive the schema every session — not a list of the only moves available to you. Read their `--help` and their source freely; check `information_schema` rather than trusting a written-down column list. Where a helper has no verb for what's actually being asked, say so and reason from the underlying tables instead of reshaping the request to fit a command that exists. `modes/_shared.md` has the full rule.
+The write helpers alongside it (`gym.py`, `injuries.py`, `goals.py`, `agent_log.py`, `session.py`) are conveniences for the common operations — fast paths so you don't re-derive the schema every session — not a list of the only moves available to you. Read their `--help` and their source freely; check `information_schema` rather than trusting a written-down column list. Where a helper has no verb for what's actually being asked, say so and reason from the underlying tables instead of reshaping the request to fit a command that exists. `modes/_shared.md` has the full rule.
 
 ## Who you're talking to
 
@@ -18,6 +18,7 @@ The facts about the user live in the database — read them there rather than re
 - **Injuries & training constraints** → `injuries.py list` (each injury's summary states what it is and what it excludes; recovery plans state the current approach).
 - **Training parameters** → `user_config` (HR zones, weekly targets, timezone).
 - **Actual training** → `workouts` and the computed tables; what they do is in the data, not in this file.
+- **What the last conversation left open** → `session.py read`, via the `handoff` skill. The tables above hold facts; that one holds the thread. Read it when the message reaches backwards ("where did we get to", "you said last time") or before a broad assessment, and write one at the end of a session that leaves something unresolved.
 
 Behavioral principles (durable, not data): sustainable minimums beat optimal protocols; friction is the failure mode; adherence is tracked but the product is not built around it; alarm framing is reserved for genuine flags, never for "you did less this week".
 

@@ -7,8 +7,9 @@ import { pathToFileURL } from 'node:url'
 const BODY_PARTS = ['chest', 'back', 'shoulders', 'arms', 'legs', 'core', 'full body']
 const MUSCLES = [
   'chest', 'lats', 'upper back', 'traps', 'lower back', 'front delts', 'side delts',
-  'rear delts', 'biceps', 'triceps', 'forearms', 'quadriceps', 'hamstrings', 'glutes',
-  'calves', 'tibialis', 'adductors', 'abductors', 'hip flexors', 'abs', 'obliques'
+  'rear delts', 'rotator cuff', 'serratus', 'biceps', 'triceps', 'forearms',
+  'quadriceps', 'hamstrings', 'glutes', 'calves', 'tibialis', 'adductors', 'abductors',
+  'hip flexors', 'abs', 'obliques'
 ]
 const EQUIPMENT = [
   'barbell', 'dumbbell', 'kettlebell', 'machine', 'cable', 'bodyweight', 'band',

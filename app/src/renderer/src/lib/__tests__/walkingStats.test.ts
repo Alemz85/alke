@@ -27,6 +27,7 @@ function metric(
     sleep_end: null,
     sleep_duration_min: null,
     sleep_stages: null,
+    body_fat_pct: null,
     vo2max: null,
     steps,
     active_energy_kcal: null,

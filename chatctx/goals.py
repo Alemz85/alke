@@ -23,14 +23,31 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import pathlib
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# See gym.py for the full rationale (agent_log #25): PostgREST chunked
+# responses abort mid-read as http.client.IncompleteRead, which is a dead
+# connection rather than a server error, so the HTTPError path never catches
+# it and the agent gets a traceback instead of rows.
+#
+# Retries are GET-only on purpose: a POST/PATCH whose response truncated may
+# already have been applied server-side, and replaying it would duplicate a
+# goal. Writes surface the error instead.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 0.5
+# json.JSONDecodeError belongs here for the same reason: a body that arrives
+# truncated but with a clean connection close fails at the parse, not the read.
+TRANSIENT_ERRORS = (http.client.HTTPException, urllib.error.URLError, OSError,
+                    json.JSONDecodeError)
 
 REQUIRED_KEYS = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 SQL_LEAD_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
@@ -77,18 +94,26 @@ def _request(method: str, path: str, *, params: dict | None = None, body: dict |
     if prefer:
         headers["Prefer"] = prefer
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else []
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()
+    attempts = RETRY_ATTEMPTS if method == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            detail = json.loads(detail).get("message", detail)
-        except json.JSONDecodeError:
-            pass
-        sys.exit(f"request failed ({e.code}): {detail}")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            return json.loads(raw) if raw else []
+        except urllib.error.HTTPError as e:
+            # A real HTTP status: deterministic, so report it rather than retry.
+            detail = e.read().decode()
+            try:
+                detail = json.loads(detail).get("message", detail)
+            except json.JSONDecodeError:
+                pass
+            sys.exit(f"request failed ({e.code}): {detail}")
+        except TRANSIENT_ERRORS as e:
+            if attempt == attempts:
+                sys.exit(f"request failed after {attempt} attempt(s): {type(e).__name__}: {e}")
+            time.sleep(RETRY_BACKOFF_S * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")  # the loop returns or sys.exits
 
 
 def _exec_readonly_sql(sql: str) -> list[dict]:
@@ -98,21 +123,28 @@ def _exec_readonly_sql(sql: str) -> list[dict]:
     url = f"{env['SUPABASE_URL']}/rest/v1/rpc/exec_readonly_sql"
     key = env["SUPABASE_SERVICE_KEY"]
     body = json.dumps({"query": sql.rstrip().rstrip(";")}).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()
+    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    # Retried unconditionally: exec_readonly_sql only accepts SELECT/WITH, so a
+    # replay cannot double-apply anything.
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        req = urllib.request.Request(url, data=body, headers=headers)
         try:
-            detail = json.loads(detail).get("message", detail)
-        except json.JSONDecodeError:
-            pass
-        sys.exit(f"metric_sql validation failed: {detail}")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            return json.loads(raw)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode()
+            try:
+                detail = json.loads(detail).get("message", detail)
+            except json.JSONDecodeError:
+                pass
+            sys.exit(f"metric_sql validation failed: {detail}")
+        except TRANSIENT_ERRORS as e:
+            if attempt == RETRY_ATTEMPTS:
+                sys.exit(f"metric_sql validation failed after {attempt} attempt(s): "
+                         f"{type(e).__name__}: {e}")
+            time.sleep(RETRY_BACKOFF_S * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")  # the loop returns or sys.exits
 
 
 def cmd_list(args) -> None:

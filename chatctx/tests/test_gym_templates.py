@@ -1,3 +1,4 @@
+import http.client
 import uuid
 
 import pytest
@@ -824,3 +825,102 @@ def test_set_dose_text_never_renders_a_hold_as_reps():
     assert gym.set_dose_text({"reps": 8, "duration_s": None}) == "8"
     assert gym.set_dose_text({"reps": None, "duration_s": 45}) == "45s"
     assert gym.set_dose_text({"reps": None, "duration_s": None}) == "?"
+
+
+# ── null weight_kg is overloaded (agent_log #17) ─────────────────────────────
+
+
+def test_load_text_renders_bodyweight_only_where_the_movement_carries_none():
+    assert gym.load_text(None, "bodyweight") == "bw"
+    assert gym.load_text(None, "band") == "bw"
+
+
+def test_load_text_never_calls_a_missing_weight_bodyweight_on_a_loaded_movement():
+    # The regression: a blank Leg Extension read as a bodyweight performance,
+    # so the next session's real weight looked like a load increase that never was.
+    for equipment in ("machine", "cable", "barbell", "dumbbell", "smith machine"):
+        assert gym.load_text(None, equipment) == "?kg"
+
+
+def test_load_text_treats_an_uncatalogued_exercise_as_unknown_not_bodyweight():
+    assert gym.load_text(None, None) == "?kg"
+    assert gym.load_text(None, "other") == "?kg"
+
+
+def test_load_text_passes_a_recorded_weight_through_whatever_the_equipment():
+    assert gym.load_text(16.0, "bodyweight") == "16.0"  # heel walk holding a plate
+    assert gym.load_text(40.0, "machine") == "40.0"
+
+
+def test_load_text_missing_marker_differs_for_a_template_prescription():
+    # An unprescribed template load is legitimate, not missing data.
+    assert gym.load_text(None, "machine", missing="—") == "—"
+    assert gym.load_text(None, "bodyweight", missing="—") == "bw"
+
+
+# ── truncated responses (agent_log #18) ──────────────────────────────────────
+
+
+def _stub_urlopen(gym_module, monkeypatch, outcomes):
+    """Feed _request one outcome per call: an exception to raise, or bytes to
+    return. Records how many times it was invoked."""
+    calls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self):
+            return self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def urlopen(req, timeout=None):
+        calls.append(req.get_method())
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return Response(outcome)
+
+    monkeypatch.setattr(gym_module.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(gym_module, "load_env", lambda: {
+        "SUPABASE_URL": "https://example.test", "SUPABASE_SERVICE_KEY": "k",
+    })
+    monkeypatch.setattr(gym_module.time, "sleep", lambda _s: None)
+    return calls
+
+
+def test_get_retries_a_response_that_ends_mid_body(monkeypatch):
+    calls = _stub_urlopen(gym, monkeypatch, [
+        http.client.IncompleteRead(b"[{\"id\":", 10041),
+        b'[{"id": "s1"}]',
+    ])
+    assert gym._request("GET", "gym_sessions") == [{"id": "s1"}]
+    assert len(calls) == 2
+
+
+def test_get_gives_up_with_a_readable_error_after_the_retry_budget(monkeypatch):
+    calls = _stub_urlopen(gym, monkeypatch, [
+        http.client.IncompleteRead(b"", 10041)
+    ] * gym.RETRY_ATTEMPTS)
+    with pytest.raises(SystemExit, match="IncompleteRead"):
+        gym._request("GET", "gym_sessions")
+    assert len(calls) == gym.RETRY_ATTEMPTS
+
+
+def test_a_write_is_never_replayed_after_a_truncated_response(monkeypatch):
+    # The POST may already have been applied server-side; a retry would double-log.
+    calls = _stub_urlopen(gym, monkeypatch, [http.client.IncompleteRead(b"", 12)])
+    with pytest.raises(SystemExit):
+        gym._request("POST", "gym_sessions", body={"source": "chat"})
+    assert calls == ["POST"]
+
+
+def test_truncated_json_on_a_clean_close_is_retried_too(monkeypatch):
+    calls = _stub_urlopen(gym, monkeypatch, [b'[{"id": "s1"', b'[{"id": "s1"}]'])
+    assert gym._request("GET", "gym_sessions") == [{"id": "s1"}]
+    assert len(calls) == 2

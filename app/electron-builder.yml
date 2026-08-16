@@ -53,6 +53,8 @@ extraResources:
     to: chatctx/goals.py
   - from: ../chatctx/agent_log.py
     to: chatctx/agent_log.py
+  - from: ../chatctx/session.py
+    to: chatctx/session.py
   - from: ../chatctx/gym.py
     to: chatctx/gym.py
   - from: ../chatctx/recovery_plan_contract.mjs
