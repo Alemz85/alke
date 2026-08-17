@@ -119,6 +119,11 @@ export function useAddExercise() {
   })
 }
 
+// "Since forever" lower bound for lifetime gym-history reads (strength peaks,
+// template usage counts). Personal data volume keeps this cheap; callers that
+// share it also share one react-query cache entry across tabs.
+export const GYM_HISTORY_START_ISO = '2000-01-01T00:00:00.000Z'
+
 export function useGymTemplates() {
   return useQuery<GymTemplate[]>({
     queryKey: ['health', 'gym', 'templates'],

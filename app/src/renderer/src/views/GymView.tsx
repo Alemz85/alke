@@ -4,6 +4,7 @@ import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { TabHeader } from './TabHeader'
 import { useDailyMetricsRange, useUserConfig, useYearWorkouts } from '../hooks/useSessionsData'
 import {
+  GYM_HISTORY_START_ISO,
   useExercises,
   useGymSessions,
   useGymTemplates,
@@ -26,9 +27,9 @@ import { TemplateViewModal } from './gym/TemplateViewModal'
 import './GymView.css'
 
 const HISTORY_WINDOW_DAYS = 90
-const GYM_HISTORY_START_ISO = '2000-01-01T00:00:00.000Z'
 
-type SubTab = 'main' | 'templates' | 'sessions'
+export type GymSubTab = 'main' | 'templates' | 'sessions'
+type SubTab = GymSubTab
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'main', label: 'Main' },
@@ -39,8 +40,10 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 /**
  * Gym section shell. Owns the shared queries + modal state and routes between
  * the Main / Templates / Sessions sub-tabs (the same tablist pattern as Cardio).
+ * `initialSubTab` lets deep links (the Dashboard's "All templates") land on a
+ * specific sub-tab; the view remounts per tab switch, so it's read once.
  */
-export function GymView(): ReactElement {
+export function GymView({ initialSubTab = 'main' }: { initialSubTab?: GymSubTab } = {}): ReactElement {
   const userConfigQuery = useUserConfig()
   const timezone = userConfigQuery.data?.timezone
 
@@ -61,7 +64,7 @@ export function GymView(): ReactElement {
   const exercisesQuery = useExercises()
   const recoveryPlanBundlesQuery = useRecoveryPlanBundles()
 
-  const [subTab, setSubTab] = useState<SubTab>('main')
+  const [subTab, setSubTab] = useState<SubTab>(initialSubTab)
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null)
   const [templateModal, setTemplateModal] = useState<GymTemplate | null | 'new'>(null)
   const [templateView, setTemplateView] = useState<GymTemplate | null>(null)

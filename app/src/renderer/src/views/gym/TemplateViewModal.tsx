@@ -118,7 +118,10 @@ function TemplateDeleteControl({
 /**
  * Read-only view of a saved template — the default action when a card is
  * clicked. Shows metadata (started, times done) and the exercise list; an Edit
- * button routes to the editor.
+ * button routes to the editor. `onEdit` is optional: quick-access callers (the
+ * Dashboard's template tiles) omit it, which also hides the delete footer —
+ * lifecycle (start / mark complete) stays available everywhere, but editing
+ * and deleting belong to the Gym tab's management context.
  */
 export function TemplateViewModal({
   template,
@@ -128,7 +131,7 @@ export function TemplateViewModal({
 }: {
   template: GymTemplate
   usageCount: number
-  onEdit: () => void
+  onEdit?: () => void
   onClose: () => void
 }): ReactElement {
   useEffect(() => {
@@ -235,10 +238,12 @@ export function TemplateViewModal({
                   {startRunMutation.isPending ? 'Starting…' : runs.length > 0 ? 'Resurrect' : 'Start'}
                 </button>
               ))}
-            <button type="button" className="gym-btn gym-btn--primary gym-tv-edit" onClick={onEdit}>
-              <Pencil size={14} strokeWidth={2} />
-              Edit
-            </button>
+            {onEdit && (
+              <button type="button" className="gym-btn gym-btn--primary gym-tv-edit" onClick={onEdit}>
+                <Pencil size={14} strokeWidth={2} />
+                Edit
+              </button>
+            )}
             <button type="button" className="gym-modal-close" aria-label="Close" onClick={onClose}>
               ×
             </button>
@@ -322,9 +327,11 @@ export function TemplateViewModal({
           )}
         </div>
 
-        <div className="gym-tv-footer">
-          <TemplateDeleteControl templateId={shown.id} onDeleted={onClose} />
-        </div>
+        {onEdit && (
+          <div className="gym-tv-footer">
+            <TemplateDeleteControl templateId={shown.id} onDeleted={onClose} />
+          </div>
+        )}
       </div>
     </div>
   )

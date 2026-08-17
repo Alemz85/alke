@@ -13,7 +13,7 @@ import { DbErrorState } from './views/DbErrorState'
 import { DashboardView } from './views/DashboardView'
 import { Zone2View } from './views/Zone2View'
 import { SessionsView } from './views/SessionsView'
-import { GymView } from './views/GymView'
+import { GymView, type GymSubTab } from './views/GymView'
 import { RecoveryView } from './views/RecoveryView'
 import { InsightsView } from './views/InsightsView'
 import { InjuriesView } from './views/InjuriesView'
@@ -23,10 +23,10 @@ import { SettingsView } from './views/SettingsView'
 import './App.css'
 
 // Views that need no navigation wiring render from this map directly. Dashboard,
-// Sessions, and Cardio (Zone2) cross-link, so they're special-cased in the render
-// below (they receive an onOpenSessions / onBack callback) rather than listed here.
-const VIEWS: Record<Exclude<TabId, 'dashboard' | 'sessions' | 'zone2'>, () => ReactElement> = {
-  gym: GymView,
+// Sessions, Cardio (Zone2), and Gym cross-link, so they're special-cased in the
+// render below (they receive an onOpenSessions / onBack / initialSubTab) rather
+// than listed here.
+const VIEWS: Record<Exclude<TabId, 'dashboard' | 'sessions' | 'zone2' | 'gym'>, () => ReactElement> = {
   recovery: RecoveryView,
   insights: InsightsView,
   injuries: InjuriesView,
@@ -85,6 +85,9 @@ function App(): ReactElement {
   // when a cardio "recent sessions" card deep-links in). Cleared whenever
   // Sessions is opened without a filter (sidebar, Dashboard "All sessions").
   const [sessionsActivity, setSessionsActivity] = useState<string | null>(null)
+  // Sub-tab the next Gym mount opens on (set by the Dashboard's template
+  // deep-links; sidebar navigation resets it to the main tab).
+  const [gymEntrySubTab, setGymEntrySubTab] = useState<GymSubTab>('main')
   const [theme, setTheme] = useState<Theme>(readInitialTheme)
   const [chatSidebarCollapsed, setChatSidebarCollapsed] = useState<boolean>(
     readInitialChatSidebarCollapsed
@@ -241,16 +244,25 @@ function App(): ReactElement {
     [queryClient]
   )
 
-  // Sidebar navigation clears any pending Sessions filter so a manual tab click
-  // always lands on the full, unfiltered list.
+  // Sidebar navigation clears any pending Sessions filter / Gym sub-tab so a
+  // manual tab click always lands on the tab's default surface.
   const handleSelectTab = useCallback(
     (tab: TabId): void => {
       if (tab === 'sessions') setSessionsActivity(null)
+      if (tab === 'gym') setGymEntrySubTab('main')
       setActiveTab(tab)
       if (WORKOUT_VIEW_TABS.has(tab)) invalidateWorkoutViews(queryClient)
     },
     [queryClient]
   )
+
+  // The Dashboard's "All templates" link lands directly on the Gym Templates
+  // sub-tab instead of making the user re-navigate inside the Gym view.
+  const openGymTemplates = useCallback((): void => {
+    setGymEntrySubTab('templates')
+    setActiveTab('gym')
+    invalidateWorkoutViews(queryClient)
+  }, [queryClient])
 
   function renderActiveView(): ReactElement {
     if (activeTab === 'dashboard') {
@@ -258,6 +270,7 @@ function App(): ReactElement {
         <DashboardView
           onOpenSessions={() => openSessions()}
           onOpenProfile={() => setActiveTab('profile')}
+          onOpenGymTemplates={openGymTemplates}
         />
       )
     }
@@ -271,6 +284,9 @@ function App(): ReactElement {
     }
     if (activeTab === 'zone2') {
       return <Zone2View onOpenSessions={openSessions} />
+    }
+    if (activeTab === 'gym') {
+      return <GymView initialSubTab={gymEntrySubTab} />
     }
     const ActiveView = VIEWS[activeTab]
     return <ActiveView />

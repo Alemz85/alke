@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { ArrowRight } from 'lucide-react'
-import type { DailyMetric, Workout } from '@shared/types'
+import type { DailyMetric, GymTemplate, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import {
   EmptyState,
@@ -29,6 +29,13 @@ import {
   useWorkoutsInRange
 } from '../hooks/useDashboardData'
 import { useAllWorkouts } from '../hooks/useSessionsData'
+import { GYM_HISTORY_START_ISO, useGymSessions, useGymTemplates } from '../hooks/useGymData'
+import { useCardOrder } from '../hooks/useCardOrder'
+import { TemplateViewModal } from './gym/TemplateViewModal'
+import {
+  estimateTemplateDurationSeconds,
+  formatEstimatedDuration
+} from './gym/gymFormat'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
 import { useMonthCalendar } from '../hooks/useMonthCalendar'
 import { localDateKey, todayYMD, ymdKey } from '../hooks/sessionsDate'
@@ -54,6 +61,8 @@ export interface DashboardViewProps {
   onOpenSessions: () => void
   /** Navigate to the Profile tab (Goals strip card click-through). */
   onOpenProfile: () => void
+  /** Navigate to the Gym tab's Templates sub-tab ("All templates" link). */
+  onOpenGymTemplates: () => void
 }
 
 /** The remaining clickable dashboard metric (RHR) — load metrics moved to Recovery › Load. */
@@ -146,7 +155,11 @@ function StatSquare({
   )
 }
 
-export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewProps): ReactElement {
+export function DashboardView({
+  onOpenSessions,
+  onOpenProfile,
+  onOpenGymTemplates
+}: DashboardViewProps): ReactElement {
   const userConfigQuery = useUserConfig()
   const timezone = userConfigQuery.data?.timezone ?? undefined
   // A year of daily metrics feeds the RHR detail popup and the body-weight
@@ -154,6 +167,14 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
   // wide pull is safe.
   const dailyMetricsQuery = useDailyMetrics(365, timezone)
   const recentWorkoutsQuery = useRecentWorkouts(timezone)
+
+  // Active gym templates for the quick-access strip. Lifetime session history
+  // backs the "done N×" counts — same query key the Gym tab uses, so the two
+  // tabs share one cache entry.
+  const nowIso = useMemo(() => new Date().toISOString(), [])
+  const gymTemplatesQuery = useGymTemplates()
+  const gymHistoryQuery = useGymSessions(GYM_HISTORY_START_ISO, nowIso)
+  const [templateView, setTemplateView] = useState<GymTemplate | null>(null)
 
   const weeklyMinSessions = parseWeeklyMinSessions(userConfigQuery.data)
 
@@ -438,6 +459,16 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
         onSelectWorkout={setRecentWorkout}
       />
 
+      {/* Active gym templates, one click from the overview — a tile opens the
+          same expanded template view the Gym tab uses (read-only there:
+          lifecycle stays, edit/delete remain a Gym-tab affair). */}
+      <GymTemplatesBox
+        templates={gymTemplatesQuery.data ?? []}
+        sessions={gymHistoryQuery.data ?? []}
+        onOpenTemplates={onOpenGymTemplates}
+        onSelectTemplate={setTemplateView}
+      />
+
       {/* Calendar + period summaries (calendar left, month/year tables right). */}
       <div className="dashboard-calendar-grid">
         <div className="dashboard-calendar-grid-calendar">
@@ -481,6 +512,134 @@ export function DashboardView({ onOpenSessions, onOpenProfile }: DashboardViewPr
       )}
 
       {rhrOpen && <MetricDetailModal config={rhrConfig} onClose={() => setRhrOpen(false)} />}
+
+      {templateView && (
+        <TemplateViewModal
+          template={templateView}
+          usageCount={(gymHistoryQuery.data ?? []).reduce(
+            (n, s) => n + (s.template_ids.includes(templateView.id) ? 1 : 0),
+            0
+          )}
+          onClose={() => setTemplateView(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+interface GymTemplatesBoxProps {
+  templates: GymTemplate[]
+  sessions: { performed_at: string; template_ids: string[] }[]
+  onOpenTemplates: () => void
+  onSelectTemplate: (template: GymTemplate) => void
+}
+
+/**
+ * Quick access to the active (non-archived, current-version) gym templates,
+ * in the same section vocabulary as Recent sessions: heading on the canvas,
+ * tiles carrying the surface. Tile order follows the Gym tab's user-arranged
+ * card order (same localStorage key), so the two surfaces never disagree.
+ * Renders nothing when there are no active templates — the Gym tab is where
+ * template setup is taught, not the overview.
+ */
+function GymTemplatesBox({
+  templates,
+  sessions,
+  onOpenTemplates,
+  onSelectTemplate
+}: GymTemplatesBoxProps): ReactElement | null {
+  const active = useMemo(
+    () => templates.filter((t) => !t.archived && t.is_current),
+    [templates]
+  )
+  const cardOrder = useCardOrder(
+    'gym:templates:active:order',
+    active.map((t) => t.id)
+  )
+  const byId = useMemo(() => new Map(active.map((t) => [t.id, t])), [active])
+  const ordered = cardOrder.orderedIds
+    .map((id) => byId.get(id))
+    .filter((t): t is GymTemplate => t != null)
+
+  const lastDoneById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const s of sessions) {
+      const day = s.performed_at.slice(0, 10)
+      for (const id of s.template_ids) {
+        const prev = m.get(id)
+        if (prev == null || day > prev) m.set(id, day)
+      }
+    }
+    return m
+  }, [sessions])
+  const usageById = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const s of sessions) {
+      for (const id of s.template_ids) m.set(id, (m.get(id) ?? 0) + 1)
+    }
+    return m
+  }, [sessions])
+
+  if (ordered.length === 0) return null
+
+  const fmtDay = (ymd: string): string => {
+    const [y, m, d] = ymd.split('-').map(Number)
+    return new Date(y, (m ?? 1) - 1, d ?? 1).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    })
+  }
+
+  return (
+    <div className="recent-sessions-box">
+      <div className="recent-sessions-header">
+        <h3 className="recent-sessions-title">Gym templates</h3>
+        <button type="button" className="recent-sessions-all" onClick={onOpenTemplates}>
+          All templates
+          <ArrowRight size={14} strokeWidth={1.75} />
+        </button>
+      </div>
+      <div className="recent-sessions-grid">
+        {ordered.map((template) => {
+          const running = template.runs[0] != null && template.runs[0].ended_at === null
+          const lastDone = lastDoneById.get(template.id)
+          const done = usageById.get(template.id) ?? 0
+          const exerciseCount = template.items.length
+          const statusLine = running
+            ? `Active since ${fmtDay(template.runs[0].started_at.slice(0, 10))}`
+            : lastDone
+              ? `Last done ${fmtDay(lastDone)}`
+              : 'Not started'
+          const stats = [
+            template.version > 1 ? `v${template.version}` : null,
+            `${exerciseCount} exercise${exerciseCount === 1 ? '' : 's'}`,
+            exerciseCount > 0
+              ? formatEstimatedDuration(estimateTemplateDurationSeconds(template))
+              : null,
+            done > 0 ? `done ${done}×` : null
+          ]
+            .filter(Boolean)
+            .join(' · ')
+          return (
+            <button
+              type="button"
+              key={template.id}
+              className="recent-session-tile"
+              onClick={() => onSelectTemplate(template)}
+            >
+              <span
+                className="recent-session-tile-modality"
+                style={{ color: activityEnvironmentAccent('functional_strength_training') }}
+              >
+                <ModalityIcon type="functional_strength_training" size={16} />
+                <span className="recent-session-tile-label">{template.name}</span>
+              </span>
+              <span className="recent-session-tile-date">{statusLine}</span>
+              <span className="recent-session-tile-stats tabular-nums">{stats}</span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
