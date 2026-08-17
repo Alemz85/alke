@@ -227,7 +227,18 @@ function readableToolLabel(name: string, input: Record<string, unknown>): string
         : null
   if (name === 'Read' && path) return `Read ${basename(path)}`
   if ((name === 'Write' || name === 'Edit') && path) return `${name} ${basename(path)}`
-  if (name === 'Bash' && typeof input.command === 'string') return 'Ran a local command'
+  if (name === 'Bash' && typeof input.command === 'string') {
+    // Show WHAT ran, not just that something ran — "Ran a local command" made
+    // every query in the work log identical. The full command stays in the
+    // entry detail; the label carries its head, minus any leading `cd … &&`
+    // hop, trimmed so paths and SQL never flood the rail.
+    const command = input.command
+      .replace(/^\s*cd\s+\S+\s*&&\s*/, '')
+      .split('\n')[0]
+      .trim()
+    if (command) return `Ran ${command.length > 44 ? `${command.slice(0, 44)}…` : command}`
+    return 'Ran a local command'
+  }
   return name.replace(/_/g, ' ')
 }
 

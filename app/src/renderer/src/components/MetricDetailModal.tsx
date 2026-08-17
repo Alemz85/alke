@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { X } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Domain } from './domain'
@@ -92,6 +92,21 @@ function fmtTooltipDate(date: string): string {
 export function MetricDetailModal({ config, onClose }: MetricDetailModalProps): ReactElement {
   // Default to the widest window; the data rarely exceeds a year anyway.
   const [timeframe, setTimeframe] = useState<string>('all')
+
+  // Escape closes and focus returns to the tile that opened the modal — the
+  // doc comment always promised DayDetailDrawer's behavior; the keyboard
+  // audit found the handler had never actually been written.
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      trigger?.focus()
+    }
+  }, [onClose])
   const seriesName = config.seriesName ?? config.title
   const secondarySeriesName = config.secondarySeriesName ?? 'Comparison'
   const secondarySeriesColor = config.secondarySeriesColor ?? 'var(--color-text-tertiary)'
