@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, History, ListTree, RotateCcw } from 'lucide-react'
 import Markdown from 'react-markdown'
@@ -22,7 +30,7 @@ const MODE_LABELS = {
   goals: 'Goals'
 } as const
 
-export function ChatView(): ReactElement {
+export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElement {
   const queryClient = useQueryClient()
   const {
     state,
@@ -216,6 +224,7 @@ export function ChatView(): ReactElement {
                 <ListTree size={17} strokeWidth={1.6} aria-hidden="true" />
               </button>
             )}
+            {toolbar && <div className="chat-header-toolbar">{toolbar}</div>}
           </header>
 
           <div

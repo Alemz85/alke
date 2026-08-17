@@ -6,9 +6,10 @@
   gap: 0;
 }
 
-/* Full-bleed: the workspace runs to the window edges below the titlebar
-   strip. Regions separate by hairlines and the neutral surface ladder — an
-   outlined floating box read as a widget and taxed ~130px of chrome. */
+/* Full-bleed: the workspace owns the content area to every window edge — the
+   session header row IS the titlebar. Regions separate by hairlines and the
+   neutral surface ladder; an outlined floating box read as a widget and
+   taxed ~130px of chrome. */
 .chat-workspace {
   position: relative;
   display: grid;
@@ -18,7 +19,6 @@
   min-height: 0;
   overflow: hidden;
   background: var(--color-canvas);
-  border-top: 1px solid var(--color-divider-soft);
 }
 
 .chat-workspace--log-open {
@@ -63,6 +63,12 @@
   justify-content: space-between;
   min-height: 32px;
   padding: 0 var(--space-xxs) var(--space-sm);
+  /* Top of the rail joins the header row as window-grab area. */
+  -webkit-app-region: drag;
+}
+
+.chat-history-header button {
+  -webkit-app-region: no-drag;
 }
 
 .chat-panel-label,
@@ -244,9 +250,27 @@
   flex: 0 0 auto;
   gap: var(--space-sm);
   min-height: 58px;
-  padding: var(--space-xs) var(--space-lg);
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-lg);
   background: var(--color-canvas);
   border-bottom: 1px solid var(--color-divider-soft);
+  /* Chat's ONE top bar doubles as the window drag strip (the tab renders no
+     separate titlebar row). Interactive children opt back out below. */
+  -webkit-app-region: drag;
+}
+
+.chat-session-header :is(button, a, input, select) {
+  -webkit-app-region: no-drag;
+}
+
+/* The app toolbar (offline status · theme · refresh · recompute) docks at the
+   header's far right, separated from the conversation's own controls. */
+.chat-header-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-left: var(--space-xs);
+  padding-left: var(--space-sm);
+  border-left: 1px solid var(--color-divider-soft);
 }
 
 .chat-session-heading {

@@ -26,11 +26,13 @@ import './App.css'
 // Sessions, Cardio (Zone2), and Gym cross-link, so they're special-cased in the
 // render below (they receive an onOpenSessions / onBack / initialSubTab) rather
 // than listed here.
-const VIEWS: Record<Exclude<TabId, 'dashboard' | 'sessions' | 'zone2' | 'gym'>, () => ReactElement> = {
+const VIEWS: Record<
+  Exclude<TabId, 'dashboard' | 'sessions' | 'zone2' | 'gym' | 'chat'>,
+  () => ReactElement
+> = {
   recovery: RecoveryView,
   insights: InsightsView,
   injuries: InjuriesView,
-  chat: ChatView,
   profile: ProfileView,
   settings: SettingsView
 }
@@ -288,9 +290,56 @@ function App(): ReactElement {
     if (activeTab === 'gym') {
       return <GymView initialSubTab={gymEntrySubTab} />
     }
+    if (activeTab === 'chat') {
+      // Chat absorbs the app toolbar into its own header row (one top bar
+      // instead of a titlebar strip stacked on a session header), so the
+      // toolbar renders inside the view rather than above it.
+      return <ChatView toolbar={toolbar} />
+    }
     const ActiveView = VIEWS[activeTab]
     return <ActiveView />
   }
+
+  // One toolbar, two homes: the strip above the content column on normal
+  // tabs, the right end of the chat session header on Chat.
+  const toolbar = (
+    <>
+      <OfflineQueueStatus
+        connected={connected}
+        status={offlineQueue.status}
+        onRetry={() => {
+          void offlineQueue.retry()
+        }}
+      />
+      <ButtonSoft
+        className="button-soft--icon"
+        onClick={toggleTheme}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        {theme === 'dark' ? (
+          <Sun size={18} strokeWidth={1.5} />
+        ) : (
+          <Moon size={18} strokeWidth={1.5} />
+        )}
+      </ButtonSoft>
+      <ButtonSoft onClick={handleRefresh} aria-label="Refresh" disabled={refreshing}>
+        <RefreshCw size={16} strokeWidth={1.5} className={refreshing ? 'icon-spin' : undefined} />
+        Refresh
+      </ButtonSoft>
+      <ButtonSoft
+        className="button-soft--icon"
+        onClick={() => {
+          void handleRecomputeMetrics()
+        }}
+        aria-label="Recompute metrics"
+        title="Run the nightly metrics job now"
+        disabled={recomputing}
+      >
+        <Calculator size={16} strokeWidth={1.5} className={recomputing ? 'icon-spin' : undefined} />
+      </ButtonSoft>
+    </>
+  )
 
   return (
     <ChatRuntimeProvider>
@@ -303,50 +352,7 @@ function App(): ReactElement {
         />
         <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
           <div className="content-area-inner">
-            <div className="content-area-toolbar">
-              <OfflineQueueStatus
-                connected={connected}
-                status={offlineQueue.status}
-                onRetry={() => {
-                  void offlineQueue.retry()
-                }}
-              />
-              <ButtonSoft
-                className="button-soft--icon"
-                onClick={toggleTheme}
-                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-                title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              >
-                {theme === 'dark' ? (
-                  <Sun size={18} strokeWidth={1.5} />
-                ) : (
-                  <Moon size={18} strokeWidth={1.5} />
-                )}
-              </ButtonSoft>
-              <ButtonSoft onClick={handleRefresh} aria-label="Refresh" disabled={refreshing}>
-                <RefreshCw
-                  size={16}
-                  strokeWidth={1.5}
-                  className={refreshing ? 'icon-spin' : undefined}
-                />
-                Refresh
-              </ButtonSoft>
-              <ButtonSoft
-                className="button-soft--icon"
-                onClick={() => {
-                  void handleRecomputeMetrics()
-                }}
-                aria-label="Recompute metrics"
-                title="Run the nightly metrics job now"
-                disabled={recomputing}
-              >
-                <Calculator
-                  size={16}
-                  strokeWidth={1.5}
-                  className={recomputing ? 'icon-spin' : undefined}
-                />
-              </ButtonSoft>
-            </div>
+            {activeTab !== 'chat' && <div className="content-area-toolbar">{toolbar}</div>}
             {showDbError ? (
               <DbErrorState message={dbStatus.data?.error} onRetry={() => dbStatus.refetch()} />
             ) : (
