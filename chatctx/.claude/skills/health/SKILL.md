@@ -14,3 +14,5 @@ The first word of the arguments is the mode name; anything after it is the user'
 | goals | `modes/_shared.md`, `modes/goals.md` |
 
 Unknown or missing mode → treat as `analysis`. The mapping is a table, not logic — new modes are added by adding a row and a `modes/<name>.md` file.
+
+The app's chat always routes `analysis`; the deeper role files are then read lazily mid-session when the topic calls for them (see `modes/analysis.md`, "When the conversation crosses into another role"). The `injuries` and `goals` rows remain for headless invocations pinned to one role from the start (e.g. background goal-metric builds).

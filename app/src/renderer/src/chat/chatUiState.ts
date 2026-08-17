@@ -1,6 +1,5 @@
 import type {
   ChatAttachment,
-  ChatMode,
   ChatRuntimeEnvelope,
   ChatRuntimeSnapshot,
   ChatWorkLogEntry
@@ -12,13 +11,11 @@ export const NEW_CHAT_KEY = '__new__'
 const CHAT_UI_VERSION = 1
 const MAX_SAVED_COMPOSITIONS = 50
 const MAX_SAVED_DRAFT_LENGTH = 100_000
-const MODES = new Set<ChatMode>(['analysis', 'injuries', 'goals'])
 
 export interface ChatUiState {
   version: 1
   selectedSessionId: string | null
   drafts: Record<string, string>
-  modes: Record<string, ChatMode>
   attachments: Record<string, ChatAttachment[]>
   runtime: ChatRuntimeSnapshot | null
   historyOpen: boolean
@@ -30,7 +27,6 @@ export type ChatUiAction =
   | { type: 'select'; sessionId: string | null }
   | { type: 'new-chat' }
   | { type: 'set-draft'; key: string; text: string }
-  | { type: 'set-mode'; key: string; mode: ChatMode }
   | { type: 'set-attachments'; key: string; attachments: ChatAttachment[] }
   | { type: 'promote-composition'; fromKey: string; sessionId: string }
   | { type: 'remove-session'; sessionId: string }
@@ -44,7 +40,6 @@ interface PersistedChatUiState {
   version: 1
   selectedSessionId: string | null
   drafts: Record<string, string>
-  modes: Record<string, ChatMode>
   attachments: Record<string, ChatAttachment[]>
   historyOpen: boolean
   workLogOpen: boolean
@@ -76,14 +71,6 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   )
 }
 
-function isModeRecord(value: unknown): value is Record<string, ChatMode> {
-  return (
-    isRecord(value) &&
-    Object.keys(value).length <= MAX_SAVED_COMPOSITIONS &&
-    Object.values(value).every((entry) => MODES.has(entry as ChatMode))
-  )
-}
-
 function isAttachmentRecord(value: unknown): value is Record<string, ChatAttachment[]> {
   return (
     isRecord(value) &&
@@ -99,7 +86,6 @@ export function initialChatUiState(): ChatUiState {
     version: CHAT_UI_VERSION,
     selectedSessionId: null,
     drafts: { [NEW_CHAT_KEY]: '' },
-    modes: { [NEW_CHAT_KEY]: 'analysis' },
     attachments: { [NEW_CHAT_KEY]: [] },
     runtime: null,
     historyOpen: false,
@@ -117,7 +103,6 @@ export function parseChatUiSnapshot(serialized: string | null): ChatUiState {
       value.version !== CHAT_UI_VERSION ||
       (value.selectedSessionId !== null && typeof value.selectedSessionId !== 'string') ||
       !isStringRecord(value.drafts) ||
-      !isModeRecord(value.modes) ||
       !isAttachmentRecord(value.attachments) ||
       typeof value.historyOpen !== 'boolean' ||
       typeof value.workLogOpen !== 'boolean'
@@ -129,7 +114,6 @@ export function parseChatUiSnapshot(serialized: string | null): ChatUiState {
       version: CHAT_UI_VERSION,
       selectedSessionId: value.selectedSessionId,
       drafts: { [NEW_CHAT_KEY]: '', ...value.drafts },
-      modes: { [NEW_CHAT_KEY]: 'analysis', ...value.modes },
       attachments: { [NEW_CHAT_KEY]: [], ...value.attachments },
       runtime: null,
       historyOpen: value.historyOpen,
@@ -146,7 +130,6 @@ export function serializeChatUiState(state: ChatUiState): string {
     version: CHAT_UI_VERSION,
     selectedSessionId: state.selectedSessionId,
     drafts: state.drafts,
-    modes: state.modes,
     attachments: state.attachments,
     historyOpen: state.historyOpen,
     workLogOpen: state.workLogOpen
@@ -206,17 +189,13 @@ export function chatUiReducer(state: ChatUiState, action: ChatUiAction): ChatUiS
         ...state,
         drafts: { ...state.drafts, [action.key]: action.text.slice(0, MAX_SAVED_DRAFT_LENGTH) }
       }
-    case 'set-mode':
-      return { ...state, modes: { ...state.modes, [action.key]: action.mode } }
     case 'set-attachments':
       return { ...state, attachments: { ...state.attachments, [action.key]: action.attachments } }
     case 'promote-composition': {
-      const mode = state.modes[action.fromKey] ?? 'analysis'
       return {
         ...state,
         selectedSessionId: action.sessionId,
         drafts: { ...state.drafts, [action.fromKey]: '', [action.sessionId]: '' },
-        modes: { ...state.modes, [action.sessionId]: mode },
         attachments: {
           ...state.attachments,
           [action.fromKey]: [],
@@ -227,17 +206,14 @@ export function chatUiReducer(state: ChatUiState, action: ChatUiAction): ChatUiS
     }
     case 'remove-session': {
       const drafts = { ...state.drafts }
-      const modes = { ...state.modes }
       const attachments = { ...state.attachments }
       delete drafts[action.sessionId]
-      delete modes[action.sessionId]
       delete attachments[action.sessionId]
       return {
         ...state,
         selectedSessionId:
           state.selectedSessionId === action.sessionId ? null : state.selectedSessionId,
         drafts,
-        modes,
         attachments
       }
     }

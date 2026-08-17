@@ -1,28 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactElement } from 'react'
 import { ArrowUp, Paperclip, Square, X } from 'lucide-react'
-import { CHAT_MODES, MAX_CHAT_ATTACHMENTS, type ChatAttachment } from '@shared/types'
+import { MAX_CHAT_ATTACHMENTS, type ChatAttachment } from '@shared/types'
 import { isChatRuntimeActive, useChatRuntime } from '../../chat/ChatRuntimeProvider'
 
-const MODE_LABELS = {
-  analysis: 'Analysis',
-  injuries: 'Injuries',
-  goals: 'Goals'
-} as const
-
 export function ChatComposer({ offline = false }: { offline?: boolean }): ReactElement {
-  const {
-    state,
-    draft,
-    mode,
-    attachments,
-    sending,
-    setDraft,
-    setMode,
-    setAttachments,
-    setNotice,
-    send,
-    stop
-  } = useChatRuntime()
+  const { state, draft, attachments, sending, setDraft, setAttachments, setNotice, send, stop } =
+    useChatRuntime()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
@@ -109,22 +92,6 @@ export function ChatComposer({ offline = false }: { offline?: boolean }): ReactE
         </div>
       )}
       <div className="chat-composer-column">
-        {state.selectedSessionId === null && (
-          <div className="chat-mode-picker" role="tablist" aria-label="Analysis mode">
-            {CHAT_MODES.map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="tab"
-                aria-selected={option === mode}
-                className={`chat-mode-button${option === mode ? ' is-selected' : ''}`}
-                onClick={() => setMode(option)}
-              >
-                {MODE_LABELS[option]}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="chat-input-well">
           {attachments.length > 0 && (
             <div className="chat-attachments" aria-label="Attached files">

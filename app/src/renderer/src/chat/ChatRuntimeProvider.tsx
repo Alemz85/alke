@@ -11,7 +11,7 @@ import {
   type ReactElement
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { ChatAttachment, ChatMode, ChatRuntimeSnapshot } from '@shared/types'
+import type { ChatAttachment, ChatRuntimeSnapshot } from '@shared/types'
 import {
   CHAT_UI_STORAGE_KEY,
   NEW_CHAT_KEY,
@@ -29,13 +29,11 @@ export interface ChatRuntimeContextValue {
   state: ChatUiState
   selectedKey: string
   draft: string
-  mode: ChatMode
   attachments: ChatAttachment[]
   sending: boolean
   selectSession(sessionId: string): void
   newAnalysis(): void
   setDraft(text: string): void
-  setMode(mode: ChatMode): void
   setAttachments(attachments: ChatAttachment[]): void
   send(override?: string): Promise<void>
   stop(sessionId?: string): Promise<void>
@@ -128,7 +126,6 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
 
   const selectedKey = state.selectedSessionId ?? NEW_CHAT_KEY
   const draft = state.drafts[selectedKey] ?? ''
-  const mode = state.modes[selectedKey] ?? 'analysis'
   const attachments = useMemo(
     () => state.attachments[selectedKey] ?? [],
     [selectedKey, state.attachments]
@@ -144,11 +141,6 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
 
   const setDraft = useCallback(
     (text: string): void => dispatch({ type: 'set-draft', key: selectedKey, text }),
-    [selectedKey]
-  )
-
-  const setMode = useCallback(
-    (nextMode: ChatMode): void => dispatch({ type: 'set-mode', key: selectedKey, mode: nextMode }),
     [selectedKey]
   )
 
@@ -190,7 +182,7 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
           state.selectedSessionId,
           message,
           attachments.map(({ path }) => path),
-          mode
+          'analysis'
         )
         dispatch({
           type: 'promote-composition',
@@ -214,7 +206,6 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
     [
       attachments,
       draft,
-      mode,
       queryClient,
       refreshRuntime,
       selectedKey,
@@ -260,13 +251,11 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
       state,
       selectedKey,
       draft,
-      mode,
       attachments,
       sending,
       selectSession,
       newAnalysis,
       setDraft,
-      setMode,
       setAttachments,
       send,
       stop,
@@ -282,7 +271,6 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
       clearNotice,
       continueInterrupted,
       draft,
-      mode,
       newAnalysis,
       removeSession,
       selectSession,
@@ -292,7 +280,6 @@ export function ChatRuntimeProvider({ children }: PropsWithChildren): ReactEleme
       setAttachments,
       setDraft,
       setHistoryOpen,
-      setMode,
       setNotice,
       setWorkLogOpen,
       state,

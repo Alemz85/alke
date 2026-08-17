@@ -38,7 +38,7 @@ function envelope(sequence: number, text: string): ChatRuntimeEnvelope {
 }
 
 describe('chatUiReducer', () => {
-  it('keeps independent drafts, modes, and attachments per composition', () => {
+  it('keeps independent drafts and attachments per composition', () => {
     let state = initialChatUiState()
     state = chatUiReducer(state, {
       type: 'set-draft',
@@ -52,25 +52,18 @@ describe('chatUiReducer', () => {
       text: 'follow up'
     })
     state = chatUiReducer(state, {
-      type: 'set-mode',
-      key: 'session-1',
-      mode: 'injuries'
-    })
-    state = chatUiReducer(state, {
       type: 'set-attachments',
       key: 'session-1',
       attachments: [{ path: '/tmp/report.pdf', name: 'report.pdf', sizeBytes: 20 }]
     })
 
     expect(state.drafts).toEqual({ [NEW_CHAT_KEY]: 'new draft', 'session-1': 'follow up' })
-    expect(state.modes['session-1']).toBe('injuries')
     expect(state.attachments['session-1']?.[0]?.name).toBe('report.pdf')
   })
 
   it('promotes the new composition to its accepted session without losing other drafts', () => {
     let state = initialChatUiState()
     state = chatUiReducer(state, { type: 'set-draft', key: NEW_CHAT_KEY, text: 'Analyze' })
-    state = chatUiReducer(state, { type: 'set-mode', key: NEW_CHAT_KEY, mode: 'goals' })
     state = chatUiReducer(state, {
       type: 'promote-composition',
       fromKey: NEW_CHAT_KEY,
@@ -79,7 +72,7 @@ describe('chatUiReducer', () => {
 
     expect(state.selectedSessionId).toBe('session-2')
     expect(state.drafts[NEW_CHAT_KEY]).toBe('')
-    expect(state.modes['session-2']).toBe('goals')
+    expect(state.drafts['session-2']).toBe('')
   })
 
   it('reconciles newer runtime events and ignores duplicate sequences', () => {
@@ -140,7 +133,6 @@ describe('chat UI persistence', () => {
       ...initialChatUiState(),
       selectedSessionId: 'session-1',
       drafts: { 'session-1': 'Follow up' },
-      modes: { 'session-1': 'analysis' as const },
       historyOpen: true,
       workLogOpen: true,
       runtime: runtimeSnapshot()
@@ -155,5 +147,26 @@ describe('chat UI persistence', () => {
       historyOpen: true,
       workLogOpen: true
     })
+  })
+
+  it('ignores a leftover modes key from older snapshots instead of rejecting them', () => {
+    const legacySnapshot = JSON.stringify({
+      version: 1,
+      selectedSessionId: 'session-1',
+      drafts: { 'session-1': 'Follow up' },
+      modes: { 'session-1': 'injuries' },
+      attachments: {},
+      historyOpen: true,
+      workLogOpen: false
+    })
+
+    const state = parseChatUiSnapshot(legacySnapshot)
+    expect(state).toMatchObject({
+      selectedSessionId: 'session-1',
+      drafts: { 'session-1': 'Follow up' },
+      historyOpen: true,
+      workLogOpen: false
+    })
+    expect(state).not.toHaveProperty('modes')
   })
 })
