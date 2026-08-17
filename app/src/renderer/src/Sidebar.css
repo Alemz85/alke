@@ -80,6 +80,63 @@
   letter-spacing: var(--type-body-md-letter-spacing);
 }
 
+.sidebar-collapse-toggle {
+  min-height: 36px;
+  margin-top: var(--space-xs);
+  color: var(--color-text-tertiary);
+}
+
+.sidebar-collapse-toggle:hover {
+  color: var(--color-text-secondary);
+}
+
+.sidebar-collapse-toggle .sidebar-item-label {
+  font-size: var(--type-body-sm-size);
+}
+
+/* Deliberate mini rail (the Chat tab): navigation recedes so the reading
+   surface can claim the width, but every section keeps its icon AND its
+   minimized name — unlike the space-starved icon-only rail below 1100px.
+   Width snaps rather than animates (never animate layout). */
+.sidebar--collapsed {
+  width: var(--sidebar-width-mini);
+  padding-right: var(--space-xxs);
+  padding-left: var(--space-xxs);
+}
+
+.sidebar--collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar--collapsed .sidebar-brand-wordmark {
+  display: none;
+}
+
+.sidebar--collapsed .sidebar-item {
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+  min-height: 48px;
+  padding: var(--space-xs) 2px;
+  /* Stacked icon+name tiles: a 24px pill radius would crowd the tiny label,
+     so the mini rail uses the compact-surface radius instead. */
+  border-radius: var(--radius-md);
+}
+
+.sidebar--collapsed .sidebar-item-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.24px;
+  white-space: nowrap;
+}
+
+.sidebar--collapsed .sidebar-collapse-toggle {
+  min-height: 44px;
+}
+
 @media (max-width: 1099px) {
   .sidebar {
     width: var(--sidebar-width-collapsed);

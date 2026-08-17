@@ -104,7 +104,7 @@ Base unit 4px. Tokens: `{spacing.xxs}` 4px · `{spacing.xs}` 8px · `{spacing.sm
 
 ### Structure
 
-- **Sidebar navigation**, 220px wide, `{colors.canvas}`, hairline right border — Mac-app convention. Nav items are pill-highlighted on active (`{colors.surface-elevated}` pill behind the label). Order: Dashboard · Zone 2 · Sessions · Recovery · Insights · Chat.
+- **Sidebar navigation**, 220px wide, `{colors.canvas}`, hairline right border — Mac-app convention. Nav items are pill-highlighted on active (`{colors.surface-elevated}` pill behind the label). Order: Dashboard · Zone 2 · Sessions · Recovery · Insights · Chat. On the Chat tab the sidebar collapses by default to a **76px labeled mini rail** (`{layout.sidebar-width-mini}`): each section keeps its icon and a 9.5px minimized name in a `{rounded.md}` tile, and a collapse/expand control sits at the rail's foot; the choice persists like the theme. This is deliberate mode-switching, distinct from the space-starved 64px icon-only rail below 1100px. Other tabs always show the full sidebar.
 - **Content area** max-width 1200px, centered when the window exceeds it.
 - **Card grid**: 12-column. Hero metric card spans 12; standard metric cards span 4 (3-up); charts span 6, 8, or 12 depending on density. Collapse to 2-up below 1100px window width, 1-up below 760px.
 

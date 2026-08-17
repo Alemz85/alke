@@ -187,6 +187,9 @@
   /* Layout */
   --sidebar-width: 220px;
   --sidebar-width-collapsed: 64px;
+  /* Deliberate mini rail (Chat): icons keep their minimized section names,
+     unlike the space-starved 64px icon-only rail below 1100px. */
+  --sidebar-width-mini: 76px;
   --content-max-width: 1200px;
 
   /* Motion */

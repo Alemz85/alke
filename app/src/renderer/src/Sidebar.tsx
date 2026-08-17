@@ -8,7 +8,9 @@ import {
   Bandage,
   MessageSquare,
   CircleUser,
-  Settings
+  Settings,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react'
 import type { TabId } from './tabs'
 import './Sidebar.css'
@@ -37,6 +39,12 @@ const FOOTER_NAV_ITEMS: NavItem[] = [
 export interface SidebarProps {
   active: TabId
   onSelect: (tab: TabId) => void
+  /** Mini-rail mode: every section stays reachable, but as a small icon with
+   *  its minimized name instead of the full 220px list. */
+  collapsed?: boolean
+  /** When provided, a collapse/expand control renders at the rail's foot —
+   *  the Chat tab passes it so the reading surface can claim the width. */
+  onToggleCollapsed?: () => void
 }
 
 function renderNavItem(item: NavItem, active: TabId, onSelect: (tab: TabId) => void): ReactElement {
@@ -56,9 +64,14 @@ function renderNavItem(item: NavItem, active: TabId, onSelect: (tab: TabId) => v
   )
 }
 
-export function Sidebar({ active, onSelect }: SidebarProps): ReactElement {
+export function Sidebar({
+  active,
+  onSelect,
+  collapsed = false,
+  onToggleCollapsed
+}: SidebarProps): ReactElement {
   return (
-    <nav className="sidebar" aria-label="Primary">
+    <nav className={collapsed ? 'sidebar sidebar--collapsed' : 'sidebar'} aria-label="Primary">
       <div className="sidebar-brand">
         <svg
           className="sidebar-brand-mark"
@@ -82,6 +95,22 @@ export function Sidebar({ active, onSelect }: SidebarProps): ReactElement {
       <ul className="sidebar-list sidebar-list--footer">
         {FOOTER_NAV_ITEMS.map((item) => renderNavItem(item, active, onSelect))}
       </ul>
+      {onToggleCollapsed && (
+        <button
+          type="button"
+          className="sidebar-item sidebar-collapse-toggle"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+        >
+          {collapsed ? (
+            <PanelLeftOpen size={18} strokeWidth={1.5} className="sidebar-item-icon" />
+          ) : (
+            <PanelLeftClose size={18} strokeWidth={1.5} className="sidebar-item-icon" />
+          )}
+          <span className="sidebar-item-label">{collapsed ? 'Expand' : 'Collapse'}</span>
+        </button>
+      )}
     </nav>
   )
 }

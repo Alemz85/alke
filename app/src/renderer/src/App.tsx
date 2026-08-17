@@ -59,6 +59,16 @@ function readInitialTheme(): Theme {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
 }
 
+/** Chat collapses the nav to the labeled mini rail by default; expanding it
+ *  there is a deliberate choice, so it persists like the theme does. */
+function readInitialChatSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem('chat-sidebar-collapsed') !== 'false'
+  } catch {
+    return true
+  }
+}
+
 /** Compact "just now / 12 min ago / 3 h ago / 2 d ago" from an ISO instant. */
 function fmtRelativeTime(iso: string): string {
   const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60_000)
@@ -76,6 +86,9 @@ function App(): ReactElement {
   // Sessions is opened without a filter (sidebar, Dashboard "All sessions").
   const [sessionsActivity, setSessionsActivity] = useState<string | null>(null)
   const [theme, setTheme] = useState<Theme>(readInitialTheme)
+  const [chatSidebarCollapsed, setChatSidebarCollapsed] = useState<boolean>(
+    readInitialChatSidebarCollapsed
+  )
   const [refreshing, setRefreshing] = useState(false)
   const [recomputing, setRecomputing] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -195,6 +208,18 @@ function App(): ReactElement {
     })
   }, [])
 
+  const toggleChatSidebar = useCallback((): void => {
+    setChatSidebarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('chat-sidebar-collapsed', String(next))
+      } catch {
+        /* localStorage unavailable — the choice still applies for this session */
+      }
+      return next
+    })
+  }, [])
+
   const connected = dbStatus.data?.connected !== false
   const hasCachedHealthData = queryClient
     .getQueryCache()
@@ -254,7 +279,12 @@ function App(): ReactElement {
   return (
     <ChatRuntimeProvider>
       <div className="app-shell">
-        <Sidebar active={activeTab} onSelect={handleSelectTab} />
+        <Sidebar
+          active={activeTab}
+          onSelect={handleSelectTab}
+          collapsed={activeTab === 'chat' && chatSidebarCollapsed}
+          onToggleCollapsed={activeTab === 'chat' ? toggleChatSidebar : undefined}
+        />
         <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
           <div className="content-area-inner">
             <div className="content-area-toolbar">
