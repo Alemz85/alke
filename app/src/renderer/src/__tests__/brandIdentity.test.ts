@@ -22,6 +22,16 @@ describe('Sidebar collapse', () => {
     expect(app).toContain("localStorage.setItem('sidebar-collapsed'")
   })
 
+  it('nudges the rail collapsed on entering Chat, one-way (requested 2026-08-17)', () => {
+    // Entering Chat collapses; nothing ever auto-expands. The nudge acts on
+    // the stored preference via the navigation action — the rendered state
+    // must never branch on the active tab.
+    expect(app).toContain("if (tab === 'chat') collapseSidebar()")
+    const collapseFn = app.match(/const collapseSidebar = useCallback[\s\S]*?\n  \}, \[\]\)/)?.[0] ?? ''
+    expect(collapseFn).toContain("localStorage.setItem('sidebar-collapsed', 'true')")
+    expect(collapseFn).not.toContain("'false'")
+  })
+
   it('animates the width change instead of snapping', () => {
     expect(styles).toMatch(/\.sidebar\s*\{[^}]*transition:[^}]*width var\(--motion-exit\)/s)
     // Labels must clip, not re-wrap, while the rail narrows.

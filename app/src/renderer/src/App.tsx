@@ -64,7 +64,9 @@ function readInitialTheme(): Theme {
 /** The nav rail's collapsed state is a single app-wide preference, not a
  *  per-tab mode: a sidebar that re-expanded itself on every non-chat tab read
  *  as the app fighting the user. Persisted like the theme; expanded by
- *  default. */
+ *  default. One asymmetry, at the user's request: entering Chat nudges the
+ *  rail collapsed (reading width wins there), but nothing ever auto-expands
+ *  it — the manual toggle is the only way back up. */
 function readInitialSidebarCollapsed(): boolean {
   try {
     return localStorage.getItem('sidebar-collapsed') === 'true'
@@ -225,6 +227,20 @@ function App(): ReactElement {
     })
   }, [])
 
+  // One-way: entering Chat collapses the rail (persisted, so it behaves like
+  // the user's own choice from then on); nothing ever auto-expands it.
+  const collapseSidebar = useCallback((): void => {
+    setSidebarCollapsed((prev) => {
+      if (prev) return prev
+      try {
+        localStorage.setItem('sidebar-collapsed', 'true')
+      } catch {
+        /* localStorage unavailable — the choice still applies for this session */
+      }
+      return true
+    })
+  }, [])
+
   const connected = dbStatus.data?.connected !== false
   const hasCachedHealthData = queryClient
     .getQueryCache()
@@ -252,10 +268,11 @@ function App(): ReactElement {
     (tab: TabId): void => {
       if (tab === 'sessions') setSessionsActivity(null)
       if (tab === 'gym') setGymEntrySubTab('main')
+      if (tab === 'chat') collapseSidebar()
       setActiveTab(tab)
       if (WORKOUT_VIEW_TABS.has(tab)) invalidateWorkoutViews(queryClient)
     },
-    [queryClient]
+    [collapseSidebar, queryClient]
   )
 
   // The Dashboard's "All templates" link lands directly on the Gym Templates
