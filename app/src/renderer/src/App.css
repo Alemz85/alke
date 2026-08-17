@@ -93,11 +93,20 @@
   overflow: hidden;
 }
 
+/* Chat is a workspace, not a page: it owns the full content area below the
+   titlebar strip. No reading-column max-width, no billboard padding — the
+   40px drag strip stays as the de-facto titlebar and everything under it is
+   the chat surface, edge to edge. */
 .content-area--chat .content-area-inner {
+  max-width: none;
   height: 100%;
   min-height: 0;
-  gap: var(--space-sm);
-  padding-bottom: var(--space-xl);
+  gap: 0;
+  padding: 0;
+}
+
+.content-area--chat .content-area-toolbar {
+  padding: var(--space-xs) var(--space-sm);
 }
 
 @media (max-width: 759px) {

@@ -6,16 +6,19 @@
   gap: 0;
 }
 
+/* Full-bleed: the workspace runs to the window edges below the titlebar
+   strip. Regions separate by hairlines and the neutral surface ladder — an
+   outlined floating box read as a widget and taxed ~130px of chrome. */
 .chat-workspace {
   position: relative;
   display: grid;
   grid-template-columns: 208px minmax(0, 1fr);
+  flex: 1;
   width: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--color-canvas);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
+  border-top: 1px solid var(--color-divider-soft);
 }
 
 .chat-workspace--log-open {
@@ -241,7 +244,7 @@
   flex: 0 0 auto;
   gap: var(--space-sm);
   min-height: 58px;
-  padding: var(--space-xs) var(--space-md);
+  padding: var(--space-xs) var(--space-lg);
   background: var(--color-canvas);
   border-bottom: 1px solid var(--color-divider-soft);
 }
@@ -783,7 +786,7 @@
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  padding: var(--space-sm) var(--space-xl) var(--space-md);
+  padding: var(--space-sm) var(--space-xl) var(--space-lg);
   background: var(--color-canvas);
   border-top: 1px solid var(--color-divider-soft);
 }
@@ -1175,12 +1178,6 @@
 }
 
 @media (max-width: 760px) {
-  .chat-workspace {
-    border-right: 0;
-    border-left: 0;
-    border-radius: 0;
-  }
-
   .chat-session-header {
     padding-right: var(--space-sm);
     padding-left: var(--space-sm);
