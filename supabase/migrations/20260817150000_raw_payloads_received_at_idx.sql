@@ -1,0 +1,16 @@
+-- Index raw_payloads by arrival time.
+--
+-- raw_payloads is the append-only log of every raw HAE POST — the source
+-- every other table derives from, and the only thing that made the July
+-- walking-distance backfill possible. Measured 2026-08-17: 23 MB / 859 rows,
+-- growing ~2 MB/week in steady state (the TODO's ~2 MB/DAY estimate was the
+-- initial-backfill week extrapolated; see TODO #5 for the numbers). Total DB
+-- is 56 MB, so even a 500 MB free-tier ceiling is years out — no pruning is
+-- scheduled, and none should run until scripts/archive_raw_payloads.py has
+-- verifiably produced a second copy.
+--
+-- The index exists so that any future retention pass (delete where
+-- received_at < X), the archive script's incremental scans, and ad-hoc
+-- time-window queries against the log don't seq-scan a table whose rows
+-- average ~27 kB.
+create index raw_payloads_received_at_idx on raw_payloads (received_at);

@@ -64,3 +64,7 @@ knowledge/
 # extracted RESULTS live in the database like every other health fact; these
 # files stay local. See TODO.md "Blood panels".
 /Health/
+
+# Local raw_payloads mirror (scripts/archive_raw_payloads.py) — hours of source
+# data, but machine-local by design; the DB remains the canonical copy.
+/backups/
