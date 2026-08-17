@@ -10,6 +10,14 @@
   /* Leave room for the traffic-light window controls (hiddenInset titlebar). */
   padding-top: calc(var(--space-xxl) + var(--space-sm));
   gap: var(--space-lg);
+  /* Collapsing is a user-driven state change, and the one case where this
+     app animates a layout property on purpose: the rail is a single narrow
+     element, and snapping 220px → 76px reads as a glitch rather than a
+     transition. Kept short and ease-out; the global reduced-motion block
+     neutralizes it. */
+  transition:
+    width var(--motion-exit) var(--ease-out-quart),
+    padding var(--motion-exit) var(--ease-out-quart);
 }
 
 .sidebar-brand {
@@ -56,7 +64,14 @@
   padding: var(--space-sm) var(--space-sm);
   min-height: 32px;
   color: var(--color-text-secondary);
-  transition: background var(--motion-hover);
+  /* Clip rather than reflow while the rail narrows — a label that re-wraps
+     mid-transition is what made the snap look broken. */
+  overflow: hidden;
+  transition:
+    background var(--motion-hover),
+    gap var(--motion-exit) var(--ease-out-quart),
+    padding var(--motion-exit) var(--ease-out-quart),
+    border-radius var(--motion-exit) var(--ease-out-quart);
 }
 
 .sidebar-item:hover {
@@ -78,6 +93,10 @@
   font-size: var(--type-body-md-size);
   font-weight: 400;
   letter-spacing: var(--type-body-md-letter-spacing);
+  white-space: nowrap;
+  transition:
+    font-size var(--motion-exit) var(--ease-out-quart),
+    opacity var(--motion-exit) var(--ease-out-quart);
 }
 
 .sidebar-collapse-toggle {
@@ -109,8 +128,19 @@
   padding: 0;
 }
 
+/* Fades and squeezes out instead of vanishing — display:none cannot tween. */
+.sidebar-brand-wordmark {
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width var(--motion-exit) var(--ease-out-quart),
+    opacity var(--motion-exit) var(--ease-out-quart);
+  max-width: 6ch;
+}
+
 .sidebar--collapsed .sidebar-brand-wordmark {
-  display: none;
+  max-width: 0;
+  opacity: 0;
 }
 
 .sidebar--collapsed .sidebar-item {

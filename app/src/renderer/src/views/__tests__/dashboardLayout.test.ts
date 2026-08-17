@@ -7,8 +7,7 @@ const styles = readFileSync(new URL('../DashboardView.css', import.meta.url), 'u
 describe('Dashboard card layout', () => {
   it('leads the card stack with the hero metric, then the glance row', () => {
     const stackStart = source.indexOf('<div className="dashboard-card-stack">')
-    const recentStart = source.indexOf('<RecentSessionsBox')
-    const stack = source.slice(stackStart, recentStart)
+    const stack = source.slice(stackStart, source.indexOf('<GymTemplatesBox'))
 
     expect(stackStart).toBeGreaterThan(-1)
     expect(stack).toContain('<div className="dashboard-hero-card">')
@@ -20,12 +19,20 @@ describe('Dashboard card layout', () => {
     expect(stack).not.toContain('dashboard-calendar-grid')
   })
 
-  it('places recent sessions between the card stack and the calendar', () => {
-    const recentStart = source.indexOf('<RecentSessionsBox')
+  it('orders the sections forward-looking first: templates, calendar, then recent', () => {
+    // What to train next, then the month's shape, then what was just done
+    // (user's ordering, 2026-08-17).
+    const templatesStart = source.indexOf('<GymTemplatesBox')
     const calendarStart = source.indexOf('<div className="dashboard-calendar-grid">')
+    const recentStart = source.indexOf('<RecentSessionsBox')
 
-    expect(recentStart).toBeGreaterThan(-1)
-    expect(calendarStart).toBeGreaterThan(recentStart)
+    expect(templatesStart).toBeGreaterThan(-1)
+    expect(calendarStart).toBeGreaterThan(templatesStart)
+    expect(recentStart).toBeGreaterThan(calendarStart)
+  })
+
+  it('keeps phone pairing out of the overview — it belongs with the templates', () => {
+    expect(source).not.toContain('PhoneCardButton')
   })
 
   it('spaces the grouped card grids with the dashboard spacing token', () => {

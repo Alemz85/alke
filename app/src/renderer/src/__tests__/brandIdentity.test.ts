@@ -10,6 +10,26 @@ const packageJson = JSON.parse(
 ) as { name: string; author: string }
 const readme = readFileSync(new URL('../../../../../README.md', import.meta.url), 'utf8')
 
+describe('Sidebar collapse', () => {
+  const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+  it('is one app-wide preference, not a per-tab mode', () => {
+    // A rail that re-expanded itself on every non-chat tab read as the app
+    // fighting the user (reported 2026-08-17).
+    expect(app).toContain('collapsed={sidebarCollapsed}')
+    expect(app).toContain('onToggleCollapsed={toggleSidebar}')
+    expect(app).not.toMatch(/activeTab === 'chat' && \w*[Ss]idebarCollapsed/)
+    expect(app).toContain("localStorage.setItem('sidebar-collapsed'")
+  })
+
+  it('animates the width change instead of snapping', () => {
+    expect(styles).toMatch(/\.sidebar\s*\{[^}]*transition:[^}]*width var\(--motion-exit\)/s)
+    // Labels must clip, not re-wrap, while the rail narrows.
+    expect(styles).toMatch(/\.sidebar-item\s*\{[^}]*overflow: hidden/s)
+    expect(styles).toMatch(/\.sidebar-item-label\s*\{[^}]*white-space: nowrap/s)
+  })
+})
+
 describe('Alke brand identity', () => {
   it('renders the lowercase Alke lockup with a decorative Three Flows mark', () => {
     expect(sidebar).toContain('<span className="sidebar-brand-wordmark">alke</span>')

@@ -40,10 +40,10 @@ export interface SidebarProps {
   active: TabId
   onSelect: (tab: TabId) => void
   /** Mini-rail mode: every section stays reachable, but as a small icon with
-   *  its minimized name instead of the full 220px list. */
+   *  its minimized name instead of the full 220px list. App-wide preference —
+   *  never a per-tab mode. */
   collapsed?: boolean
-  /** When provided, a collapse/expand control renders at the rail's foot —
-   *  the Chat tab passes it so the reading surface can claim the width. */
+  /** When provided, a collapse/expand control renders at the rail's foot. */
   onToggleCollapsed?: () => void
 }
 

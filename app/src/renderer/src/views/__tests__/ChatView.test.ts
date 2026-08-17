@@ -55,8 +55,14 @@ describe('long-form Chat workspace', () => {
 })
 
 describe('responsive and token-only Chat styling', () => {
-  it('centers a 760px reading column and uses structural rails', () => {
-    expect(css).toMatch(/\.chat-document-column\s*\{[^}]*max-width:\s*760px/s)
+  it('centers a bounded reading column driven by one token, and uses structural rails', () => {
+    // The column width is a single knob (widened to 900px on 2026-08-17); the
+    // document and composer must both track it rather than hardcoding a width.
+    expect(css).toMatch(/--chat-reading-width:\s*900px/)
+    expect(css).toMatch(
+      /\.chat-document-column\s*\{[^}]*max-width:\s*var\(--chat-reading-width\)/s
+    )
+    expect(css).toMatch(/\.chat-composer-column\s*\{[^}]*var\(--chat-reading-width\)/s)
     expect(css).toMatch(/\.chat-history\s*\{[^}]*width:\s*208px/s)
     expect(css).toMatch(/\.chat-worklog\s*\{[^}]*width:\s*248px/s)
   })

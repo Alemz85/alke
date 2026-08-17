@@ -9,6 +9,7 @@ import { formatRest } from '../../lib/gymLog'
 import { formatTemplateDose } from './gymFormat'
 import { recoveryOverviewPreview, type RecoveryLogTemplate } from '../../lib/recoveryLogTemplates'
 import { RecoveryTemplateViewModal } from './RecoveryTemplateViewModal'
+import { PhoneCardButton } from './PhoneCardButton'
 
 /**
  * An injury only earns a card here once its recovery plan has actually been
@@ -467,6 +468,7 @@ export function GymTemplatesTab({
       <section className="gym-section">
         <div className="gym-section-head">
           <h2 className="gym-section-title">Templates</h2>
+          <PhoneCardButton />
           <ButtonSoft onClick={onNew}>New template</ButtonSoft>
         </div>
 

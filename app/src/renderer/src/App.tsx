@@ -61,13 +61,15 @@ function readInitialTheme(): Theme {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
 }
 
-/** Chat collapses the nav to the labeled mini rail by default; expanding it
- *  there is a deliberate choice, so it persists like the theme does. */
-function readInitialChatSidebarCollapsed(): boolean {
+/** The nav rail's collapsed state is a single app-wide preference, not a
+ *  per-tab mode: a sidebar that re-expanded itself on every non-chat tab read
+ *  as the app fighting the user. Persisted like the theme; expanded by
+ *  default. */
+function readInitialSidebarCollapsed(): boolean {
   try {
-    return localStorage.getItem('chat-sidebar-collapsed') !== 'false'
+    return localStorage.getItem('sidebar-collapsed') === 'true'
   } catch {
-    return true
+    return false
   }
 }
 
@@ -91,9 +93,7 @@ function App(): ReactElement {
   // deep-links; sidebar navigation resets it to the main tab).
   const [gymEntrySubTab, setGymEntrySubTab] = useState<GymSubTab>('main')
   const [theme, setTheme] = useState<Theme>(readInitialTheme)
-  const [chatSidebarCollapsed, setChatSidebarCollapsed] = useState<boolean>(
-    readInitialChatSidebarCollapsed
-  )
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(readInitialSidebarCollapsed)
   const [refreshing, setRefreshing] = useState(false)
   const [recomputing, setRecomputing] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -213,11 +213,11 @@ function App(): ReactElement {
     })
   }, [])
 
-  const toggleChatSidebar = useCallback((): void => {
-    setChatSidebarCollapsed((prev) => {
+  const toggleSidebar = useCallback((): void => {
+    setSidebarCollapsed((prev) => {
       const next = !prev
       try {
-        localStorage.setItem('chat-sidebar-collapsed', String(next))
+        localStorage.setItem('sidebar-collapsed', String(next))
       } catch {
         /* localStorage unavailable — the choice still applies for this session */
       }
@@ -292,17 +292,17 @@ function App(): ReactElement {
     }
     if (activeTab === 'chat') {
       // Chat absorbs the app toolbar into its own header row (one top bar
-      // instead of a titlebar strip stacked on a session header), so the
-      // toolbar renders inside the view rather than above it.
-      return <ChatView toolbar={toolbar} />
+      // instead of a titlebar strip stacked on a session header), and takes
+      // only the ambient controls — see the toolbar comment above.
+      return <ChatView toolbar={ambientControls} />
     }
     const ActiveView = VIEWS[activeTab]
     return <ActiveView />
   }
 
-  // One toolbar, two homes: the strip above the content column on normal
-  // tabs, the right end of the chat session header on Chat.
-  const toolbar = (
+  // Shared by both toolbar homes: offline/queue state is a STATUS the user
+  // needs wherever they are, and the theme toggle is ambient.
+  const ambientControls = (
     <>
       <OfflineQueueStatus
         connected={connected}
@@ -323,6 +323,15 @@ function App(): ReactElement {
           <Moon size={18} strokeWidth={1.5} />
         )}
       </ButtonSoft>
+    </>
+  )
+
+  // Data-pipeline actions. They belong on the analytics tabs, whose numbers
+  // they change — inside the chat header they were two more things to read
+  // in a bar that should stay quiet, and the conversation refreshes itself.
+  const toolbar = (
+    <>
+      {ambientControls}
       <ButtonSoft onClick={handleRefresh} aria-label="Refresh" disabled={refreshing}>
         <RefreshCw size={16} strokeWidth={1.5} className={refreshing ? 'icon-spin' : undefined} />
         Refresh
@@ -347,8 +356,8 @@ function App(): ReactElement {
         <Sidebar
           active={activeTab}
           onSelect={handleSelectTab}
-          collapsed={activeTab === 'chat' && chatSidebarCollapsed}
-          onToggleCollapsed={activeTab === 'chat' ? toggleChatSidebar : undefined}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
         />
         <main className={activeTab === 'chat' ? 'content-area content-area--chat' : 'content-area'}>
           <div className="content-area-inner">
