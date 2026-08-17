@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
-import type { RecoveryPlanItem } from '@shared/types'
+import type { InjuryLogEntry, RecoveryPlanItem, RecoveryPlanPhase } from '@shared/types'
 import { formatRecoveryItemDose, formatRecoveryStepDose } from '../lib/recoveryPlan'
-import { resolveItemTargets } from '../lib/injuryStats'
+import { phaseEffectiveWeek, phaseGateStatus, resolveItemTargets } from '../lib/injuryStats'
 import './RecoveryPlanDetail.css'
 
 const GUIDANCE_LABEL: Record<Exclude<RecoveryPlanItem['kind'], 'exercise'>, string> = {
@@ -25,6 +25,29 @@ export function RecoveryRoutineTable({ item }: { item: RecoveryPlanItem }): Reac
   )
 }
 
+/** "clean 8/14 d" · "eligible since Mar 12" · "flare Mar 20 — review" copy for
+ *  a gated step's live state; null when no clock can be computed. */
+function gateStatusText(
+  phase: RecoveryPlanPhase,
+  entries: InjuryLogEntry[] | undefined,
+  todayYMD: string | undefined,
+  planStartedAt: string | null
+): { text: string; review: boolean } | null {
+  if (!entries || !todayYMD) return null
+  const status = phaseGateStatus(phase, entries, todayYMD, planStartedAt)
+  if (status == null) return null
+  if (status.state === 'applied') {
+    return status.flareAfter
+      ? { text: `flare ${status.flareAfter.slice(5)} — review`, review: true }
+      : null
+  }
+  if (status.state === 'eligible') {
+    return { text: `eligible since ${status.eligibleOn?.slice(5) ?? ''}`, review: false }
+  }
+  if (status.cleanDays == null) return null
+  return { text: `clean ${status.cleanDays}/${status.clearDays} d`, review: false }
+}
+
 /**
  * The prescribed frequency, as a schedule rather than a sentence.
  *
@@ -32,51 +55,106 @@ export function RecoveryRoutineTable({ item }: { item: RecoveryPlanItem }): Reac
  * 1, then daily from week 2") renders one labelled row per step, so what's on
  * the card is visibly the prescription's own structure — week label plus dose —
  * instead of prose that reads like fixed copy. The step in force is marked;
- * later steps stay legible but recede.
+ * later steps stay legible but recede. A symptom-gated step has no week until
+ * it is applied: pending it renders under a "gate" marker with its condition
+ * ("≤1/10 × 14 d") and live clock; applied it takes the week it started in,
+ * and a flare above its gate after application surfaces a review flag — the
+ * agreed reversion rule made visible.
  */
 function FrequencySchedule({
   item,
-  currentWeek
+  currentWeek,
+  entries,
+  todayYMD,
+  planStartedAt = null
 }: {
   item: RecoveryPlanItem
   currentWeek: number | null
+  entries?: InjuryLogEntry[]
+  todayYMD?: string
+  planStartedAt?: string | null
 }): ReactElement | null {
-  const phases = [...(item.phases ?? [])].sort((a, b) => a.from_week - b.from_week)
-  const active = resolveItemTargets(item, currentWeek)
+  const phases = item.phases ?? []
+  const active = resolveItemTargets(item, currentWeek, planStartedAt)
   if (active.weekly_target == null) return null
 
   if (phases.length === 0) {
     return <span className="tabular-nums">{active.weekly_target}× / week</span>
   }
 
-  const steps = [
-    { from_week: item.start_week, weekly_target: item.weekly_target },
-    ...phases.map((phase) => ({ from_week: phase.from_week, weekly_target: phase.weekly_target }))
-  ].filter((step) => step.weekly_target != null)
+  interface ScheduleStep {
+    key: string
+    week: number
+    phase: RecoveryPlanPhase | null
+    target: number | null
+  }
+  const dated: ScheduleStep[] = [
+    { key: 'base', week: item.start_week, phase: null, target: item.weekly_target },
+    ...phases.flatMap((phase, index): ScheduleStep[] => {
+      const week = phaseEffectiveWeek(phase, planStartedAt)
+      return week == null
+        ? []
+        : [{ key: `phase-${index}`, week, phase, target: phase.weekly_target }]
+    })
+  ]
+    .filter((step) => step.target != null)
+    .sort((a, b) => a.week - b.week)
+  const pending = phases
+    .map((phase, index) => ({ key: `gate-${index}`, phase }))
+    .filter(({ phase }) => phase.gate != null && !phase.applied_on)
 
   // The step in force is the last one that has started; with no plan start date
   // nothing has demonstrably begun, so none is marked current.
-  const currentFrom =
+  const currentKey =
     currentWeek == null
       ? null
-      : steps.reduce<number | null>(
-          (found, step) => (step.from_week <= currentWeek ? step.from_week : found),
+      : dated.reduce<string | null>(
+          (found, step) => (step.week <= currentWeek ? step.key : found),
           null
         )
 
   return (
     <span className="recovery-detail-schedule" role="list" aria-label={`${item.name} frequency schedule`}>
-      {steps.map((step) => {
-        const isCurrent = step.from_week === currentFrom
+      {dated.map((step) => {
+        const isCurrent = step.key === currentKey
+        const status = step.phase ? gateStatusText(step.phase, entries, todayYMD, planStartedAt) : null
         return (
           <span
-            key={step.from_week}
+            key={step.key}
             role="listitem"
             className={`recovery-detail-schedule-step${isCurrent ? ' recovery-detail-schedule-step--current' : ''}`}
           >
-            <span className="recovery-detail-schedule-week tabular-nums">W{step.from_week}</span>
+            <span className="recovery-detail-schedule-week tabular-nums">W{step.week}</span>
             <span className="recovery-detail-schedule-dose tabular-nums">
-              {step.weekly_target}× / week
+              {step.target}× / week
+            </span>
+            {status && (
+              <span
+                className={`recovery-detail-schedule-status${status.review ? ' recovery-detail-schedule-status--review' : ''}`}
+              >
+                {status.text}
+              </span>
+            )}
+          </span>
+        )
+      })}
+      {pending.map(({ key, phase }) => {
+        const gate = phase.gate!
+        const status = gateStatusText(phase, entries, todayYMD, planStartedAt)
+        return (
+          <span key={key} role="listitem" className="recovery-detail-schedule-step recovery-detail-schedule-step--gate">
+            <span
+              className="recovery-detail-schedule-week"
+              title={gate.condition ?? undefined}
+            >
+              gate
+            </span>
+            <span className="recovery-detail-schedule-dose tabular-nums">
+              {phase.weekly_target}× / week
+            </span>
+            <span className="recovery-detail-schedule-status">
+              {`≤${gate.max_pain}/10 × ${gate.clear_days} d`}
+              {status ? ` · ${status.text}` : ''}
             </span>
           </span>
         )
@@ -90,12 +168,20 @@ export function RecoveryPlanDetail({
   items,
   statusFor,
   currentWeek,
+  entries,
+  todayYMD,
+  planStartedAt = null,
   emptyText = 'No active plan items.'
 }: {
   overview: string | null
   items: RecoveryPlanItem[]
   statusFor?: (item: RecoveryPlanItem) => string | null
   currentWeek?: number | null
+  /** Injury log, for gated steps' live clean-day clocks; omit to render
+   *  schedules without gate status. */
+  entries?: InjuryLogEntry[]
+  todayYMD?: string
+  planStartedAt?: string | null
   emptyText?: string
 }): ReactElement {
   const active = items.filter((item) => item.active)
@@ -145,7 +231,13 @@ export function RecoveryPlanDetail({
                         </div>
                         <span className="recovery-detail-prescription">
                           {statusFor?.(item) && <span>{statusFor(item)}</span>}
-                          <FrequencySchedule item={item} currentWeek={currentWeek ?? null} />
+                          <FrequencySchedule
+                            item={item}
+                            currentWeek={currentWeek ?? null}
+                            entries={entries}
+                            todayYMD={todayYMD}
+                            planStartedAt={planStartedAt}
+                          />
                         </span>
                       </li>
                     )

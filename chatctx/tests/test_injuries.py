@@ -755,7 +755,7 @@ def test_plan_rejects_a_phase_starting_at_or_before_the_item():
 
 
 def test_plan_rejects_phases_that_do_not_ascend():
-    with pytest.raises(SystemExit, match="the previous phase"):
+    with pytest.raises(SystemExit, match="the previous calendar phase"):
         validate_plan_document(
             _plan(start_week=1, phases=[
                 {"from_week": 4, "weekly_target": 7, "green_min": 6, "yellow_min": 4},
@@ -889,3 +889,107 @@ def test_dose_text_drops_a_trailing_zero_from_a_float_duration():
          "duration_seconds": 45.0, "distance_m": None, "per_side": None},
     ]}
     assert injuries.plan_item_dose_text(row) == "2 × 45 sec"
+
+
+# ── symptom-gated phases ─────────────────────────────────────────────────────
+
+def _gate(**overrides):
+    gate = {"kind": "pain_clear", "max_pain": 1, "clear_days": 14,
+            "note_id": None, "condition": None}
+    gate.update(overrides)
+    return gate
+
+
+def _gated_phase(**overrides):
+    phase = {"gate": _gate(), "applied_on": None,
+             "weekly_target": 3, "green_min": 2, "yellow_min": 1}
+    phase.update(overrides)
+    return phase
+
+
+def test_plan_accepts_a_symptom_gated_phase():
+    normalized = validate_plan_document(_plan(start_week=1, phases=[_gated_phase()]))
+    assert normalized[0]["phases"] == [_gated_phase()]
+
+
+def test_plan_rejects_a_phase_carrying_both_from_week_and_gate():
+    with pytest.raises(SystemExit, match="exactly one of from_week or gate"):
+        validate_plan_document(_plan(phases=[_gated_phase(from_week=2)]))
+
+
+def test_plan_rejects_a_gate_with_a_bad_kind_or_range():
+    with pytest.raises(SystemExit, match="gate.kind"):
+        validate_plan_document(_plan(phases=[_gated_phase(gate=_gate(kind="date"))]))
+    with pytest.raises(SystemExit, match="gate.max_pain"):
+        validate_plan_document(_plan(phases=[_gated_phase(gate=_gate(max_pain=11))]))
+    with pytest.raises(SystemExit, match="gate.clear_days"):
+        validate_plan_document(_plan(phases=[_gated_phase(gate=_gate(clear_days=0))]))
+
+
+def test_plan_rejects_applied_on_outside_a_gated_phase():
+    with pytest.raises(SystemExit, match="applied_on only applies to a gated phase"):
+        validate_plan_document(_plan(phases=[
+            {"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4,
+             "applied_on": "2026-08-16"},
+        ]))
+
+
+def test_gated_phases_sit_outside_the_calendar_ascending_chain():
+    normalized = validate_plan_document(_plan(start_week=1, phases=[
+        _gated_phase(),
+        {"from_week": 2, "weekly_target": 7, "green_min": 6, "yellow_min": 4},
+    ]))
+    assert len(normalized[0]["phases"]) == 2
+
+
+def test_resolve_targets_ignores_a_pending_gate_however_late_the_week():
+    row = {"weekly_target": 7, "green_min": 6, "yellow_min": 4,
+           "phases": [_gated_phase()]}
+    assert injuries.resolve_targets(row, 40, "2026-07-05")["weekly_target"] == 7
+
+
+def test_resolve_targets_applies_a_gated_phase_from_its_applied_week():
+    row = {"weekly_target": 4, "green_min": 3, "yellow_min": 2,
+           "phases": [_gated_phase(applied_on="2026-08-16")]}
+    # Plan started 2026-07-05, applied 2026-08-16 = week 7: week 6 keeps the
+    # acute dose, week 7 steps down.
+    assert injuries.resolve_targets(row, 6, "2026-07-05")["weekly_target"] == 4
+    assert injuries.resolve_targets(row, 7, "2026-07-05") == {
+        "weekly_target": 3, "green_min": 2, "yellow_min": 1}
+
+
+def test_gate_status_counts_clean_days_from_the_day_after_the_last_flare():
+    # A hypothetical taper: last entry above 1/10 on 03-04 → clean
+    # run starts 03-05, earliest eligible 03-18.
+    entries = [
+        {"entry_date": "2025-03-04", "entry_end_date": None, "pain_level": 3},
+        {"entry_date": "2025-03-05", "entry_end_date": None, "pain_level": 1},
+        {"entry_date": "2025-03-06", "entry_end_date": None, "pain_level": 0},
+    ]
+    status = injuries.gate_status(_gated_phase(), entries, "2025-03-06", "2025-02-23")
+    assert status["state"] == "pending"
+    assert status["clean_days"] == 2
+    assert status["eligible_on"] == "2025-03-18"
+
+
+def test_gate_status_counts_spans_at_their_end_and_reports_eligibility():
+    entries = [{"entry_date": "2026-07-20", "entry_end_date": "2026-08-01", "pain_level": 3}]
+    status = injuries.gate_status(_gated_phase(), entries, "2026-08-15", "2026-07-05")
+    assert status["state"] == "eligible"
+    assert status["eligible_on"] == "2026-08-15"
+
+
+def test_gate_status_flags_a_flare_after_application():
+    applied = _gated_phase(applied_on="2026-08-16")
+    entries = [{"entry_date": "2026-08-19", "entry_end_date": None, "pain_level": 3}]
+    status = injuries.gate_status(applied, entries, "2026-08-20", "2026-07-05")
+    assert status["state"] == "applied"
+    assert status["flare_after"] == "2026-08-19"
+
+
+def test_phases_text_renders_gated_steps_with_their_clock():
+    row = {"phases": [_gated_phase()]}
+    entries = [{"entry_date": "2025-03-04", "entry_end_date": None, "pain_level": 3}]
+    text = injuries.phases_text(row, "2025-02-23", entries, "2025-03-06")
+    assert "gate <=1/10 x14d -> 3 (1-2)" in text
+    assert "clean 2/14d, eligible 2025-03-18" in text

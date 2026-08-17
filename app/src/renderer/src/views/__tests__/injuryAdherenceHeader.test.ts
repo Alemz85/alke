@@ -180,7 +180,7 @@ describe('prescribed frequency schedule', () => {
     // Prose ("then Nx from week M") read as fixed copy rather than as the
     // prescription's own structure.
     expect(schedule).toContain("item.phases ?? []")
-    expect(schedule).toContain('from_week: item.start_week, weekly_target: item.weekly_target')
+    expect(schedule).toContain("{ key: 'base', week: item.start_week, phase: null, target: item.weekly_target }")
     expect(schedule).toContain('recovery-detail-schedule-week')
     expect(schedule).toContain('recovery-detail-schedule-dose')
     expect(schedule).not.toContain('then ')

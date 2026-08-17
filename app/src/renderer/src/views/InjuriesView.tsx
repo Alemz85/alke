@@ -699,12 +699,14 @@ function RecoveryPlanModal({
   injury,
   plan,
   checks,
+  log,
   todayYMD,
   onClose
 }: {
   injury: Injury
   plan: RecoveryPlanItem[]
   checks: PlanItemCheck[]
+  log: InjuryLogEntry[]
   todayYMD: string
   onClose: () => void
 }): ReactElement {
@@ -740,6 +742,9 @@ function RecoveryPlanModal({
             overview={injury.recovery_plan}
             items={plan}
             currentWeek={currentPlanWeek(injury.plan_started_at, todayYMD)}
+            entries={log}
+            todayYMD={todayYMD}
+            planStartedAt={injury.plan_started_at}
             emptyText="No plan items yet."
             statusFor={(item) => {
               return weeklyProgressStatus(
@@ -1530,14 +1535,16 @@ function ThisWeekTable({
 function RatingChip({
   done,
   item,
-  planWeek
+  planWeek,
+  planStartedAt
 }: {
   done: number
   item: RecoveryPlanItem
   planWeek: number | null
+  planStartedAt: string | null
 }): ReactElement {
-  const rating = itemAdherenceRating(done, item, planWeek)
-  const target = resolveItemTargets(item, planWeek).weekly_target
+  const rating = itemAdherenceRating(done, item, planWeek, planStartedAt)
+  const target = resolveItemTargets(item, planWeek, planStartedAt).weekly_target
   return (
     <span className={`injury-rate-chip injury-rate--${rating} tabular-nums`}>
       {target != null && target > 0 ? `${done}/${target}` : `${done}`}
@@ -1650,7 +1657,12 @@ function PastWeeksTable({
                   return (
                     <td key={item.id} className={tdCls}>
                       {existedIn(item, row.weekEnd) && cell.accountable ? (
-                        <RatingChip done={cell.done} item={item} planWeek={rowPlanWeek} />
+                        <RatingChip
+                          done={cell.done}
+                          item={item}
+                          planWeek={rowPlanWeek}
+                          planStartedAt={planStartedAt}
+                        />
                       ) : (
                         <span className="injury-adh-score-empty">—</span>
                       )}
@@ -1994,6 +2006,7 @@ function ActiveInjuryCard({
           injury={injury}
           plan={plan}
           checks={checks}
+          log={log}
           todayYMD={todayYMD}
           onClose={() => setPlanOpen(false)}
         />
@@ -2143,6 +2156,7 @@ function InjuryFullView({
           injury={injury}
           plan={plan}
           checks={checks}
+          log={log}
           todayYMD={todayYMD}
           onClose={() => setPlanOpen(false)}
         />

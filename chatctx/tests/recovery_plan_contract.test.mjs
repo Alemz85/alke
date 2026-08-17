@@ -174,7 +174,62 @@ test('rejects phases that do not ascend', () => {
     { from_week: 4, weekly_target: 7, green_min: 6, yellow_min: 4 },
     { from_week: 2, weekly_target: 5, green_min: 4, yellow_min: 3 }
   ]
-  assert.ok(validatePlan(plan).some((e) => e.includes('the previous phase')))
+  assert.ok(validatePlan(plan).some((e) => e.includes('the previous calendar phase')))
+})
+
+test('accepts a symptom-gated phase and validates its gate', () => {
+  const plan = validPlan()
+  plan.items[0].phases = [{
+    gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14, note_id: 151, condition: 'tested at normal walking volume' },
+    applied_on: null,
+    weekly_target: 3,
+    green_min: 2,
+    yellow_min: 1
+  }]
+  assert.deepEqual(validatePlan(plan), [])
+})
+
+test('rejects a phase carrying both from_week and a gate, or neither', () => {
+  const both = validPlan()
+  both.items[0].phases = [{
+    from_week: 2,
+    gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14 },
+    weekly_target: 3,
+    green_min: 2,
+    yellow_min: 1
+  }]
+  assert.ok(validatePlan(both).some((e) => e.includes('exactly one of from_week or gate')))
+  const neither = validPlan()
+  neither.items[0].phases = [{ weekly_target: 3, green_min: 2, yellow_min: 1 }]
+  assert.ok(validatePlan(neither).some((e) => e.includes('exactly one of from_week or gate')))
+})
+
+test('rejects a malformed gate and applied_on on a calendar phase', () => {
+  const badGate = validPlan()
+  badGate.items[0].phases = [{
+    gate: { kind: 'pain_clear', max_pain: 11, clear_days: 0 },
+    weekly_target: 3,
+    green_min: 2,
+    yellow_min: 1
+  }]
+  const errors = validatePlan(badGate)
+  assert.ok(errors.some((e) => e.includes('gate.max_pain')))
+  assert.ok(errors.some((e) => e.includes('gate.clear_days')))
+  const applied = validPlan()
+  applied.items[0].phases = [
+    { from_week: 2, weekly_target: 3, green_min: 2, yellow_min: 1, applied_on: '2026-08-16' }
+  ]
+  assert.ok(validatePlan(applied).some((e) => e.includes('applied_on only applies to a gated phase')))
+})
+
+test('keeps gated phases outside the calendar ascending chain', () => {
+  const plan = validPlan()
+  plan.items[0].start_week = 1
+  plan.items[0].phases = [
+    { gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14 }, applied_on: null, weekly_target: 3, green_min: 2, yellow_min: 1 },
+    { from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 }
+  ]
+  assert.deepEqual(validatePlan(plan), [])
 })
 
 test('rejects a phase with inconsistent thresholds', () => {

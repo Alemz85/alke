@@ -54,4 +54,96 @@ describe('RecoveryPlanDetail phases', () => {
 
     expect(markup.indexOf('Daily mobility')).toBeLessThan(markup.indexOf('Build tolerance in stages.'))
   })
+
+  it('renders a pending gated step with its condition and live clock', () => {
+    const gated: RecoveryPlanItem = {
+      ...item('gated', 'Wall sit', 1),
+      weekly_target: 7,
+      phases: [
+        {
+          gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14, condition: 'confirmed under normal daily load' },
+          applied_on: null,
+          weekly_target: 3,
+          green_min: 2,
+          yellow_min: 1
+        }
+      ]
+    }
+    const markup = renderToStaticMarkup(
+      createElement(RecoveryPlanDetail, {
+        overview: null,
+        items: [gated],
+        currentWeek: 2,
+        planStartedAt: '2026-07-01',
+        todayYMD: '2026-07-12',
+        entries: [
+          {
+            id: 1,
+            injury_id: 'injury',
+            entry_date: '2026-07-10',
+            entry_end_date: null,
+            date_precision: 'day',
+            noted_at: null,
+            source: 'user',
+            note: '',
+            pain_level: 4,
+            context: null,
+            workout_id: null
+          }
+        ]
+      })
+    )
+
+    // The pending step-down never renders as a week — it is a condition.
+    expect(markup).toContain('gate')
+    expect(markup).toContain('≤1/10 × 14 d')
+    expect(markup).toContain('clean 2/14 d')
+    // The in-force dose is still the acute-phase 7×.
+    expect(markup).toContain('7× / week')
+    expect(markup).toContain('3× / week')
+  })
+
+  it('renders an applied gated step as the week it started, with a review flag on a later flare', () => {
+    const applied: RecoveryPlanItem = {
+      ...item('applied', 'Heel walks', 1),
+      weekly_target: 4,
+      phases: [
+        {
+          gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14 },
+          applied_on: '2026-07-12',
+          weekly_target: 3,
+          green_min: 2,
+          yellow_min: 1
+        }
+      ]
+    }
+    const markup = renderToStaticMarkup(
+      createElement(RecoveryPlanDetail, {
+        overview: null,
+        items: [applied],
+        currentWeek: 7,
+        planStartedAt: '2026-05-31',
+        todayYMD: '2026-07-16',
+        entries: [
+          {
+            id: 2,
+            injury_id: 'injury',
+            entry_date: '2026-07-15',
+            entry_end_date: null,
+            date_precision: 'day',
+            noted_at: null,
+            source: 'user',
+            note: '',
+            pain_level: 3,
+            context: null,
+            workout_id: null
+          }
+        ]
+      })
+    )
+
+    // Applied 2026-07-12 with plan start 2026-05-31 = week 7 — a dated step now.
+    expect(markup).toContain('W7')
+    expect(markup).toContain('flare 07-15 — review')
+  })
 })

@@ -927,7 +927,7 @@ export function SessionEditorModal({
         const planWeek = currentPlanWeek(template.planStartedAt, ymdKey(todayYMD(timezone)))
         return template.exerciseItems
           .filter((item) => item.steps != null && item.steps.length > 0)
-          .map((item) => ({ item, planWeek }))
+          .map((item) => ({ item, planWeek, planStartedAt: template.planStartedAt }))
       }),
     [recoveryTemplateIds, recoveryTemplates, timezone]
   )
@@ -1257,8 +1257,8 @@ export function SessionEditorModal({
                 </div>
                 <span>Complete alongside the logged exercises</span>
               </div>
-              {recoveryRoutineItems.map(({ item, planWeek }) => {
-                const weeklyTarget = resolveItemTargets(item, planWeek).weekly_target
+              {recoveryRoutineItems.map(({ item, planWeek, planStartedAt }) => {
+                const weeklyTarget = resolveItemTargets(item, planWeek, planStartedAt).weekly_target
                 return (
                   <article className="gym-recovery-routine" key={item.id}>
                     <div className="gym-recovery-routine-title">

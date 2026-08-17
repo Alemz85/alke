@@ -6,6 +6,7 @@ import {
   doseTarget,
   itemAdherenceRating,
   nextItemPhase,
+  phaseGateStatus,
   resolveItemTargets,
   buildTimeline,
   currentWeekAdherenceSummary,
@@ -1024,6 +1025,52 @@ describe('resolveItemTargets', () => {
     const flat = item({ id: 'i4', weekly_target: 3, green_min: 3, yellow_min: 2 })
     expect(resolveItemTargets(flat, 9).weekly_target).toBe(3)
   })
+
+  // Gated phases: the clinically normal taper is a condition, not a date.
+  const gate = { kind: 'pain_clear' as const, max_pain: 1, clear_days: 14 }
+
+  it('never applies a pending gated phase, however late the week', () => {
+    const gated = item({
+      id: 'g1',
+      weekly_target: 7,
+      green_min: 6,
+      yellow_min: 4,
+      phases: [{ gate, applied_on: null, weekly_target: 3, green_min: 2, yellow_min: 1 }]
+    })
+    expect(resolveItemTargets(gated, 40, '2026-07-06').weekly_target).toBe(7)
+  })
+
+  it('applies a gated phase from the week containing its applied_on', () => {
+    const gated = item({
+      id: 'g2',
+      weekly_target: 7,
+      green_min: 6,
+      yellow_min: 4,
+      phases: [{ gate, applied_on: '2026-07-20', weekly_target: 3, green_min: 2, yellow_min: 1 }]
+    })
+    // Plan starts 2026-07-06 → applied 2026-07-20 = week 3.
+    expect(resolveItemTargets(gated, 2, '2026-07-06').weekly_target).toBe(7)
+    expect(resolveItemTargets(gated, 3, '2026-07-06')).toEqual({
+      weekly_target: 3,
+      green_min: 2,
+      yellow_min: 1
+    })
+  })
+
+  it('lets an applied gate override an earlier calendar phase, not a later one', () => {
+    const mixed = item({
+      id: 'g3',
+      weekly_target: 3,
+      green_min: 3,
+      yellow_min: 2,
+      phases: [
+        { from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 },
+        { gate, applied_on: '2026-07-20', weekly_target: 4, green_min: 3, yellow_min: 2 }
+      ]
+    })
+    expect(resolveItemTargets(mixed, 2, '2026-07-06').weekly_target).toBe(7)
+    expect(resolveItemTargets(mixed, 3, '2026-07-06').weekly_target).toBe(4)
+  })
 })
 
 describe('nextItemPhase', () => {
@@ -1049,6 +1096,104 @@ describe('nextItemPhase', () => {
 
   it('is null for a flat prescription', () => {
     expect(nextItemPhase(item({ id: 'i5' }), 3)).toBeNull()
+  })
+
+  it('reports a pending gated phase as the upcoming step after dated ones', () => {
+    const gated = item({
+      id: 'i6',
+      weekly_target: 7,
+      green_min: 6,
+      yellow_min: 4,
+      phases: [
+        {
+          gate: { kind: 'pain_clear', max_pain: 1, clear_days: 14 },
+          applied_on: null,
+          weekly_target: 3,
+          green_min: 2,
+          yellow_min: 1
+        }
+      ]
+    })
+    expect(nextItemPhase(gated, 10, '2026-07-06')?.weekly_target).toBe(3)
+  })
+})
+
+describe('phaseGateStatus', () => {
+  const gate = { kind: 'pain_clear' as const, max_pain: 1, clear_days: 14 }
+  const pendingPhase = {
+    gate,
+    applied_on: null,
+    weekly_target: 3,
+    green_min: 2,
+    yellow_min: 1
+  }
+
+  it('starts the clean-day clock the day after the last exceeding entry', () => {
+    // Worked example: last entry above 1/10 on 08-04 → clean
+    // run starts 08-05, earliest eligible 08-18.
+    const entries = [
+      entry({ entry_date: '2026-08-04', pain_level: 4 }),
+      entry({ entry_date: '2026-08-05', pain_level: 1 }),
+      entry({ entry_date: '2026-08-06', pain_level: 0 })
+    ]
+    const status = phaseGateStatus(pendingPhase, entries, '2026-08-06', '2026-07-26')
+    expect(status).toMatchObject({
+      state: 'pending',
+      cleanDays: 2,
+      clearDays: 14,
+      eligibleOn: '2026-08-18'
+    })
+  })
+
+  it('ignores entries at or below the gate and counts spans at their end date', () => {
+    const entries = [
+      entry({ entry_date: '2026-08-01', entry_end_date: '2026-08-10', pain_level: 2 }),
+      entry({ entry_date: '2026-08-12', pain_level: 1 })
+    ]
+    const status = phaseGateStatus(pendingPhase, entries, '2026-08-16', '2026-07-05')
+    expect(status?.cleanDays).toBe(6) // clock starts 08-11, not 08-02 or 08-13
+  })
+
+  it('becomes eligible once the clock is satisfied', () => {
+    const entries = [entry({ entry_date: '2026-08-01', pain_level: 3 })]
+    const status = phaseGateStatus(pendingPhase, entries, '2026-08-15', '2026-07-05')
+    expect(status?.state).toBe('eligible')
+    expect(status?.eligibleOn).toBe('2026-08-15')
+  })
+
+  it('counts from plan start when no exceeding entry exists', () => {
+    const status = phaseGateStatus(pendingPhase, [], '2026-07-18', '2026-07-05')
+    expect(status?.state).toBe('eligible')
+    expect(status?.cleanDays).toBe(14)
+  })
+
+  it('flags a flare after application — the reversion watch', () => {
+    const applied = { ...pendingPhase, applied_on: '2026-08-16' }
+    const clean = phaseGateStatus(
+      applied,
+      [entry({ entry_date: '2026-08-12', pain_level: 4 })],
+      '2026-08-20',
+      '2026-07-05'
+    )
+    expect(clean).toMatchObject({ state: 'applied', flareAfter: null })
+    const flared = phaseGateStatus(
+      applied,
+      [entry({ entry_date: '2026-08-19', pain_level: 3 })],
+      '2026-08-20',
+      '2026-07-05'
+    )
+    expect(flared?.flareAfter).toBe('2026-08-19')
+  })
+
+  it('is null for a calendar phase', () => {
+    expect(
+      phaseGateStatus(
+        { from_week: 2, weekly_target: 7, green_min: 6, yellow_min: 4 },
+        [],
+        '2026-08-16',
+        '2026-07-05'
+      )
+    ).toBeNull()
   })
 })
 

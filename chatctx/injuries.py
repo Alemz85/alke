@@ -315,7 +315,8 @@ def cmd_show(args) -> None:
     if not injury_rows:
         sys.exit(f"injury {args.injury_id} not found")
     injury = injury_rows[0]
-    plan_week = current_plan_week(injury.get("plan_started_at"), user_today())
+    today = user_today()
+    plan_week = current_plan_week(injury.get("plan_started_at"), today)
     notes = _request("GET", "injury_notes", params={
         "injury_id": f"eq.{args.injury_id}",
         "select": "id,entry_date,entry_end_date,date_precision,source,pain_level,note",
@@ -360,7 +361,7 @@ def cmd_show(args) -> None:
         phase = "future" if plan_week is not None and starts > plan_week else "accountable"
         # Targets shown are the ones in force THIS week, not the item's
         # week-1 values — a ramped item is judged by the phase it is in.
-        current = resolve_targets(row, plan_week)
+        current = resolve_targets(row, plan_week, injury.get("plan_started_at"))
         target = "" if current["weekly_target"] is None else current["weekly_target"]
         yellow = "" if current["yellow_min"] is None else current["yellow_min"]
         green = "" if current["green_min"] is None else current["green_min"]
@@ -370,8 +371,9 @@ def cmd_show(args) -> None:
             dose = f"{exercise}: {dose or '?'}"
         dose = dose.replace("|", "\\|").replace("\n", " ")
         note = (row.get("note") or "").replace("|", "\\|").replace("\n", " ")
+        schedule = phases_text(row, injury.get("plan_started_at"), notes, today)
         print(f"| {row['id']} | {row.get('name') or ''} | {row.get('kind') or ''} | week {starts} | "
-              f"{phase} | {target} | {yellow}-{green} | {phases_text(row)} | {dose} | {note} | "
+              f"{phase} | {target} | {yellow}-{green} | {schedule} | {dose} | {note} | "
               f"{row.get('active')} |")
 
 
@@ -440,31 +442,120 @@ def parse_optional_count(value: str, label: str, maximum: int) -> int | None:
 MAX_PHASES = 8
 
 
-def resolve_targets(row: dict, plan_week: int | None) -> dict:
+def phase_effective_week(phase: dict, plan_started_at: str | None) -> int | None:
+    """The plan week a phase step comes into force, or None while it has not.
+    Calendar steps carry their own from_week; a gated step has no week until
+    applied_on is stamped, and then starts in the week containing that date."""
+    if phase.get("gate") is not None:
+        applied_on = phase.get("applied_on")
+        if not applied_on or not plan_started_at:
+            return None
+        return current_plan_week(plan_started_at, applied_on)
+    return phase.get("from_week")
+
+
+def resolve_targets(row: dict, plan_week: int | None, plan_started_at: str | None = None) -> dict:
     """The dose in force for `plan_week`. The scalar columns cover the item from
-    its start_week; each phase overrides them from its own from_week, so the
-    LAST phase that has started wins. Mirrors resolveItemTargets() in the app's
+    its start_week; each phase overrides them once it starts — calendar phases
+    from their from_week, gated phases from the week they were applied_on — and
+    the LAST phase that has started wins (array order breaks ties). A pending
+    gate never changes targets. Mirrors resolveItemTargets() in the app's
     lib/injuryStats.ts — keep the two in step."""
     active = {field: row.get(field) for field in ("weekly_target", "green_min", "yellow_min")}
     phases = row.get("phases") or []
     if plan_week is None or not phases:
         return active
-    for phase in sorted(phases, key=lambda p: p.get("from_week", 0)):
-        if phase.get("from_week", 0) > plan_week:
-            break
+    started = []
+    for index, phase in enumerate(phases):
+        week = phase_effective_week(phase, plan_started_at)
+        if week is not None and week <= plan_week:
+            started.append((week, index, phase))
+    if started:
+        phase = sorted(started)[-1][2]
         active = {field: phase.get(field) for field in ("weekly_target", "green_min", "yellow_min")}
     return active
 
 
-def phases_text(row: dict) -> str:
-    """"w2: 7 (4-6)" per later step — the ramp, readable at a glance."""
+def gate_status(phase: dict, pain_entries: list[dict], today: str,
+                plan_started_at: str | None) -> dict | None:
+    """Live status of a gated phase against the injury log. The clean-day clock
+    counts from the day after the last entry whose pain exceeds the gate (spans
+    count at their END date); with no exceeding entry ever, from the plan
+    start. Eligibility says the CLOCK is satisfied — the judgment half of the
+    trigger (gate['condition']) still needs a human or agent call. Mirrors
+    phaseGateStatus() in the app's lib/injuryStats.ts — keep the two in step."""
+    gate = phase.get("gate")
+    if not gate:
+        return None
+    exceed = []
+    for entry in pain_entries:
+        if entry.get("pain_level") is None or entry["pain_level"] <= gate["max_pain"]:
+            continue
+        when = entry.get("entry_end_date") or entry.get("entry_date")
+        if when:
+            exceed.append(when[:10])
+    applied_on = phase.get("applied_on")
+    if applied_on:
+        after = [d for d in exceed if d > applied_on]
+        return {"state": "applied", "applied_on": applied_on,
+                "flare_after": max(after) if after else None,
+                "clean_days": None, "clear_days": gate["clear_days"], "eligible_on": None}
+    if exceed:
+        clock_start = (datetime.date.fromisoformat(max(exceed)) + datetime.timedelta(days=1)).isoformat()
+    elif plan_started_at:
+        clock_start = plan_started_at[:10]
+    else:
+        return {"state": "pending", "applied_on": None, "flare_after": None,
+                "clean_days": None, "clear_days": gate["clear_days"], "eligible_on": None}
+    clean_days = max(0, (datetime.date.fromisoformat(today[:10])
+                         - datetime.date.fromisoformat(clock_start)).days + 1)
+    eligible_on = (datetime.date.fromisoformat(clock_start)
+                   + datetime.timedelta(days=gate["clear_days"] - 1)).isoformat()
+    return {"state": "eligible" if clean_days >= gate["clear_days"] else "pending",
+            "applied_on": None, "flare_after": None, "clean_days": clean_days,
+            "clear_days": gate["clear_days"], "eligible_on": eligible_on}
+
+
+def gate_status_text(status: dict | None) -> str:
+    if status is None:
+        return ""
+    if status["state"] == "applied":
+        text = f"applied {status['applied_on']}"
+        if status["flare_after"]:
+            text += f", FLARE {status['flare_after']} after step-down — review"
+        return text
+    if status["state"] == "eligible":
+        return f"ELIGIBLE since {status['eligible_on']} — verify the judgment condition, then plan-advance"
+    if status["clean_days"] is None:
+        return "pending, no clock (no plan start date)"
+    return f"clean {status['clean_days']}/{status['clear_days']}d, eligible {status['eligible_on']}"
+
+
+def phases_text(row: dict, plan_started_at: str | None = None,
+                pain_entries: list[dict] | None = None, today: str | None = None) -> str:
+    """"w2: 7 (4-6)" per later step — the ramp, readable at a glance. A gated
+    step shows its trigger and, when the injury log is provided, its live
+    clock: "gate <=1/10 x14d -> 3 (1-2) [clean 8/14d, eligible <date>]"."""
     phases = row.get("phases") or []
     if not phases:
         return ""
-    return "; ".join(
+    calendar = [p for p in phases if p.get("gate") is None]
+    gated = [p for p in phases if p.get("gate") is not None]
+    parts = [
         f"w{p.get('from_week')}: {p.get('weekly_target')} ({p.get('yellow_min')}-{p.get('green_min')})"
-        for p in sorted(phases, key=lambda p: p.get("from_week", 0))
-    )
+        for p in sorted(calendar, key=lambda p: p.get("from_week", 0))
+    ]
+    for p in gated:
+        gate = p["gate"]
+        text = (f"gate <={gate['max_pain']}/10 x{gate['clear_days']}d -> "
+                f"{p.get('weekly_target')} ({p.get('yellow_min')}-{p.get('green_min')})")
+        status = gate_status(p, pain_entries, today, plan_started_at) if pain_entries is not None and today else None
+        if status:
+            text += f" [{gate_status_text(status)}]"
+        elif p.get("applied_on"):
+            text += f" [applied {p['applied_on']}]"
+        parts.append(text)
+    return "; ".join(parts)
 
 
 def _measure_text(value) -> str:
@@ -524,13 +615,43 @@ def plan_item_dose_text(row: dict) -> str:
     return ""
 
 
+def validate_gate(raw: object, where: str) -> dict:
+    """Validate one phase's symptom gate. The gate holds the measurable half of
+    an agreed trigger ("two clean weeks below 1/10"); the judgment half lives in
+    `condition` as prose and is deliberately not machine-evaluated."""
+    if not isinstance(raw, dict):
+        sys.exit(f"invalid plan: {where}.gate must be an object")
+    if raw.get("kind") != "pain_clear":
+        sys.exit(f"invalid plan: {where}.gate.kind must be 'pain_clear'")
+    max_pain = raw.get("max_pain")
+    if isinstance(max_pain, bool) or not isinstance(max_pain, int) or not 0 <= max_pain <= 10:
+        sys.exit(f"invalid plan: {where}.gate.max_pain must be an integer 0-10")
+    clear_days = raw.get("clear_days")
+    if isinstance(clear_days, bool) or not isinstance(clear_days, int) or not 1 <= clear_days <= 365:
+        sys.exit(f"invalid plan: {where}.gate.clear_days must be an integer 1-365")
+    note_id = raw.get("note_id")
+    if note_id is not None and (isinstance(note_id, bool) or not isinstance(note_id, int) or note_id < 1):
+        sys.exit(f"invalid plan: {where}.gate.note_id must be a positive integer or null")
+    condition = raw.get("condition")
+    if condition is not None and (not isinstance(condition, str) or not condition.strip() or len(condition) > 300):
+        sys.exit(f"invalid plan: {where}.gate.condition must be a non-empty string up to 300 chars, or null")
+    return {"kind": "pain_clear", "max_pain": max_pain, "clear_days": clear_days,
+            "note_id": note_id, "condition": condition.strip() if condition else None}
+
+
 def validate_phases(phases: object, start_week: int, at: str) -> list[dict] | None:
     """Validate an item's frequency SCHEDULE — the later dose steps.
 
     Clinicians ramp rehab ("3x in week 1, then daily"), and a single
     weekly_target cannot say that. Each phase overrides the item's scalar
-    targets from its own `from_week`; the scalars cover `start_week` until the
-    first phase begins. None/[] means a flat prescription.
+    targets once it starts; the scalars cover `start_week` until the first
+    phase begins. None/[] means a flat prescription.
+
+    A step starts either on a calendar week (`from_week`) or on a symptom
+    `gate` — exactly one of the two. A gated step additionally carries
+    `applied_on` (null until someone explicitly applies the step-down; the
+    clean-day clock alone never changes a dose, because agreed gates include
+    judgment clauses no query can evaluate).
 
     Every phase carries a COMPLETE threshold set on purpose: a ramp changes what
     counts as an acceptable dose, so inheriting green_min/yellow_min from the
@@ -550,22 +671,41 @@ def validate_phases(phases: object, start_week: int, at: str) -> list[dict] | No
         where = f"{at}.phases[{k}]"
         if not isinstance(raw, dict):
             sys.exit(f"invalid plan: {where} must be an object")
-        phase = {key: raw.get(key) for key in ("from_week", "weekly_target", "green_min", "yellow_min")}
-        for field, maximum in (("from_week", 52), ("weekly_target", 14), ("green_min", 14), ("yellow_min", 14)):
-            value = phase[field]
+        if (raw.get("from_week") is None) == (raw.get("gate") is None):
+            sys.exit(f"invalid plan: {where} requires exactly one of from_week or gate")
+        phase: dict = {}
+        for field, maximum in (("weekly_target", 14), ("green_min", 14), ("yellow_min", 14)):
+            value = raw.get(field)
             if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
                 sys.exit(f"invalid plan: {where}.{field} must be an integer 1-{maximum}")
-        # Strictly increasing, and after the item's own start: a phase at or
-        # before start_week would be dead weight the scalars already cover.
-        if phase["from_week"] <= previous_from:
-            sys.exit(
-                f"invalid plan: {where}.from_week must be greater than "
-                f"{'the previous phase' if k else 'start_week'} ({previous_from})"
-            )
-        previous_from = phase["from_week"]
+            phase[field] = value
         if not phase["yellow_min"] <= phase["green_min"] <= phase["weekly_target"]:
             sys.exit(f"invalid plan: {where} requires yellow_min <= green_min <= weekly_target")
-        normalized.append(phase)
+        if raw.get("gate") is not None:
+            applied_on = raw.get("applied_on")
+            if applied_on is not None:
+                if not isinstance(applied_on, str):
+                    sys.exit(f"invalid plan: {where}.applied_on must be a YYYY-MM-DD date or null")
+                parse_ymd(applied_on, f"{where}.applied_on")
+            normalized.append({"gate": validate_gate(raw["gate"], where),
+                               "applied_on": applied_on, **phase})
+            continue
+        if raw.get("applied_on") is not None:
+            sys.exit(f"invalid plan: {where}.applied_on only applies to a gated phase")
+        from_week = raw.get("from_week")
+        if isinstance(from_week, bool) or not isinstance(from_week, int) or not 1 <= from_week <= 52:
+            sys.exit(f"invalid plan: {where}.from_week must be an integer 1-52")
+        # Calendar steps stay strictly increasing, and after the item's own
+        # start: a phase at or before start_week would be dead weight the
+        # scalars already cover. Gated steps have no date, so they are outside
+        # this chain.
+        if from_week <= previous_from:
+            sys.exit(
+                f"invalid plan: {where}.from_week must be greater than "
+                f"{'the previous calendar phase' if previous_from != start_week else 'start_week'} ({previous_from})"
+            )
+        previous_from = from_week
+        normalized.append({"from_week": from_week, **phase})
     return normalized
 
 
@@ -714,12 +854,22 @@ def cmd_plan_apply(args) -> None:
     print(f"applied {len(items)} plan items to injury {args.injury_id}")
 
 
+def fetch_pain_entries(injury_id: str) -> list[dict]:
+    """The minimal injury-log slice a gate clock needs."""
+    return _request("GET", "injury_notes", params={
+        "injury_id": f"eq.{injury_id}",
+        "select": "entry_date,entry_end_date,pain_level",
+        "pain_level": "not.is.null",
+    })
+
+
 def cmd_plan_list(args) -> None:
     injury_rows = _request("GET", "injuries", params={
         "id": f"eq.{args.injury_id}", "select": "plan_started_at", "limit": "1"
     })
     plan_started_at = injury_rows[0].get("plan_started_at") if injury_rows else None
-    plan_week = current_plan_week(plan_started_at, user_today())
+    today = user_today()
+    plan_week = current_plan_week(plan_started_at, today)
     rows = _request("GET", "recovery_plan_items", params={
         "injury_id": f"eq.{args.injury_id}",
         "select": "id,name,kind,start_week,weekly_target,green_min,yellow_min,phases,target_sets,target_reps,steps,note,active,exercise:exercises(name)",
@@ -728,11 +878,16 @@ def cmd_plan_list(args) -> None:
     if not rows:
         print("_no recovery plan items_")
         return
+    # Gate clocks only need the pain-logged entries, and only when some item
+    # actually carries a gated phase.
+    pain_entries: list[dict] | None = None
+    if any(p.get("gate") for r in rows for p in (r.get("phases") or [])):
+        pain_entries = fetch_pain_entries(args.injury_id)
     print(f"Plan start: {plan_started_at or 'not set'} · current plan week: {plan_week if plan_week is not None else 'legacy'}")
     print("| id | name | kind | starts | phase | weekly target | thresholds | later phases | gym dose | note | active | gym exercise |")
     print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in rows:
-        current = resolve_targets(r, plan_week)
+        current = resolve_targets(r, plan_week, plan_started_at)
         target = "" if current["weekly_target"] is None else current["weekly_target"]
         green = "" if current["green_min"] is None else current["green_min"]
         yellow = "" if current["yellow_min"] is None else current["yellow_min"]
@@ -741,8 +896,9 @@ def cmd_plan_list(args) -> None:
         dose = plan_item_dose_text(r).replace("|", "\\|").replace("\n", " ")
         starts = r.get("start_week") or 1
         phase = "future" if plan_week is not None and starts > plan_week else "accountable"
+        schedule = phases_text(r, plan_started_at, pain_entries, today)
         print(f"| {r['id']} | {r.get('name') or ''} | {r.get('kind') or ''} | week {starts} | {phase} | {target} | "
-              f"{yellow}-{green} | {phases_text(r)} | {dose} | {note} | {r.get('active')} | {exercise} |")
+              f"{yellow}-{green} | {schedule} | {dose} | {note} | {r.get('active')} | {exercise} |")
 
 
 def parse_phases_arg(value: str, start_week: int, at: str) -> list[dict] | None:
@@ -855,6 +1011,72 @@ def cmd_plan_update(args) -> None:
     print(f"updated plan item {args.id}")
 
 
+def cmd_plan_advance(args) -> None:
+    """Apply (or undo) a plan item's symptom-gated step-down.
+
+    The clean-day clock is advisory: this command prints it, refuses to apply
+    an unmet gate without --force, and reminds the caller of the judgment
+    condition — but the application itself is always an explicit human/agent
+    decision, never an automatic consequence of the clock.
+    """
+    rows = _request("GET", "recovery_plan_items", params={
+        "id": f"eq.{args.item_id}",
+        "select": "id,name,injury_id,phases,weekly_target,green_min,yellow_min",
+        "limit": "1",
+    })
+    if not rows:
+        sys.exit(f"plan item {args.item_id} not found")
+    row = rows[0]
+    phases = row.get("phases") or []
+    gated = [(index, phase) for index, phase in enumerate(phases) if phase.get("gate")]
+    if not gated:
+        sys.exit(f"plan item {args.item_id} has no gated phase — nothing to advance")
+
+    if args.undo:
+        applied = [(index, phase) for index, phase in gated if phase.get("applied_on")]
+        if not applied:
+            sys.exit("no applied gated phase to undo")
+        index, phase = applied[-1]
+        was = phase["applied_on"]
+        phases[index] = {**phase, "applied_on": None}
+        _request("PATCH", "recovery_plan_items", params={"id": f"eq.{args.item_id}"},
+                 body={"phases": phases, "updated_at": "now()"}, prefer="return=minimal")
+        print(f"cleared applied_on ({was}) on {row.get('name')!r} — the pre-gate dose is in force again; "
+              "log WHY as an injury note (a reversion is a clinical event)")
+        return
+
+    pending = [(index, phase) for index, phase in gated if not phase.get("applied_on")]
+    if not pending:
+        sys.exit("every gated phase on this item is already applied")
+    index, phase = pending[0]
+    gate = phase["gate"]
+
+    injury_rows = _request("GET", "injuries", params={
+        "id": f"eq.{row['injury_id']}", "select": "plan_started_at", "limit": "1",
+    })
+    plan_started_at = injury_rows[0].get("plan_started_at") if injury_rows else None
+    today = user_today()
+    status = gate_status(phase, fetch_pain_entries(row["injury_id"]), today, plan_started_at)
+    print(f"gate on {row.get('name')!r}: <={gate['max_pain']}/10 x{gate['clear_days']}d "
+          f"-> {phase.get('weekly_target')}x/week — {gate_status_text(status)}")
+    if status and status["state"] != "eligible" and not args.force:
+        sys.exit("the clean-day clock is not satisfied — do not pre-apply an agreed taper. "
+                 "If the user has explicitly confirmed anyway, re-run with --force.")
+    if gate.get("condition"):
+        print(f"judgment condition (verify before relying on the clock alone): {gate['condition']}")
+
+    applied_on = parse_ymd(args.date, "--date") if args.date else today
+    phases[index] = {**phase, "applied_on": applied_on}
+    _request("PATCH", "recovery_plan_items", params={"id": f"eq.{args.item_id}"},
+             body={"phases": phases, "updated_at": "now()"}, prefer="return=minimal")
+    old = {field: row.get(field) for field in ("weekly_target", "green_min", "yellow_min")}
+    print(f"applied gated step-down on {row.get('name')!r} as of {applied_on}: "
+          f"{old['weekly_target']} ({old['yellow_min']}-{old['green_min']}) -> "
+          f"{phase.get('weekly_target')} ({phase.get('yellow_min')}-{phase.get('green_min')})")
+    if gate.get("note_id"):
+        print(f"agreed in injury note {gate['note_id']} — log a dated note that the step-down was taken")
+
+
 def cmd_plan_remove(args) -> None:
     _request("DELETE", "recovery_plan_items", params={"id": f"eq.{args.id}"}, prefer="return=minimal")
     print(f"removed plan item {args.id}")
@@ -963,8 +1185,11 @@ def main() -> None:
     p_plan_add.add_argument("--target-reps", dest="target_reps", help="Gym prescription reps (1-100)")
     p_plan_add.add_argument(
         "--phases",
-        help="JSON array of later dose steps, e.g. "
-             '\'[{"from_week":2,"weekly_target":7,"green_min":6,"yellow_min":4}]\''
+        help="JSON array of later dose steps — calendar "
+             '\'[{"from_week":2,"weekly_target":7,"green_min":6,"yellow_min":4}]\' '
+             'or symptom-gated \'[{"gate":{"kind":"pain_clear","max_pain":1,"clear_days":14,'
+             '"note_id":151,"condition":"..."},"applied_on":null,"weekly_target":3,'
+             '"green_min":2,"yellow_min":1}]\''
     )
     p_plan_add.set_defaults(func=cmd_plan_add)
 
@@ -991,11 +1216,25 @@ def main() -> None:
     p_plan_upd.add_argument("--target-reps", dest="target_reps", help="Gym prescription reps (1-100), or 'none'")
     p_plan_upd.add_argument(
         "--phases",
-        help="JSON array of later dose steps (same shape as plan-add), or 'none' to clear"
+        help="JSON array of later dose steps (same shapes as plan-add, calendar or gated), "
+             "or 'none' to clear"
     )
     p_plan_upd.add_argument("--steps-file", dest="steps_file",
                             help="JSON array of structured routine steps, or 'none' to clear")
     p_plan_upd.set_defaults(func=cmd_plan_update)
+
+    p_plan_adv = sub.add_parser(
+        "plan-advance",
+        help="Apply a plan item's symptom-gated step-down (or --undo the last applied one)")
+    p_plan_adv.add_argument("item_id")
+    p_plan_adv.add_argument("--date", help="YYYY-MM-DD the step-down takes effect (defaults to today)")
+    p_plan_adv.add_argument("--undo", action="store_true",
+                            help="clear the most recently applied gated phase — the pre-gate dose returns "
+                                 "(the agreed reversion rule when a flare follows a step-down)")
+    p_plan_adv.add_argument("--force", action="store_true",
+                            help="apply even though the clean-day clock is not satisfied "
+                                 "(only with the user's explicit confirmation)")
+    p_plan_adv.set_defaults(func=cmd_plan_advance)
 
     p_plan_rm = sub.add_parser("plan-remove", help="Hard-delete a recovery plan item")
     p_plan_rm.add_argument("id")

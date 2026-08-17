@@ -13,13 +13,38 @@ const MAX_PHASES = 8
 /**
  * An item's frequency SCHEDULE — the later dose steps. Clinicians ramp rehab
  * ("3× in week 1, then daily"), which one weekly_target cannot express; each
- * phase overrides the item's scalar targets from its own from_week, and the
- * scalars cover start_week until the first phase begins.
+ * phase overrides the item's scalar targets once it starts, and the scalars
+ * cover start_week until the first phase begins.
+ *
+ * A step starts either on a calendar week (`from_week`) or on a symptom
+ * `gate` — exactly one of the two. A gated step carries `applied_on` (null
+ * until someone explicitly applies it — the clinically normal taper is a
+ * condition, and its judgment half is never machine-evaluated).
  *
  * Every phase restates ALL THREE numbers on purpose: a ramp changes what counts
  * as an acceptable dose, so inheriting green_min/yellow_min would keep grading
  * a later week by an earlier week's standard.
  */
+function validateGate(gate, where, errors) {
+  if (!gate || typeof gate !== 'object' || Array.isArray(gate)) {
+    errors.push(`${where}.gate must be an object`)
+    return
+  }
+  if (gate.kind !== 'pain_clear') errors.push(`${where}.gate.kind must be 'pain_clear'`)
+  if (!Number.isInteger(gate.max_pain) || gate.max_pain < 0 || gate.max_pain > 10) {
+    errors.push(`${where}.gate.max_pain must be an integer from 0–10`)
+  }
+  if (!Number.isInteger(gate.clear_days) || gate.clear_days < 1 || gate.clear_days > 365) {
+    errors.push(`${where}.gate.clear_days must be an integer from 1–365`)
+  }
+  if (gate.note_id != null && (!Number.isInteger(gate.note_id) || gate.note_id < 1)) {
+    errors.push(`${where}.gate.note_id must be a positive integer or null`)
+  }
+  if (gate.condition != null && (typeof gate.condition !== 'string' || !gate.condition.trim() || gate.condition.length > 300)) {
+    errors.push(`${where}.gate.condition must be a non-empty string up to 300 chars, or null`)
+  }
+}
+
 function validatePhases(item, at, errors) {
   const phases = item.phases
   if (phases == null) return
@@ -32,23 +57,22 @@ function validatePhases(item, at, errors) {
     return
   }
   let previousFrom = Number.isInteger(item.start_week) ? item.start_week : 1
+  let sawCalendar = false
   phases.forEach((phase, index) => {
     const where = `${at}.phases[${index}]`
     if (!phase || typeof phase !== 'object' || Array.isArray(phase)) {
       errors.push(`${where} must be an object`)
       return
     }
-    for (const [field, max] of [['from_week', 52], ['weekly_target', 14], ['green_min', 14], ['yellow_min', 14]]) {
+    if ((phase.from_week == null) === (phase.gate == null)) {
+      errors.push(`${where} requires exactly one of from_week or gate`)
+      return
+    }
+    for (const [field, max] of [['weekly_target', 14], ['green_min', 14], ['yellow_min', 14]]) {
       if (!Number.isInteger(phase[field]) || phase[field] < 1 || phase[field] > max) {
         errors.push(`${where}.${field} must be an integer from 1–${max}`)
       }
     }
-    if (Number.isInteger(phase.from_week) && phase.from_week <= previousFrom) {
-      errors.push(
-        `${where}.from_week must be greater than ${index ? 'the previous phase' : 'start_week'} (${previousFrom})`
-      )
-    }
-    if (Number.isInteger(phase.from_week)) previousFrom = phase.from_week
     if (
       Number.isInteger(phase.yellow_min) &&
       Number.isInteger(phase.green_min) &&
@@ -57,6 +81,26 @@ function validatePhases(item, at, errors) {
     ) {
       errors.push(`${where}: require yellow_min ≤ green_min ≤ weekly_target`)
     }
+    if (phase.gate != null) {
+      validateGate(phase.gate, where, errors)
+      if (phase.applied_on != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(phase.applied_on))) {
+        errors.push(`${where}.applied_on must be a YYYY-MM-DD date or null`)
+      }
+      return
+    }
+    if (phase.applied_on != null) errors.push(`${where}.applied_on only applies to a gated phase`)
+    if (!Number.isInteger(phase.from_week) || phase.from_week < 1 || phase.from_week > 52) {
+      errors.push(`${where}.from_week must be an integer from 1–52`)
+    }
+    // Calendar steps stay strictly increasing after the item's own start;
+    // gated steps have no date and sit outside this chain.
+    if (Number.isInteger(phase.from_week) && phase.from_week <= previousFrom) {
+      errors.push(
+        `${where}.from_week must be greater than ${sawCalendar ? 'the previous calendar phase' : 'start_week'} (${previousFrom})`
+      )
+    }
+    if (Number.isInteger(phase.from_week)) previousFrom = phase.from_week
+    sawCalendar = true
   })
 }
 

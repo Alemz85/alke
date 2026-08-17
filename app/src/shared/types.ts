@@ -282,13 +282,39 @@ export interface RecoveryPlanStep {
 }
 
 /**
+ * Symptom gate on a phase step. The clinically normal taper is not "week 5"
+ * but "once two clean weeks pass" — a condition, not a date. The gate holds
+ * that condition so the clean-day clock is computable from the injury log,
+ * but the step is only IN FORCE once someone stamps `applied_on`: agreed
+ * gates carry judgment clauses ("confirmed under normal daily load") that no
+ * query can evaluate, so application stays an explicit act.
+ */
+export interface RecoveryPhaseGate {
+  kind: 'pain_clear'
+  /** Log entries with pain_level strictly above this restart the clock (0–10). */
+  max_pain: number
+  /** Consecutive clean days required, counted from the day after the last exceeding entry. */
+  clear_days: number
+  /** injury_notes row recording the agreed decision, for provenance. */
+  note_id?: number | null
+  /** The judgment half of the trigger, e.g. "confirmed under normal daily load". */
+  condition?: string | null
+}
+
+/**
  * One later step in an item's frequency schedule. Clinicians ramp rehab —
  * "3× in week 1, then daily" — and a single weekly_target cannot say that, so
- * a phase overrides the item's scalar targets from `from_week` onward.
+ * a phase overrides the item's scalar targets once it starts. A step starts
+ * either on a calendar week (`from_week`) or when its symptom `gate` is met
+ * and explicitly applied — exactly one of the two is set.
  */
 export interface RecoveryPlanPhase {
   /** Cumulative plan week this dose starts in. Always after the item's start_week. */
-  from_week: number
+  from_week?: number | null
+  /** Symptom-gated step: in force only once `applied_on` is stamped. */
+  gate?: RecoveryPhaseGate | null
+  /** Date a gated step was actually applied (YYYY-MM-DD); null/absent = pending. */
+  applied_on?: string | null
   weekly_target: number
   green_min: number
   yellow_min: number

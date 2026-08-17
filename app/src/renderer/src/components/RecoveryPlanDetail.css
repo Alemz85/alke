@@ -29,6 +29,12 @@
 .recovery-detail-schedule-step--current .recovery-detail-schedule-week { background:var(--color-text); color:var(--color-on-emphasis); }
 .recovery-detail-schedule-dose { color:var(--color-text-tertiary); }
 .recovery-detail-schedule-step--current .recovery-detail-schedule-dose { color:var(--color-text-secondary); }
+/* A symptom-gated step is a condition, not a date: its marker reads "gate",
+   the third column carries the trigger and the live clean-day clock, and a
+   post-application flare turns that readout into a review flag. */
+.recovery-detail-schedule-step--gate .recovery-detail-schedule-week { min-width:auto; text-transform:uppercase; letter-spacing:0.4px; font-size:10px; }
+.recovery-detail-schedule-status { grid-column:1 / -1; color:var(--color-text-tertiary); font-size:11px; }
+.recovery-detail-schedule-status--review { color:var(--color-flag); font-weight:600; }
 .recovery-detail-steps { margin-top:var(--space-sm); overflow:hidden; border:1px solid var(--color-divider-soft); border-radius:var(--radius-md); }
 .recovery-detail-step { display:grid; grid-template-columns:minmax(0,1fr) minmax(140px,.35fr); gap:var(--space-md); padding:10px var(--space-sm); color:var(--color-text-secondary); font-size:var(--type-body-sm-size); }
 .recovery-detail-step + .recovery-detail-step { border-top:1px solid var(--color-divider-soft); }
