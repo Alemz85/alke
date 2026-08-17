@@ -311,6 +311,39 @@ describe('flareStats', () => {
     expect(flareStats(entries, NOW).trend).toBe('worsening')
   })
 
+  it('trend stays stable when the swing is large relatively but tiny absolutely', () => {
+    // 2 → 3 summed pain is +50% but only +1 point — logging noise on 1/10
+    // days, not a deterioration claim. This exact shape once turned every
+    // injury card red at the same time.
+    const entries = [
+      entry({ entry_date: shiftYMD(TODAY, -2), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -5), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -9), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -35), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -40), pain_level: 1 })
+    ]
+    expect(flareStats(entries, NOW).trend).toBe('stable')
+  })
+
+  it('a couple of 1/10 days from a clean prior month is stable, not worsening', () => {
+    const entries = [
+      entry({ entry_date: shiftYMD(TODAY, -2), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -5), pain_level: 1 }),
+      // prior window: pain logged, no flares
+      entry({ entry_date: shiftYMD(TODAY, -35), pain_level: 0 })
+    ]
+    expect(flareStats(entries, NOW).trend).toBe('stable')
+  })
+
+  it('small absolute improvements also read stable, not improving', () => {
+    const entries = [
+      entry({ entry_date: shiftYMD(TODAY, -2), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -35), pain_level: 1 }),
+      entry({ entry_date: shiftYMD(TODAY, -40), pain_level: 1 })
+    ]
+    expect(flareStats(entries, NOW).trend).toBe('stable')
+  })
+
   it('respects the 30d boundary exactly (day -30 is prior, not last)', () => {
     // day -30 falls in the prior window (start30 exclusive), so last-window is empty.
     const entries = [

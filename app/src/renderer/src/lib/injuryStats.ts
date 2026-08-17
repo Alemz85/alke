@@ -134,6 +134,10 @@ function isFlareDay(d: PainDay): boolean {
   return d.pain >= 1
 }
 
+/** Smallest 30d-vs-30d change in summed day-max pain that earns a trend
+ *  direction — see the rationale at the trend computation in flareStats. */
+const MIN_TREND_LOAD_DELTA = 3
+
 export interface FlareStats {
   /** Distinct flare DAYS per week over the trailing 30 days; null if no entries. */
   perWeek30d: number | null
@@ -156,8 +160,10 @@ export interface FlareStats {
  * - avgIntensity30d: mean of the day-maxes of flare days in the last 30d; null
  *   when none.
  * - trend: compares summed day-max pain load of the last 30d against the prior
- *   30d. improving if load fell >15%, worsening if it rose >15%, else stable.
- *   null when BOTH windows have fewer than 2 flare days (insufficient data).
+ *   30d. A direction requires BOTH a >15% relative change AND an absolute
+ *   swing of at least MIN_TREND_LOAD_DELTA summed points — smaller moves are
+ *   'stable' (logging noise, not a claim of change). null when BOTH windows
+ *   have fewer than 2 flare days (insufficient data).
  * - lastFlare: the most recent flare day across ALL entries, at its day-max.
  */
 export function flareStats(entries: InjuryLogEntry[], now: Date): FlareStats {
@@ -188,15 +194,27 @@ export function flareStats(entries: InjuryLogEntry[], now: Date): FlareStats {
       : last30Flares.reduce((s, d) => s + d.pain, 0) / last30Flares.length
 
   // Trend from summed day-max load, guarded by a minimum sample in both windows.
+  //
+  // A trend label is a CLAIM of change, so it must clear an ABSOLUTE bar as
+  // well as the relative one: ±15% alone flips on noise when the base is a
+  // couple of 1/10 days (one extra summed pain point is +50%), which is how
+  // every injury card once read a red "Worsening" at the same time — alarm
+  // framing this app reserves for genuine deterioration. Three summed
+  // day-max points (about one 3/10 day, or three 1/10 days) is the smallest
+  // swing worth calling a direction; below it the honest label is stable.
+  // The floor is chosen against the owner's own logging noise, not derived.
   let trend: FlareStats['trend'] = null
   if (last30Flares.length >= 2 || prior30Flares.length >= 2) {
     const loadLast = last30Flares.reduce((s, d) => s + d.pain, 0)
     const loadPrior = prior30Flares.reduce((s, d) => s + d.pain, 0)
-    if (loadPrior === 0) {
-      // No prior load: any current load is a worsening, otherwise stable.
-      trend = loadLast > 0 ? 'worsening' : 'stable'
+    const delta = loadLast - loadPrior
+    if (Math.abs(delta) < MIN_TREND_LOAD_DELTA) {
+      trend = 'stable'
+    } else if (loadPrior === 0) {
+      // No prior load and a meaningful current one: a genuine worsening.
+      trend = 'worsening'
     } else {
-      const change = (loadLast - loadPrior) / loadPrior
+      const change = delta / loadPrior
       if (change < -0.15) trend = 'improving'
       else if (change > 0.15) trend = 'worsening'
       else trend = 'stable'
