@@ -86,9 +86,10 @@
 }
 
 @media (max-width: 1099px) {
-  .dashboard-grid--span-4 {
-    grid-column: span 6 !important;
-  }
+  /* span-8 goes full width here, so a half-width span-4 would sit beside a
+     hole (the RHR tile floated alone with an empty right half at 1000px).
+     Below the 3-up breakpoint every hero-row card takes the full row. */
+  .dashboard-grid--span-4,
   .dashboard-grid--span-6,
   .dashboard-grid--span-8 {
     grid-column: span 12 !important;

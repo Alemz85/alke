@@ -586,7 +586,9 @@ export function RecoveryView(): ReactElement {
               sub={
                 loadSummary.trimp4wAvg === null
                   ? 'this week'
-                  : `4wk avg ${Math.round(loadSummary.trimp4wAvg)}`
+                  : // Keep the "this week" qualifier: without it, a Monday's
+                    // honest 0 beside "4wk avg 180" reads as broken data.
+                    `this week · 4wk avg ${Math.round(loadSummary.trimp4wAvg)}`
               }
               onClick={() => setOpenLoadMetric('trimp')}
             />

@@ -279,29 +279,31 @@ describe('flightsThisWeek', () => {
 })
 
 describe('todayVsAvgSteps', () => {
-  it('computes delta pct against the trailing baseline, excluding today', () => {
+  it('reports today raw and grades only YESTERDAY against the trailing baseline', () => {
     mockToday('2026-07-16T12:00:00Z')
     try {
       const metrics = [
         metric('2026-07-15', 4000),
         metric('2026-07-14', 6000),
-        metric('2026-07-16', 8000) // today — must not be in its own baseline
+        metric('2026-07-16', 8000) // today — partial, never graded vs baseline
       ]
       const result = todayVsAvgSteps(metrics, 'UTC', 30)
       expect(result.today).toBe(8000)
       expect(result.avg).toBe(5000)
-      expect(result.deltaPct).toBe(60)
+      expect(result.yesterday).toBe(4000)
+      expect(result.yesterdayDeltaPct).toBe(-20)
     } finally {
       restoreNow()
     }
   })
 
-  it('returns null today and null delta when today has no data yet', () => {
+  it('returns null today and null yesterday delta when data is missing', () => {
     mockToday('2026-07-16T12:00:00Z')
     try {
-      const result = todayVsAvgSteps([metric('2026-07-15', 4000)], 'UTC', 30)
+      const result = todayVsAvgSteps([metric('2026-07-14', 4000)], 'UTC', 30)
       expect(result.today).toBeNull()
-      expect(result.deltaPct).toBeNull()
+      expect(result.yesterday).toBeNull()
+      expect(result.yesterdayDeltaPct).toBeNull()
     } finally {
       restoreNow()
     }

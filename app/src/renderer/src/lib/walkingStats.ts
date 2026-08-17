@@ -27,9 +27,15 @@ export interface ExplicitWalkStats {
 }
 
 export interface TodayVsAvgSteps {
+  /** Today's step count SO FAR — a partial day, never comparable to full-day
+   *  baselines (a mid-morning read against a 30d average manufactures a
+   *  "-99%" alarm out of an incomplete sync). Display it as "so far". */
   today: number | null
   avg: number
-  deltaPct: number | null
+  /** Yesterday (the most recent COMPLETE day) against the trailing average —
+   *  the honest apples-to-apples version of the old today-vs-baseline delta. */
+  yesterday: number | null
+  yesterdayDeltaPct: number | null
 }
 
 export interface PeriodDistanceTotals {
@@ -238,8 +244,14 @@ export function todayVsAvgSteps(
   }
   const avg = n > 0 ? sum / n : 0
   const todaySteps = byDate.get(todayKey) ?? null
-  const deltaPct = todaySteps != null && avg > 0 ? ((todaySteps - avg) / avg) * 100 : null
-  return { today: todaySteps, avg, deltaPct }
+  // The baseline window starts at yesterday (i = 1), so comparing yesterday
+  // against it is slightly self-referential — accepted: with 30 days in the
+  // window the effect is bounded and the claim stays honest, unlike grading
+  // a partial today against complete days.
+  const yesterdaySteps = byDate.get(ymdToKey(addDays(today, -1))) ?? null
+  const yesterdayDeltaPct =
+    yesterdaySteps != null && avg > 0 ? ((yesterdaySteps - avg) / avg) * 100 : null
+  return { today: todaySteps, avg, yesterday: yesterdaySteps, yesterdayDeltaPct }
 }
 
 /** Average of the last `days` days' steps (zero-filled), e.g. "last 30d average". */

@@ -113,27 +113,25 @@ export function WalkingView({
           <div className="walking-hero">
             <span className="walking-section-kicker">Average daily steps · last 30d</span>
             <HeroNumber value={avg30d} format={formatSteps} className="walking-hero-value" />
+            {/* Today is a partial day (and may lag the last sync by hours), so
+                it reads as "so far" and is never graded against full-day
+                baselines — the old %-vs-baseline here manufactured a "-99%"
+                alarm out of an incomplete morning. */}
             <span className="walking-hero-caption">
-              Today: {todayVsAvg.today != null ? formatSteps(todayVsAvg.today) : EM_DASH}
-              {todayVsAvg.deltaPct != null && (
-                <span
-                  className={
-                    todayVsAvg.deltaPct >= 0 ? 'walking-delta walking-delta--up' : 'walking-delta walking-delta--down'
-                  }
-                >
-                  {' '}
-                  ({fmtDelta(todayVsAvg.deltaPct, 0)}% vs baseline)
-                </span>
-              )}
+              Today: {todayVsAvg.today != null ? `${formatSteps(todayVsAvg.today)} so far` : EM_DASH}
             </span>
           </div>
           <div className="walking-stat-facts">
             <MetricCard eyebrow="Steps this week" value={formatSteps(periodTotals.thisWeek)} />
             <MetricCard eyebrow="Steps this month" value={formatSteps(periodTotals.thisMonth)} />
             <MetricCard
-              eyebrow="vs 30d baseline"
-              value={todayVsAvg.deltaPct != null ? `${fmtDelta(todayVsAvg.deltaPct, 0)}%` : EM_DASH}
-              caption="today vs trailing average"
+              eyebrow="Yesterday vs baseline"
+              value={
+                todayVsAvg.yesterdayDeltaPct != null
+                  ? `${fmtDelta(todayVsAvg.yesterdayDeltaPct, 0)}%`
+                  : EM_DASH
+              }
+              caption="last complete day vs 30d average"
             />
           </div>
         </div>
