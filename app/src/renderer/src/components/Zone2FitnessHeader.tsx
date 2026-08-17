@@ -73,25 +73,45 @@ interface Props {
   timezone: string | null
 }
 
-/** Seconds spent in a given HR zone for a workout, or 0 when unavailable. */
-function zoneSeconds(w: Workout, key: 'z2' | 'z3'): number {
+/** Seconds spent in a given HR zone for a workout, or 0 when unavailable.
+ *  'z1b' is the sub-Z2 easy-aerobic band (adaptation threshold → Z2 floor)
+ *  the v5 model credits at half a Zone-2 minute; rows computed before v5
+ *  simply lack the key and read 0. */
+function zoneSeconds(w: Workout, key: 'z1b' | 'z2' | 'z3'): number {
   const tiz = w.computed?.time_in_zones as Record<string, unknown> | null | undefined
   const v = tiz?.[key]
   return typeof v === 'number' ? v : 0
 }
 
+// [CHOSEN PRIOR] Ten effective aerobic minutes is the least a workout can carry
+// and still count as a *session* here — the thing that appears on the calendar
+// and anchors the +24-48h build window. The literature declines to supply this
+// number (knowledge/topics/low-intensity-volume-threshold.md: Oja 2018 found
+// 7/91 dose tests significant and concludes bout duration cannot be
+// quantified), so it is a prior, chosen so that real training sessions clear
+// it comfortably, while brief fragments (a short indoor walk, a stroll below
+// the adaptation threshold) fall under it. The old `> 0` rule let a stroll with
+// only a couple of minutes in Z2 reset the build
+// window — the defect that motivated the threshold.
+const MIN_SESSION_EFFECTIVE_AEROBIC_S = 600
+
 /**
  * A workout is a Zone-2 session for this tab iff it is a tracked cardio modality
- * (swim/bike/row/elliptical/walk) AND carries actual Zone-2 work — z2+z3 seconds > 0.
- * Strength/core/other modalities are excluded outright, so pure-gym days never
- * appear on the Zone-2 calendar. A cardio workout whose zones haven't been computed
- * yet (computed == null) is still shown — we can't yet rule out its aerobic minutes,
+ * (swim/bike/row/elliptical/walk) AND carries a real aerobic dose: z2+z3 seconds
+ * plus HALF its z1b seconds — the same credit ratio the fitness model applies
+ * (metrics/models.py Z2_EASY_AEROBIC_WEIGHT vs the z2 weight) — at or above ten
+ * effective minutes. An easy walk that earns a genuine half-weight dose therefore
+ * qualifies; a fragment that grazed the zones does not. Strength/core/other
+ * modalities are excluded outright, so pure-gym days never appear on the Zone-2
+ * calendar. A cardio workout whose zones haven't been computed yet
+ * (computed == null) is still shown — we can't yet rule out its aerobic minutes,
  * and dropping fresh swims/bikes would understate the calendar.
  */
 function isZone2Session(w: Workout): boolean {
   if (cardioModalityOf(w.type) == null) return false
   if (w.computed?.time_in_zones == null) return true // not yet computed — keep cardio
-  return zoneSeconds(w, 'z2') + zoneSeconds(w, 'z3') > 0
+  const effective = zoneSeconds(w, 'z2') + zoneSeconds(w, 'z3') + 0.5 * zoneSeconds(w, 'z1b')
+  return effective >= MIN_SESSION_EFFECTIVE_AEROBIC_S
 }
 
 /**

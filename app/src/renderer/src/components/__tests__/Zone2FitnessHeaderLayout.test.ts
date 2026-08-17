@@ -34,4 +34,18 @@ describe('Zone2FitnessHeader layout', () => {
   it('does not claim uncertain rows are frozen at a last-known value', () => {
     expect(source).not.toContain('Showing last known value')
   })
+
+  it('requires a real minimum aerobic dose before a workout counts as a session', () => {
+    // The old `> 0` rule let a stroll with barely any Z2 time onto the calendar and
+    // reset the +24-48h build-window anchor. Qualification now mirrors the
+    // model: z2+z3 plus HALF the z1b easy-aerobic band, against a marked
+    // chosen-prior floor of ten effective minutes.
+    expect(source).toContain('const MIN_SESSION_EFFECTIVE_AEROBIC_S = 600')
+    expect(source).toContain('[CHOSEN PRIOR]')
+    expect(source).toContain(
+      "zoneSeconds(w, 'z2') + zoneSeconds(w, 'z3') + 0.5 * zoneSeconds(w, 'z1b')"
+    )
+    expect(source).toContain('effective >= MIN_SESSION_EFFECTIVE_AEROBIC_S')
+    expect(source).not.toMatch(/zoneSeconds\(w, 'z2'\) \+ zoneSeconds\(w, 'z3'\) > 0/)
+  })
 })
