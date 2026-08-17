@@ -266,6 +266,12 @@ function App(): ReactElement {
     invalidateWorkoutViews(queryClient)
   }, [queryClient])
 
+  // Mirrors openGymTemplates/openSessions — a chat rich-block's "View" link
+  // switches straight to the Injuries tab (its recovery-plan cards).
+  const openInjuries = useCallback((): void => {
+    setActiveTab('injuries')
+  }, [])
+
   function renderActiveView(): ReactElement {
     if (activeTab === 'dashboard') {
       return (
@@ -294,7 +300,14 @@ function App(): ReactElement {
       // Chat absorbs the app toolbar into its own header row (one top bar
       // instead of a titlebar strip stacked on a session header), and takes
       // only the ambient controls — see the toolbar comment above.
-      return <ChatView toolbar={ambientControls} />
+      return (
+        <ChatView
+          toolbar={ambientControls}
+          onOpenSessions={openSessions}
+          onOpenGymTemplates={openGymTemplates}
+          onOpenInjuries={openInjuries}
+        />
+      )
     }
     const ActiveView = VIEWS[activeTab]
     return <ActiveView />

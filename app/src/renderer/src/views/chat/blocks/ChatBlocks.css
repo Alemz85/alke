@@ -1,0 +1,454 @@
+/* Rich-block cards embedded in AI chat answers (alke:workout / alke:metric /
+   alke:template / alke:recovery-plan). DESIGN.md tokens only — no shadows,
+   glows, or gradients (elevation is luminance + hairline, per DESIGN.md
+   "Elevation & Depth"); domain accents are fine here (unlike ChatView.css's
+   neutral chrome) since these cards mirror the Sessions/Gym/Recovery views'
+   own accent-bound data display. Cards never exceed the chat reading column. */
+
+.chat-block {
+  max-width: 100%;
+  margin: var(--space-md) 0;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  font-family: var(--font-body);
+}
+
+/* ── skeleton (streaming, JSON not yet parseable) ────────────────────── */
+
+.chat-block--skeleton {
+  height: 96px;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.chat-block-skeleton-line {
+  display: block;
+  width: 60%;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-hover);
+  animation: chat-block-pulse 1.4s ease-in-out infinite;
+}
+
+.chat-block-skeleton-line--short {
+  width: 38%;
+}
+
+@keyframes chat-block-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── quiet inline error chip (fetch failure / unknown id) ───────────────
+   Deliberately NOT full card treatment — a failed lookup is a small, quiet
+   admission, not a flag banner (DESIGN.md reserves {colors.flag} for the
+   three defined warning types, none of which this is). */
+
+.chat-block-error-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin: var(--space-xs) 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+/* ── workout block ───────────────────────────────────────────────────── */
+
+.chat-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.chat-block-head-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-text-secondary);
+}
+
+.chat-block-head-datetime {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-tertiary);
+}
+
+.chat-block-workout-trace {
+  height: 40px;
+}
+
+.chat-block-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: var(--space-md);
+}
+
+.chat-block-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-block-stat-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.chat-block-stat-hr-icon {
+  color: var(--color-recovery-text);
+}
+
+.chat-block-stat-label {
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.chat-block-footer-link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-block-footer-link:hover {
+  color: var(--color-text);
+}
+
+/* ── metric block (wraps MetricCard — component already styles itself) ── */
+
+.chat-block--metric {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.chat-block--metric .metric-card {
+  max-width: 100%;
+}
+
+/* ── proposal blocks (alke:template / alke:recovery-plan) shared shell ── */
+
+.chat-block--proposal {
+  gap: var(--space-lg);
+}
+
+.chat-block-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: 1px solid var(--card-border);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  white-space: nowrap;
+}
+
+.chat-block-chip--week {
+  color: var(--color-load-text);
+  background: var(--color-load-dim);
+  border-color: transparent;
+}
+
+/* ── alke:template ────────────────────────────────────────────────────── */
+
+.chat-block-template {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-template:last-of-type {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.chat-block-template-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.chat-block-template-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.chat-block-template-notes {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+.chat-block-exercise-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-block-exercise-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-exercise-row:last-child {
+  border-bottom: none;
+}
+
+.chat-block-exercise-index {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-body-sm-size);
+}
+
+.chat-block-exercise-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-block-exercise-name {
+  color: var(--color-text);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+}
+
+.chat-block-exercise-note {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.chat-block-exercise-dose {
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-sm-size);
+  white-space: nowrap;
+}
+
+.chat-block-exercise-kg {
+  color: var(--color-text-tertiary);
+}
+
+/* ── alke:recovery-plan ───────────────────────────────────────────────── */
+
+.chat-block-recovery-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  color: var(--color-text);
+}
+
+.chat-block-recovery-approach {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+.chat-block-recovery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-block-recovery-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-recovery-item:last-child {
+  border-bottom: none;
+}
+
+.chat-block-recovery-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-block-recovery-item-name {
+  color: var(--color-text);
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+}
+
+.chat-block-recovery-item-dose {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-sm-size);
+  white-space: nowrap;
+}
+
+.chat-block-recovery-item-target {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.chat-block-recovery-avoid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-recovery-avoid-label {
+  text-transform: uppercase;
+  color: var(--color-flag-text);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+}
+
+.chat-block-recovery-item--constraint .chat-block-recovery-item-name {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+/* ── shared proposal actions (Confirm/Discard/decision chip) ────────────── */
+
+.chat-block-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-actions-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.chat-block-confirm,
+.chat-block-discard {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-full);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.chat-block-confirm {
+  background: var(--color-text);
+  color: var(--color-on-emphasis);
+  border: none;
+}
+
+.chat-block-confirm:disabled,
+.chat-block-discard:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chat-block-discard {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-hairline);
+}
+
+.chat-block-actions-hint {
+  margin: 0;
+  color: var(--color-text-disabled);
+  font-size: var(--type-caption-size);
+}
+
+.chat-block-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.chat-block-decision-chip {
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.chat-block-decision--applied .chat-block-decision-chip {
+  color: var(--color-aerobic-text);
+  background: var(--color-aerobic-dim);
+}
+
+.chat-block-decision--failed .chat-block-decision-chip {
+  color: var(--color-flag-text);
+  background: var(--color-flag-dim);
+}
+
+.chat-block-decision-detail {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-block-skeleton-line,
+  .chat-block-confirm,
+  .chat-block-discard {
+    animation: none;
+    transition: none;
+  }
+}

@@ -788,6 +788,18 @@ export interface HealthApi {
   chatRename(id: string, title: string): Promise<void>
   chatDelete(id: string): Promise<void>
   onChatStream(listener: (payload: ChatRuntimeEnvelope) => void): () => void
+  // Confirm action of a chat proposal block: applies via the chatctx write
+  // scripts (long-running: spawns python3 in chatctx/). Serialized main-side —
+  // a second call while one runs rejects.
+  chatApplyProposal(request: ChatProposalRequest): Promise<ChatProposalResult>
+  // Persist a proposal block's resolved state onto the assistant message at
+  // messageIndex in the session's messages array (must be an assistant row).
+  chatSetBlockDecision(
+    sessionId: string,
+    messageIndex: number,
+    blockId: string,
+    decision: ChatBlockDecision
+  ): Promise<void>
 }
 
 export const IPC_CHANNELS = {
@@ -859,7 +871,10 @@ export const IPC_CHANNELS = {
   // Registered in chat.ts (not main/index.ts) since chat.ts owns process lifecycle.
   chatStop: 'chat:stop',
   chatRename: 'chat:rename',
-  chatDelete: 'chat:delete'
+  chatDelete: 'chat:delete',
+  // Registered in chatProposals.ts (owns the chatctx python apply spawns).
+  chatApplyProposal: 'chat:applyProposal',
+  chatSetBlockDecision: 'chat:setBlockDecision'
 } as const
 
 /** A user-selected local file. Contents never cross into the renderer process. */
@@ -924,7 +939,9 @@ export interface MetricsJobResult {
 // agent read that mode's instruction files (chatctx/modes/). Resumed CLI
 // sessions already carry the mode files in context, so no prefix is re-sent
 // (see chat.ts's sendMessage) — the mode is fixed for a CLI session's lifetime
-// and is never persisted to the DB.
+// and is never persisted to the DB. The in-app chat always sends 'analysis'
+// (the agent reads deeper role files itself mid-session); 'injuries'/'goals'
+// remain for headless runs pinned to one role (e.g. buildGoalMetric).
 export const CHAT_MODES = ['analysis', 'injuries', 'goals'] as const
 export type ChatMode = (typeof CHAT_MODES)[number]
 
@@ -933,6 +950,38 @@ export interface ChatMessage {
   content: string
   ts: string
   attachments?: ChatAttachment[]
+  // Resolved state of proposal blocks embedded in this assistant message's
+  // content (```alke:template / ```alke:recovery-plan fences), keyed by the
+  // block's `id` payload field. Absent key = still undecided.
+  blockDecisions?: Record<string, ChatBlockDecision>
+}
+
+export interface ChatBlockDecision {
+  status: 'applied' | 'discarded' | 'failed'
+  at: string
+  // Failure reason, or the apply command's trailing output — shown in the card.
+  detail?: string
+}
+
+// A proposal block's Confirm action, routed to the same chatctx write contracts
+// the agent itself uses (gym.py template-apply / create-version, injuries.py
+// plan-apply). The document is passed through opaquely: those scripts are the
+// validation authority and abort without writes on a bad document.
+export type ChatProposalRequest =
+  | {
+      kind: 'gym-template'
+      // 'apply' = new template or in-place edit of the family's current
+      // version; 'create-version' = next version in the family (history kept).
+      action: 'apply' | 'create-version'
+      baseTemplateId?: string
+      document: unknown
+    }
+  | { kind: 'recovery-plan'; injuryId: string; document: unknown }
+
+export interface ChatProposalResult {
+  ok: boolean
+  output?: string
+  error?: string
 }
 
 export interface ChatSessionMeta {

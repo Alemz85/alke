@@ -18,6 +18,50 @@ Two guardrails are deliberate and do not bend:
 - **`db.py` is read-only.** Writes go through the scoped helpers or a deliberate, explained direct write — never by trying to smuggle a mutation through `db.py`.
 - **Never fabricate what the user reported.** Pain levels, reps, weights, dates: log what they said, leave the rest null. A plausible number you invented is worse than a blank field.
 
+## Rich blocks — showing data and proposing changes in the app chat
+
+The in-app chat renders special fenced code blocks as real UI cards. The fence's info string names the block type; the body is strict JSON (complete, no comments, no trailing commas). A malformed block degrades to raw JSON in front of the user, so validate shape before emitting. These render only in the in-app chat — in a headless run there is no one to see or click them, so never emit them there.
+
+**Reference blocks** show live app data inline. Use one when you cite a specific workout or a metric trend — the card fetches the real numbers by id, so it cannot drift from the database. Every id must come from a query you actually ran this session; an invented id renders as a broken card.
+
+````
+```alke:workout
+{"workout_id": "<workouts.id>", "label": "optional caption"}
+```
+````
+
+````
+```alke:metric
+{"metric": "ctl", "days": 90, "label": "optional caption"}
+```
+````
+
+`metric` must be one of: `resting_hr`, `hrv_sdnn_ms`, `respiratory_rate`, `sleep_duration_min`, `vo2max`, `steps`, `active_energy_kcal`, `weight_kg`, `body_fat_pct`, `walking_running_distance_m`, `flights_climbed`, `trimp_total`, `ctl`, `atl`, `tsb`, `acwr`, `rhr_dev`, `hrv_dev`. `days` is 14–365, default 56. The card carries the chart and the current value; your prose still carries the takeaway — a block is evidence, not a substitute for the sentence that says what it means.
+
+**Proposal blocks** put a write in front of the user with Confirm/Discard buttons. **In the in-app chat, never run `gym.py template-apply`, `gym.py create-version`, or `injuries.py plan-apply` yourself.** Author the document, validate it with the matching contract (`node workout_template_contract.mjs validate` / `node recovery_plan_contract.mjs validate` — validating without applying is exactly right here), emit the block with your reasoning in the surrounding prose, and end the turn. On Confirm the app runs the very same script with the very same document; on Discard nothing is written. Only apply directly when the session is headless or the user has explicitly told you to skip confirmation.
+
+````
+```alke:template
+{
+  "id": "<short-slug, lowercase letters/digits/hyphens, unique in this reply>",
+  "action": "apply",
+  "document": { "templates": [ { "name": "…", "exercises": [ … ] } ] }
+}
+```
+````
+
+`document` is exactly the `template-apply` document described below. `action` follows the existing rules: `"apply"` for a brand-new template or an in-place edit of a family's current version; `"create-version"` (with `"base_template_id": "<gym_templates.id>"`) for an upgrade that should keep the family's history.
+
+````
+```alke:recovery-plan
+{"id": "<slug>", "injury_id": "<injuries.id>", "document": { "approach": "…", "items": [ … ] }}
+```
+````
+
+`document` is exactly the `plan-apply` document from `modes/injuries.md`.
+
+After a proposal, the decision lands on the message itself — you will not see it in this session. On a later turn, if the outcome matters, check the database (`gym.py template-list`, `injuries.py plan-list`) rather than assuming; never re-apply a proposal on your own. Post-confirm follow-ups stay yours: e.g. `gym.py run-start` for a confirmed template the user will actually follow — do it when you next see the template exists, or tell the user the run can be started from the Gym tab.
+
 ## Metric definitions (as computed in this system)
 
 - **TRIMP (Edwards)**: per workout, minutes in each heart-rate zone × the zone number (1–5), summed. Zones are Karvonen: fraction of heart-rate reserve above recent resting HR, with swim samples shifted +10 bpm before classification. It is the system's single training-load unit.
@@ -92,6 +136,8 @@ python3 gym.py template-apply --file /tmp/workout-templates.json
 Before authoring, read active goals, injuries/constraints, relevant training history, and the exercise catalog as needed. Every exercise needs a set count and exactly ONE dose measure: `"reps"` (1-500) or `"secs"` (1-3600) for a prescribed hold. A timed exercise is written as `{"exercise": "Wall Sit", "sets": 3, "secs": 45}` — never as `1 rep` with the duration explained in a note. Leave starting weight null unless the user supplied it or asked for a justified value. Put progression, rep-range context, RIR, rest, and session-duration guidance in template/exercise notes—the expanded card renders exercise notes below the name.
 
 A template may also mint the catalog row it needs: add `"create": true` to that exercise, plus whatever catalog metadata you know (`body_part`, `primary_muscles`, `equipment`, `mechanics`, `movement_pattern`, `aliases`) — same shape and same vocabulary as `exercise-add`. A template write is never blocked because a physio-prescribed movement isn't catalogued yet, and it must not be routed through an unrelated recovery-plan item to get one created. Passing metadata without `"create": true` is rejected: editing an existing row is `exercise-update`'s job.
+
+**In the in-app chat, the final step is a proposal, not an apply**: author and validate the document as above, then emit it as an `alke:template` block (see "Rich blocks") instead of running `template-apply`/`create-version` yourself — the app runs the same command on the user's Confirm.
 
 The Node `validate` step checks document shape only; `template-apply` resolves every catalog exercise before its first write and aborts without changes if any name fails. `template-apply` is idempotent by case-insensitive template name: it updates the named templates and their ordered exercise rows while leaving unrelated templates and every gym session untouched. A template can accumulate several versions (via `create-version`) that all share the same name — `template-apply` matches by name against each family's CURRENT version only, so it edits that version IN PLACE (its own version history is never a "duplicate name" conflict); it still aborts if two different families' current versions genuinely collide on a name. Validate before applying, then run `template-list` to verify the saved result.
 

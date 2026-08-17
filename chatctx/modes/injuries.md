@@ -90,7 +90,7 @@ For a new or meaningfully revised plan, use the complete JSON contract rather th
 
 1. Start from `node recovery_plan_contract.mjs template` and write the JSON to a temporary file.
 2. Validate with `node recovery_plan_contract.mjs validate <file>`. Do not apply a plan that fails validation.
-3. Apply with `python3 injuries.py plan-apply <injury_id> --file <file>`.
+3. Apply with `python3 injuries.py plan-apply <injury_id> --file <file>` — **except in the in-app chat**, where the validated document goes out as an `alke:recovery-plan` proposal block for the user to Confirm instead (see `_shared.md`, "Rich blocks"); the app runs the same `plan-apply` on Confirm.
 
 If the `.mjs` helper is unavailable in this runtime (missing Node, missing file), don't get stuck: `plan-apply` re-validates the document server-side via the same `validate_plan_document()` schema check, so you can author the JSON directly to the shape documented below and rely on that server-side validation to catch mistakes.
 

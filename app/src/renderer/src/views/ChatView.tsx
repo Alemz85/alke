@@ -16,6 +16,9 @@ import { isChatRuntimeActive, useChatRuntime } from '../chat/ChatRuntimeProvider
 import { ChatComposer } from './chat/ChatComposer'
 import { ChatHistory } from './chat/ChatHistory'
 import { ChatWorkLog, ChatWorkLogSummary } from './chat/ChatWorkLog'
+import { ChatBlockRenderer } from './chat/blocks/ChatBlockRenderer'
+import type { ChatBlockMessageContext, ChatBlockNav } from './chat/blocks/chatBlockContext'
+import { codeLanguage, findCodeElement, hastTextContent } from './chat/blocks/hastText'
 import './ChatView.css'
 
 const SUGGESTED_PROMPTS = [
@@ -24,17 +27,20 @@ const SUGGESTED_PROMPTS = [
   'Design next week around my current training load and recovery'
 ]
 
-const MODE_LABELS = {
-  analysis: 'Analysis',
-  injuries: 'Injuries',
-  goals: 'Goals'
-} as const
-
-export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElement {
+export function ChatView({
+  toolbar,
+  onOpenSessions,
+  onOpenGymTemplates,
+  onOpenInjuries
+}: {
+  toolbar?: ReactNode
+  onOpenSessions?: (activity?: string) => void
+  onOpenGymTemplates?: () => void
+  onOpenInjuries?: () => void
+} = {}): ReactElement {
   const queryClient = useQueryClient()
   const {
     state,
-    mode,
     sending,
     selectSession,
     newAnalysis,
@@ -73,6 +79,15 @@ export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElemen
   const runtime = state.runtime
   const runtimeBelongsHere = Boolean(runtime && runtime.sessionId === state.selectedSessionId)
   const runtimeActive = isChatRuntimeActive(runtime)
+  // Persisted messages' proposal blocks disable Confirm/Discard while a NEW
+  // generation is running in this same session (main serializes proposal
+  // applies per session; an in-flight answer could itself resolve/replace
+  // the very block being confirmed).
+  const generationActiveForSession = runtimeBelongsHere && runtimeActive
+  const blockNav: ChatBlockNav = useMemo(
+    () => ({ onOpenSessions, onOpenGymTemplates, onOpenInjuries }),
+    [onOpenSessions, onOpenGymTemplates, onOpenInjuries]
+  )
   const selectedMeta = sessions.find(({ id }) => id === state.selectedSessionId)
   const offline = statusQuery.data?.available === false
   const terminalRuntime = Boolean(
@@ -199,10 +214,6 @@ export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElemen
               <h1>{selectedMeta?.title ?? 'New analysis'}</h1>
             </div>
             <div className="chat-session-meta" aria-label="Conversation status">
-              <span>
-                {runtimeBelongsHere ? MODE_LABELS[runtime?.mode ?? mode] : MODE_LABELS[mode]}
-              </span>
-              <span aria-hidden="true">·</span>
               <span className={runtimeActive && runtimeBelongsHere ? 'is-working' : undefined}>
                 {statusLabel}
               </span>
@@ -248,12 +259,20 @@ export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElemen
               ) : (
                 <div className="chat-thread">
                   {messages.map((message, index) => (
-                    <MessageTurn key={`${message.ts}-${index}`} message={message} />
+                    <MessageTurn
+                      key={`${message.ts}-${index}`}
+                      message={message}
+                      sessionId={state.selectedSessionId as string}
+                      messageIndex={index}
+                      generationActive={generationActiveForSession}
+                      nav={blockNav}
+                    />
                   ))}
                   {showRuntimeTurn && runtime && (
                     <RuntimeTurn
                       runtime={runtime}
                       showAnswer={showRuntimeAnswer}
+                      nav={blockNav}
                       onOpenWorkLog={() => {
                         setHistoryOpen(false)
                         setWorkLogOpen(true)
@@ -294,7 +313,19 @@ export function ChatView({ toolbar }: { toolbar?: ReactNode } = {}): ReactElemen
   )
 }
 
-function MessageTurn({ message }: { message: ChatMessage }): ReactElement {
+function MessageTurn({
+  message,
+  sessionId,
+  messageIndex,
+  generationActive,
+  nav
+}: {
+  message: ChatMessage
+  sessionId: string
+  messageIndex: number
+  generationActive: boolean
+  nav: ChatBlockNav
+}): ReactElement {
   if (message.role === 'user') {
     return (
       <article className="chat-turn chat-turn--user">
@@ -312,6 +343,13 @@ function MessageTurn({ message }: { message: ChatMessage }): ReactElement {
     )
   }
 
+  const blockContext: ChatBlockMessageContext = {
+    sessionId,
+    messageIndex,
+    blockDecisions: message.blockDecisions,
+    generationActive
+  }
+
   return (
     <article className="chat-turn chat-turn--assistant">
       <div className="chat-turn-meta">
@@ -320,7 +358,7 @@ function MessageTurn({ message }: { message: ChatMessage }): ReactElement {
       </div>
       <div className="chat-assistant-block">
         <CopyButton text={message.content} />
-        <AssistantDocument text={message.content} />
+        <AssistantDocument text={message.content} blockContext={blockContext} nav={nav} />
       </div>
     </article>
   )
@@ -329,14 +367,17 @@ function MessageTurn({ message }: { message: ChatMessage }): ReactElement {
 function RuntimeTurn({
   runtime,
   showAnswer,
+  nav,
   onOpenWorkLog,
   onContinue
 }: {
   runtime: ChatRuntimeSnapshot
   showAnswer: boolean
+  nav: ChatBlockNav
   onOpenWorkLog(): void
   onContinue(): void
 }): ReactElement {
+  const streaming = isChatRuntimeActive(runtime)
   return (
     <article className="chat-turn chat-turn--assistant chat-turn--runtime">
       <div className="chat-turn-meta">
@@ -346,7 +387,7 @@ function RuntimeTurn({
       <div className="chat-assistant-block">
         {showAnswer && <CopyButton text={runtime.assistantText} />}
         {showAnswer ? (
-          <AssistantDocument text={runtime.assistantText} />
+          <AssistantDocument text={runtime.assistantText} streaming={streaming} nav={nav} />
         ) : isChatRuntimeActive(runtime) ? (
           <p className="chat-runtime-status">Working through your data…</p>
         ) : null}
@@ -373,7 +414,27 @@ function RuntimeTurn({
   )
 }
 
-function AssistantDocument({ text }: { text: string }): ReactElement {
+/**
+ * Renders one assistant turn's markdown. Fenced code blocks whose info string
+ * is one of the alke: rich-block languages (chat/blocks/chatBlockParse.ts)
+ * render as cards instead of a code fence — everything else renders exactly
+ * as before. `streaming` and `blockContext` come from the caller: MessageTurn
+ * (persisted messages) always has real session/message context and
+ * streaming=false; RuntimeTurn (the live turn) has streaming reflecting the
+ * runtime's phase and no message context, since there is nowhere to persist a
+ * proposal decision until the turn lands in the session's message list.
+ */
+function AssistantDocument({
+  text,
+  streaming = false,
+  blockContext,
+  nav = {}
+}: {
+  text: string
+  streaming?: boolean
+  blockContext?: ChatBlockMessageContext
+  nav?: ChatBlockNav
+}): ReactElement {
   return (
     <div className="chat-assistant-document">
       <Markdown
@@ -383,7 +444,23 @@ function AssistantDocument({ text }: { text: string }): ReactElement {
             <div className="chat-table-scroll" tabIndex={0} aria-label="Scrollable table">
               <table {...props}>{children}</table>
             </div>
-          )
+          ),
+          pre: ({ node, children, ...props }) => {
+            const fallback = <pre {...props}>{children}</pre>
+            const codeNode = findCodeElement(node)
+            const language = codeLanguage(codeNode)
+            if (!codeNode || !language) return fallback
+            return (
+              <ChatBlockRenderer
+                language={language}
+                body={hastTextContent(codeNode)}
+                streaming={streaming}
+                fallback={fallback}
+                messageContext={blockContext}
+                nav={nav}
+              />
+            )
+          }
         }}
       >
         {text}

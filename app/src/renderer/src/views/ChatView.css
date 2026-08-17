@@ -828,35 +828,6 @@
   margin: 0 auto;
 }
 
-.chat-mode-picker {
-  display: flex;
-  gap: 2px;
-  width: fit-content;
-  margin-bottom: var(--space-xs);
-  padding: 2px;
-  border: 1px solid var(--color-divider-soft);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-}
-
-.chat-mode-button {
-  min-height: 28px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-body);
-  font-size: var(--type-caption-size);
-  cursor: pointer;
-}
-
-.chat-mode-button:hover,
-.chat-mode-button.is-selected {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-}
-
 .chat-input-well {
   position: relative;
   min-height: 54px;
@@ -1255,7 +1226,6 @@
   .chat-copy-button,
   .chat-attach-button,
   .chat-send-button,
-  .chat-mode-button,
   .chat-input-well,
   .chat-worklog-summary,
   .chat-suggestions button,

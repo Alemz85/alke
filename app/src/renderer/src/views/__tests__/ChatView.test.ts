@@ -39,7 +39,7 @@ describe('long-form Chat workspace', () => {
     expect(historySource).toContain('Working')
     expect(workLogSource).toContain('aria-label="Work log"')
     expect(workLogSource).toContain('<details')
-    expect(composerSource).toContain('CHAT_MODES.map')
+    expect(composerSource).not.toContain('CHAT_MODES')
     expect(composerSource).toContain('Ask about your training')
   })
 

@@ -95,6 +95,9 @@ import {
 } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
+// Registers chat:applyProposal / chat:setBlockDecision at module scope —
+// same side-effect-import pattern as chat.ts's own chatStop/chatRename/chatDelete.
+import './chatProposals'
 import { runMetricsJob } from './metricsJob'
 import { executeOfflineWrite } from './offlineWriteHandlers'
 import { OfflineWriteService } from './offlineWriteService'

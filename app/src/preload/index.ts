@@ -90,6 +90,9 @@ const api: HealthApi = {
   chatStop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.chatStop, sessionId),
   chatRename: (id: string, title: string) => ipcRenderer.invoke(IPC_CHANNELS.chatRename, id, title),
   chatDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.chatDelete, id),
+  chatApplyProposal: (request) => ipcRenderer.invoke(IPC_CHANNELS.chatApplyProposal, request),
+  chatSetBlockDecision: (sessionId, messageIndex, blockId, decision) =>
+    ipcRenderer.invoke(IPC_CHANNELS.chatSetBlockDecision, sessionId, messageIndex, blockId, decision),
   onChatStream: (listener) => {
     const wrapped = (_e: unknown, payload: Parameters<typeof listener>[0]): void => listener(payload)
     ipcRenderer.on(IPC_CHANNELS.chatStream, wrapped)
