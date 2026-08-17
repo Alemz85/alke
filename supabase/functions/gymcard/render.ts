@@ -32,6 +32,29 @@ export interface CardTemplate {
   items: CardTemplateItem[];
 }
 
+export interface CardRehabStep {
+  name: string;
+  sets: number | null;
+  reps: number | null;
+  duration_seconds: number | null;
+  distance_m: number | null;
+  per_side: boolean | null;
+  note: string | null;
+}
+
+export interface CardRehabItem {
+  name: string;
+  /** Owning injury, shown as a small tag — the card lists rehab flat. */
+  injury_name: string;
+  /** Weekly target in force this plan week (phases resolved), null = untargeted. */
+  weekly_target: number | null;
+  /** Distinct days checked this ISO week. */
+  done_this_week: number;
+  target_sets: number | null;
+  target_reps: number | null;
+  steps: CardRehabStep[] | null;
+}
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -56,6 +79,135 @@ export function restText(seconds: number): string {
   const s = seconds % 60;
   if (m === 0) return `${s}s`;
   return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ── recovery-plan resolution ─────────────────────────────────────────────────
+// Faithful ports of chatctx/injuries.py (current_plan_week / resolve_targets /
+// step_dose_text / plan_item_dose_text) — keep the four implementations in
+// step (the others: app lib/injuryStats.ts). The card must agree with the
+// desktop app about which dose is in force, including symptom-gated phase
+// steps: a pending gate never changes targets, an applied one counts from the
+// week containing its applied_on.
+
+export interface PhaseGate {
+  max_pain: number;
+  clear_days: number;
+}
+
+export interface PhaseStep {
+  from_week?: number | null;
+  gate?: PhaseGate | null;
+  applied_on?: string | null;
+  weekly_target: number;
+  green_min: number;
+  yellow_min: number;
+}
+
+/** 1-based cumulative plan week at `todayYMD`; 0 before start; null legacy. */
+export function currentPlanWeek(planStartedAt: string | null, todayYMD: string): number | null {
+  if (!planStartedAt) return null;
+  const elapsed = Math.round(
+    (Date.parse(`${todayYMD.slice(0, 10)}T12:00:00Z`) -
+      Date.parse(`${planStartedAt.slice(0, 10)}T12:00:00Z`)) / 86_400_000,
+  );
+  return elapsed < 0 ? 0 : Math.floor(elapsed / 7) + 1;
+}
+
+function phaseEffectiveWeek(phase: PhaseStep, planStartedAt: string | null): number | null {
+  if (phase.gate != null) {
+    if (!phase.applied_on || !planStartedAt) return null;
+    return currentPlanWeek(planStartedAt, phase.applied_on);
+  }
+  return phase.from_week ?? null;
+}
+
+/** The weekly target in force for `planWeek` — last started phase wins. */
+export function resolveWeeklyTarget(
+  base: number | null,
+  phases: PhaseStep[] | null,
+  planWeek: number | null,
+  planStartedAt: string | null,
+): number | null {
+  if (planWeek == null || !phases || phases.length === 0) return base;
+  const started = phases
+    .map((phase, index) => ({ phase, index, week: phaseEffectiveWeek(phase, planStartedAt) }))
+    .filter((s): s is { phase: PhaseStep; index: number; week: number } =>
+      s.week != null && s.week <= planWeek
+    )
+    .sort((a, b) => a.week - b.week || a.index - b.index);
+  const last = started[started.length - 1];
+  return last ? last.phase.weekly_target : base;
+}
+
+/** Monday of the ISO week containing `ymd`. */
+export function isoWeekStart(ymd: string): string {
+  const date = new Date(`${ymd.slice(0, 10)}T12:00:00Z`);
+  const dow = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - dow);
+  return date.toISOString().slice(0, 10);
+}
+
+function stepDoseText(step: CardRehabStep, fallbackSets: number | null): string {
+  let measure: string;
+  if (step.duration_seconds != null) measure = `${step.duration_seconds}s`;
+  else if (step.distance_m != null) measure = `${step.distance_m} m`;
+  else if (step.reps != null) measure = `${step.reps} reps`;
+  else measure = "as directed";
+  const sets = step.sets ?? fallbackSets;
+  if (sets != null) measure = `${sets} × ${measure}`;
+  if (step.per_side) measure += " / side";
+  return measure;
+}
+
+/** The prescription in the measure it was given — a single step IS the dose. */
+export function rehabDoseText(item: CardRehabItem): string {
+  const steps = item.steps ?? [];
+  if (steps.length === 1) return stepDoseText(steps[0], item.target_sets);
+  if (steps.length > 1) return `${steps.length} movements`;
+  if (item.target_sets != null && item.target_reps != null) {
+    return `${item.target_sets} × ${item.target_reps}`;
+  }
+  return "—";
+}
+
+function rehabItemHtml(item: CardRehabItem): string {
+  const steps = item.steps ?? [];
+  const week = item.weekly_target != null
+    ? `${item.done_this_week}/${item.weekly_target} this week`
+    : null;
+  return `<li>
+<div class="row">
+<span class="name">${escapeHtml(item.name)}<small class="tag">${escapeHtml(item.injury_name)}</small></span>
+<span class="dose">${escapeHtml(rehabDoseText(item))}${
+    week ? `<small>${escapeHtml(week)}</small>` : ""
+  }</span>
+</div>
+${
+    steps.length > 1
+      ? `<ul class="steps">${
+        steps.map((step) =>
+          `<li><span>${escapeHtml(step.name)}</span><span>${
+            escapeHtml(stepDoseText(step, null))
+          }</span></li>`
+        ).join("")
+      }</ul>`
+      : ""
+  }
+${steps.length === 1 && steps[0].note ? `<p class="note">${escapeHtml(steps[0].note)}</p>` : ""}
+</li>`;
+}
+
+function rehabSectionHtml(items: CardRehabItem[]): string {
+  if (items.length === 0) return "";
+  return `<section>
+<header>
+<h2>Recovery plan</h2>
+<p class="status">Accountable rehab, current-week dose in force</p>
+</header>
+<ol>
+${items.map(rehabItemHtml).join("\n")}
+</ol>
+</section>`;
 }
 
 function fmtDay(iso: string): string {
@@ -115,15 +267,19 @@ ${items.map((item) => itemHtml(item, template.default_rest_s)).join("\n")}
 }
 
 /** `generatedAt` is injected for testability; pass `new Date()` in the handler. */
-export function renderGymCard(templates: CardTemplate[], generatedAt: Date): string {
+export function renderGymCard(
+  templates: CardTemplate[],
+  rehab: CardRehabItem[],
+  generatedAt: Date,
+): string {
   // Running programmes first — that's what today's session is — then by name.
   const ordered = [...templates].sort((a, b) => {
     const runDiff = Number(b.active_since !== null) - Number(a.active_since !== null);
     return runDiff !== 0 ? runDiff : a.name.localeCompare(b.name);
   });
-  const body = ordered.length === 0
+  const body = (ordered.length === 0
     ? `<p class="empty">No active templates. Create one in the desktop app.</p>`
-    : ordered.map(templateHtml).join("\n");
+    : ordered.map(templateHtml).join("\n")) + rehabSectionHtml(rehab);
   const stamp = generatedAt.toISOString().slice(0, 16).replace("T", " ");
   return `<!doctype html>
 <html lang="en">
@@ -164,13 +320,21 @@ details p { font-size: 13px; line-height: 1.55; padding: 8px 0 4px; white-space:
 ol { list-style: none; padding: 0; }
 li { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.06); }
 .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.name { color: #fff; font-size: 15px; font-weight: 600; }
+/* min-width: 0 lets long names shrink and wrap instead of pushing the nowrap
+   dose column past a phone viewport (flex min-width:auto refuses to shrink). */
+.name { color: #fff; font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .dose {
   color: #fff; font-size: 15px; font-variant-numeric: tabular-nums;
   text-align: right; white-space: nowrap; flex-shrink: 0;
 }
 .dose small { display: block; font-size: 11px; color: rgba(255,255,255,0.48); font-weight: 400; }
 .note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: rgba(255,255,255,0.48); }
+.tag { display: block; font-size: 11px; font-weight: 400; color: rgba(255,255,255,0.48); margin-top: 1px; }
+.steps { list-style: none; padding: 0; margin-top: 8px; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }
+.steps li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; font-size: 13px; }
+.steps li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.steps li + li { border-top: 1px solid rgba(255,255,255,0.06); }
+.steps li span:last-child { color: rgba(255,255,255,0.72); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .empty { margin-top: 24px; color: rgba(255,255,255,0.48); }
 </style>
 </head>

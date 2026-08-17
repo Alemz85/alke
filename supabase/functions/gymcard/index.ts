@@ -8,7 +8,14 @@
 // prose), which is the deal that makes a capability URL acceptable.
 // Rotation: `supabase secrets set GYMCARD_TOKEN=...`.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { type CardTemplate, renderGymCard } from "./render.ts";
+import {
+  type CardRehabItem,
+  type CardTemplate,
+  currentPlanWeek,
+  isoWeekStart,
+  renderGymCard,
+  resolveWeeklyTarget,
+} from "./render.ts";
 
 function getSupabaseClient() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -124,7 +131,80 @@ Deno.serve(async (req: Request) => {
     };
   });
 
-  return new Response(renderGymCard(cards, new Date()), {
+  // ── Recovery plan: accountable rehab exercises, dose in force this week ──
+  // The card must agree with the desktop app and the chat agent about which
+  // target applies (calendar and symptom-gated phase steps both resolve in
+  // render.ts's ports of resolve_targets / current_plan_week).
+  const [config, injuries, planItems] = await Promise.all([
+    supabase.from("user_config").select("timezone").eq("id", 1).maybeSingle(),
+    supabase
+      .from("injuries")
+      .select("id, name, status, plan_started_at")
+      .neq("status", "resolved"),
+    supabase
+      .from("recovery_plan_items")
+      .select(
+        "id, injury_id, name, kind, start_week, weekly_target, phases, target_sets, target_reps, steps, active",
+      )
+      .eq("active", true)
+      .eq("kind", "exercise"),
+  ]);
+  for (const result of [config, injuries, planItems]) {
+    if (result.error) {
+      return new Response(`query failed: ${result.error.message}`, { status: 500 });
+    }
+  }
+
+  const timezone = config.data?.timezone ?? "UTC";
+  // en-CA formats as YYYY-MM-DD — "today" in the OWNER's timezone, so plan
+  // weeks and the check-count week roll over at their midnight, not UTC's.
+  const todayYMD = new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
+  const weekStart = isoWeekStart(todayYMD);
+
+  const { data: checks, error: checksError } = await supabase
+    .from("plan_item_checks")
+    .select("item_id, done_date")
+    .gte("done_date", weekStart);
+  if (checksError) {
+    return new Response(`query failed: ${checksError.message}`, { status: 500 });
+  }
+
+  const injuryById = new Map(
+    (injuries.data ?? []).map((row) => [row.id, row]),
+  );
+  const rehab: CardRehabItem[] = [];
+  for (const item of planItems.data ?? []) {
+    const injury = injuryById.get(item.injury_id);
+    if (!injury) continue; // resolved injury — its rehab is history, not a card
+    const planWeek = currentPlanWeek(injury.plan_started_at, todayYMD);
+    // Future-phase items exist in the plan but are not due yet; a legacy plan
+    // (no start date) treats every active item as accountable.
+    if (planWeek != null && (item.start_week ?? 1) > planWeek) continue;
+    const doneDays = new Set(
+      (checks ?? [])
+        .filter((c) => c.item_id === item.id && String(c.done_date).slice(0, 10) <= todayYMD)
+        .map((c) => String(c.done_date).slice(0, 10)),
+    );
+    rehab.push({
+      name: item.name,
+      injury_name: injury.name,
+      weekly_target: resolveWeeklyTarget(
+        item.weekly_target,
+        item.phases,
+        planWeek,
+        injury.plan_started_at,
+      ),
+      done_this_week: doneDays.size,
+      target_sets: item.target_sets,
+      target_reps: item.target_reps,
+      steps: item.steps,
+    });
+  }
+  rehab.sort((a, b) =>
+    a.injury_name.localeCompare(b.injury_name) || a.name.localeCompare(b.name)
+  );
+
+  return new Response(renderGymCard(cards, rehab, new Date()), {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
