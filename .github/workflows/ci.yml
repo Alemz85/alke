@@ -26,7 +26,7 @@ jobs:
       - run: python -m pytest metrics/tests/ -q
 
   ingest:
-    name: ingest (deno test)
+    name: edge functions (deno test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +35,8 @@ jobs:
           deno-version: v2.x
       - run: deno test
         working-directory: supabase/functions/ingest
+      - run: deno test
+        working-directory: supabase/functions/gymcard
 
   app:
     name: app (typecheck + test + build)

@@ -353,6 +353,14 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC_CHANNELS.getDbStatus, () => db.getDbStatus())
   ipcMain.handle(IPC_CHANNELS.getLastIngestAt, () => db.getLastIngestAt())
+  // The token never enters the renderer except inside this URL, and the URL
+  // exists to leave the machine anyway (QR → the owner's phone).
+  ipcMain.handle(IPC_CHANNELS.getGymCardUrl, () => {
+    const base = process.env.SUPABASE_URL
+    const token = process.env.GYMCARD_TOKEN
+    if (!base || !token) return null
+    return `${base}/functions/v1/gymcard?key=${token}`
+  })
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
   ipcMain.handle(IPC_CHANNELS.runMetricsJob, () => runMetricsJob())

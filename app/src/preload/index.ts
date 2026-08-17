@@ -70,6 +70,7 @@ const api: HealthApi = {
   buildGoalMetric: (goalId) => ipcRenderer.invoke(IPC_CHANNELS.buildGoalMetric, goalId),
   getDbStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getDbStatus),
   getLastIngestAt: () => ipcRenderer.invoke(IPC_CHANNELS.getLastIngestAt),
+  getGymCardUrl: () => ipcRenderer.invoke(IPC_CHANNELS.getGymCardUrl),
   getInsightCorrelations: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightCorrelations),
   getInsightModels: () => ipcRenderer.invoke(IPC_CHANNELS.getInsightModels),
   runMetricsJob: () => ipcRenderer.invoke(IPC_CHANNELS.runMetricsJob),

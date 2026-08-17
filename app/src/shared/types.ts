@@ -758,6 +758,9 @@ export interface HealthApi {
   getDbStatus(): Promise<DbStatus>
   /** Most recent raw_payloads.received_at (ISO string), or null if no payloads. Used as the data-freshness probe behind the Refresh button. */
   getLastIngestAt(): Promise<string | null>
+  /** Tokenized URL of the phone gym card (the gymcard Edge Function), or null
+   *  when GYMCARD_TOKEN / SUPABASE_URL are absent from the environment. */
+  getGymCardUrl(): Promise<string | null>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>
   // Runs the nightly metrics job (`python -m metrics.compute`) on demand.
@@ -838,6 +841,7 @@ export const IPC_CHANNELS = {
   buildGoalMetric: 'goals:buildMetric',
   getDbStatus: 'db:getDbStatus',
   getLastIngestAt: 'db:getLastIngestAt',
+  getGymCardUrl: 'app:getGymCardUrl',
   getInsightCorrelations: 'db:getInsightCorrelations',
   getInsightModels: 'db:getInsightModels',
   // Registered in index.ts, delegates to metricsJob.ts (owns the child-process

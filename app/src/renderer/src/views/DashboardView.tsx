@@ -1,5 +1,6 @@
-import { useMemo, useState, type ReactElement } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { ArrowRight, Check, Copy, Smartphone } from 'lucide-react'
+import { toDataURL } from 'qrcode'
 import type { DailyMetric, GymTemplate, Workout } from '@shared/types'
 import { TabHeader } from './TabHeader'
 import {
@@ -527,6 +528,106 @@ export function DashboardView({
   )
 }
 
+/**
+ * "On your phone" pairing: renders the gymcard Edge Function's tokenized URL
+ * as a QR code, scanned once and kept as a home-screen bookmark. The URL is a
+ * capability — anyone holding it can read the templates — so the modal says
+ * so plainly instead of pretending it's a login. Hidden entirely when the
+ * environment carries no GYMCARD_TOKEN (feature not set up).
+ */
+function PhoneCardButton(): ReactElement | null {
+  const [url, setUrl] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const [qr, setQr] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    void window.api.getGymCardUrl().then(setUrl, () => setUrl(null))
+  }, [])
+
+  useEffect(() => {
+    if (!open || url == null) return
+    void toDataURL(url, { margin: 1, width: 480 }).then(setQr, () => setQr(null))
+  }, [open, url])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  if (url == null) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        className="recent-sessions-all"
+        onClick={() => setOpen(true)}
+        title="Open the gym card on your phone"
+      >
+        <Smartphone size={14} strokeWidth={1.75} />
+        On your phone
+      </button>
+      {open && (
+        <div className="gym-modal-overlay" onClick={() => setOpen(false)}>
+          <div
+            className="gym-modal dashboard-phone-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Open the gym card on your phone"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="gym-modal-head">
+              <h3 className="gym-modal-title">Gym card on your phone</h3>
+              <button
+                type="button"
+                className="gym-modal-close"
+                aria-label="Close"
+                onClick={() => setOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="gym-modal-body dashboard-phone-body">
+              {qr ? (
+                <img className="dashboard-phone-qr" src={qr} alt="QR code for the gym card link" />
+              ) : (
+                <p className="gym-quicklog-hint">Generating code…</p>
+              )}
+              <ol className="dashboard-phone-steps">
+                <li>Scan with your phone camera.</li>
+                <li>In the browser, Share → Add to Home Screen.</li>
+                <li>The card always shows the current templates — nothing to re-sync.</li>
+              </ol>
+              <p className="dashboard-phone-warning">
+                The link contains a private key: anyone who has it can read your templates.
+                Keep it off shared channels.
+              </p>
+              <button
+                type="button"
+                className="gym-btn"
+                onClick={() => {
+                  void navigator.clipboard.writeText(url).then(() => {
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 1600)
+                  })
+                }}
+              >
+                {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.6} />}
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 interface GymTemplatesBoxProps {
   templates: GymTemplate[]
   sessions: { performed_at: string; template_ids: string[] }[]
@@ -594,10 +695,13 @@ function GymTemplatesBox({
     <div className="recent-sessions-box">
       <div className="recent-sessions-header">
         <h3 className="recent-sessions-title">Gym templates</h3>
-        <button type="button" className="recent-sessions-all" onClick={onOpenTemplates}>
-          All templates
-          <ArrowRight size={14} strokeWidth={1.75} />
-        </button>
+        <div className="recent-sessions-header-actions">
+          <PhoneCardButton />
+          <button type="button" className="recent-sessions-all" onClick={onOpenTemplates}>
+            All templates
+            <ArrowRight size={14} strokeWidth={1.75} />
+          </button>
+        </div>
       </div>
       <div className="recent-sessions-grid">
         {ordered.map((template) => {
