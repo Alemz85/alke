@@ -232,9 +232,7 @@ export class ChatRuntimeStore {
       resumeAvailable: false,
       lastSequence: continuedSequence
     }
-    const envelope = this.emit({ kind: 'status', label: 'Starting' })
-    this.flush()
-    return envelope
+    return this.transition('starting', { kind: 'status', label: 'Starting' })
   }
 
   markRunning(): ChatRuntimeEnvelope {
@@ -263,23 +261,9 @@ export class ChatRuntimeStore {
   appendWork(entry: Omit<ChatWorkLogEntry, 'sequence' | 'at'>): ChatRuntimeEnvelope {
     const current = this.requireCurrent()
     if (current.phase === 'starting') current.phase = 'running'
-    const label = truncateUtf8(entry.label, MAX_CHAT_WORK_LABEL_BYTES)
-    const detail = truncateUtf8(entry.detail, MAX_CHAT_WORK_DETAIL_BYTES)
-    const sequence = current.lastSequence + 1
-    current.workLog = boundWorkLog([
-      ...current.workLog,
-      {
-        sequence,
-        at: this.now().toISOString(),
-        kind: entry.kind,
-        label,
-        detail
-      }
-    ])
+    const { kind, label, detail } = this.recordWork(entry)
     const envelope = this.emit(
-      entry.kind === 'status'
-        ? { kind: 'status', label, detail }
-        : { kind: 'tool', name: label, detail }
+      kind === 'status' ? { kind: 'status', label, detail } : { kind: 'tool', name: label, detail }
     )
     this.scheduleFlush()
     return envelope
@@ -298,6 +282,9 @@ export class ChatRuntimeStore {
   }
 
   complete(): ChatRuntimeEnvelope {
+    // The renderer clears the error when it folds a done envelope; clear it
+    // here too so a completed run reads the same on both sides.
+    this.requireCurrent().error = null
     return this.transition('completed', { kind: 'done' })
   }
 
@@ -341,12 +328,36 @@ export class ChatRuntimeStore {
     rmSync(`${this.filePath}.tmp`, { force: true })
   }
 
+  // The renderer folds every status envelope into its own work log, so a phase
+  // change has to record the same entry here. Skipping it left main's snapshot
+  // short of the renderer's, and a reattach rewrote the log mid-read.
   private transition(phase: ChatRuntimePhase, event: ChatStreamEvent): ChatRuntimeEnvelope {
     const current = this.requireCurrent()
     current.phase = phase
-    const envelope = this.emit(event)
+    const recorded =
+      event.kind === 'status'
+        ? this.recordWork({ kind: 'status', label: event.label, detail: event.detail ?? '' })
+        : null
+    const envelope = this.emit(
+      recorded ? { kind: 'status', label: recorded.label, detail: recorded.detail } : event
+    )
     this.flush()
     return envelope
+  }
+
+  // Entry sequence must equal the sequence of the envelope that carries it —
+  // that shared number is what lets the renderer drop already-folded events.
+  private recordWork(entry: Omit<ChatWorkLogEntry, 'sequence' | 'at'>): ChatWorkLogEntry {
+    const current = this.requireCurrent()
+    const recorded: ChatWorkLogEntry = {
+      sequence: current.lastSequence + 1,
+      at: this.now().toISOString(),
+      kind: entry.kind,
+      label: truncateUtf8(entry.label, MAX_CHAT_WORK_LABEL_BYTES),
+      detail: truncateUtf8(entry.detail, MAX_CHAT_WORK_DETAIL_BYTES)
+    }
+    current.workLog = boundWorkLog([...current.workLog, recorded])
+    return recorded
   }
 
   private emit(event: ChatStreamEvent): ChatRuntimeEnvelope {

@@ -54,7 +54,10 @@ describe('ChatRuntimeStore', () => {
       phase: 'running',
       assistantText: 'Answer',
       lastSequence: 3,
+      // The phase status is logged here too — the renderer folds the same
+      // envelope into its work log, and the two snapshots must agree.
       workLog: [
+        expect.objectContaining({ sequence: 1, kind: 'status', label: 'Starting' }),
         expect.objectContaining({
           sequence: 3,
           kind: 'tool',
@@ -152,7 +155,10 @@ describe('ChatRuntimeStore', () => {
     expect(store.snapshot()).toMatchObject({
       assistantText: 'Preserved partial answer',
       lastSequence: 12,
-      workLog: [expect.objectContaining({ sequence: 7, label: 'Read analysis.md' })]
+      workLog: [
+        expect.objectContaining({ sequence: 7, label: 'Read analysis.md' }),
+        expect.objectContaining({ sequence: 12, label: 'Starting' })
+      ]
     })
   })
 
