@@ -1,3 +1,4 @@
+import { boundWorkLog } from '@shared/chatWorkLog'
 import type {
   ChatAttachment,
   ChatRuntimeEnvelope,
@@ -159,7 +160,8 @@ function runtimeFromEnvelope(
       label: event.kind === 'tool' ? event.name : event.label,
       detail: event.kind === 'tool' ? event.detail : (event.detail ?? '')
     }
-    next.workLog = [...next.workLog, entry].slice(-200)
+    // Same bound main applies to the persisted log — count then bytes.
+    next.workLog = boundWorkLog([...next.workLog, entry])
     if (event.kind === 'status') {
       if (event.label === 'Starting') next.phase = 'starting'
       else if (event.label === 'Stopping') next.phase = 'stopping'

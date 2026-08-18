@@ -2,11 +2,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MAX_CHAT_WORK_DETAIL_BYTES, MAX_CHAT_WORK_ENTRIES } from '@shared/chatWorkLog'
 import {
   MAX_CHAT_RUNTIME_BYTES,
   MAX_CHAT_RUNTIME_PARTIAL_BYTES,
-  MAX_CHAT_WORK_DETAIL_BYTES,
-  MAX_CHAT_WORK_ENTRIES,
   ChatRuntimeStore
 } from '../chatRuntime'
 

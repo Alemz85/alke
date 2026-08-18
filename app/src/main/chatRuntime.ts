@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import {
+  MAX_CHAT_WORK_DETAIL_BYTES,
+  MAX_CHAT_WORK_LABEL_BYTES,
+  boundWorkLog
+} from '@shared/chatWorkLog'
 import type {
   ChatAttachment,
   ChatMode,
@@ -13,13 +18,9 @@ import type {
 
 export const MAX_CHAT_RUNTIME_BYTES = 2 * 1024 * 1024
 export const MAX_CHAT_RUNTIME_PARTIAL_BYTES = 1024 * 1024
-export const MAX_CHAT_WORK_ENTRIES = 200
-export const MAX_CHAT_WORK_DETAIL_BYTES = 2 * 1024
 
-const MAX_CHAT_WORK_LOG_BYTES = 256 * 1024
 const MAX_CHAT_RUNTIME_MESSAGE_BYTES = 256 * 1024
 const MAX_CHAT_RUNTIME_ERROR_BYTES = 16 * 1024
-const MAX_CHAT_WORK_LABEL_BYTES = 512
 const PERSIST_THROTTLE_MS = 200
 
 const PHASES = new Set<ChatRuntimePhase>([
@@ -95,17 +96,6 @@ function sanitizeWorkEntry(value: unknown): ChatWorkLogEntry | null {
     label: truncateUtf8(value.label, MAX_CHAT_WORK_LABEL_BYTES),
     detail: truncateUtf8(value.detail, MAX_CHAT_WORK_DETAIL_BYTES)
   }
-}
-
-function boundWorkLog(entries: ChatWorkLogEntry[]): ChatWorkLogEntry[] {
-  const bounded = entries.slice(-MAX_CHAT_WORK_ENTRIES)
-  while (
-    bounded.length > 0 &&
-    Buffer.byteLength(JSON.stringify(bounded)) > MAX_CHAT_WORK_LOG_BYTES
-  ) {
-    bounded.shift()
-  }
-  return bounded
 }
 
 function validateSnapshot(value: unknown): ChatRuntimeSnapshot | null {

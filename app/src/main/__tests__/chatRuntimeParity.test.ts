@@ -2,6 +2,11 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  MAX_CHAT_WORK_DETAIL_BYTES,
+  MAX_CHAT_WORK_LOG_BYTES,
+  utf8Length
+} from '@shared/chatWorkLog'
 import type { ChatRuntimeEnvelope, ChatRuntimeSnapshot } from '@shared/types'
 import { ChatRuntimeStore } from '../chatRuntime'
 import { chatUiReducer, initialChatUiState } from '../../renderer/src/chat/chatUiState'
@@ -105,6 +110,38 @@ describe('chat runtime snapshot parity across the IPC boundary', () => {
     const folded = foldLikeRenderer(base, envelopes)
     const main = persisted(store)
 
+    expect(describeLog(folded)).toEqual(describeLog(main))
+    expect(folded).toEqual(main)
+  })
+
+  it('folds a work log past the byte cap into main persisted snapshot', () => {
+    const store = makeStore()
+    store.begin({
+      sessionId: 'session-1',
+      message: 'How is my training load?',
+      mode: 'analysis',
+      attachments: []
+    })
+    const base = store.snapshot()
+    if (!base) throw new Error('begin produced no snapshot')
+
+    // Well under the 200-entry cap, well over the 256 KiB one: only the byte
+    // bound can trim here, so a fold that skipped it would keep every entry.
+    const entries = 150
+    const envelopes = Array.from({ length: entries }, (_, index) =>
+      store.appendWork({
+        kind: 'tool',
+        label: `Read chunk ${index}`,
+        detail: 'x'.repeat(MAX_CHAT_WORK_DETAIL_BYTES)
+      })
+    )
+    envelopes.push(store.complete())
+
+    const folded = foldLikeRenderer(base, envelopes)
+    const main = persisted(store)
+
+    expect(main.workLog.length).toBeLessThan(entries)
+    expect(utf8Length(JSON.stringify(main.workLog))).toBeLessThanOrEqual(MAX_CHAT_WORK_LOG_BYTES)
     expect(describeLog(folded)).toEqual(describeLog(main))
     expect(folded).toEqual(main)
   })
