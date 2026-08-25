@@ -26,6 +26,7 @@ from metrics.models import (
     ambient_daily_load,
     calibrate_kcal_per_km,
     easy_aerobic_seconds,
+    effective_active_kcal,
     estimated_active_kcal,
     is_ambulatory_modality,
     is_aerobic_modality,
@@ -303,3 +304,43 @@ def test_estimated_active_kcal_fills_days_that_predate_the_energy_metric():
 def test_estimated_active_kcal_refuses_to_guess_without_both_inputs():
     assert estimated_active_kcal(None, 100.0) is None
     assert estimated_active_kcal(11_000.0, None) is None
+
+
+# ── watch-off rescue: a phone-only energy reading is a floor, not a measurement ──
+
+
+def test_watch_off_day_with_tiny_reading_is_rescued_by_distance():
+    # Example: 3 km of phone-counted walking against 20 kcal —
+    # the watch was off the wrist. At a fitted ~100 kcal/km the distance
+    # prices out ~300 kcal; the reading is a floor and loses to it.
+    assert effective_active_kcal(20.0, 3_000.0, 100.0, watch_worn=False) == pytest.approx(
+        300.0, abs=0.5
+    )
+
+
+def test_watch_off_rescue_never_lowers_a_reading():
+    # max(): a partial reading that already exceeds the distance estimate stands.
+    assert effective_active_kcal(900.0, 3_000.0, 100.0, watch_worn=False) == 900.0
+
+
+def test_worn_day_reading_stands_even_below_the_estimate():
+    # kcal_per_km is a MEDIAN of worn days, so half of honest days measure under
+    # it — a worn day's reading is a measurement, never "corrected" upward.
+    assert effective_active_kcal(200.0, 3_000.0, 100.0, watch_worn=True) == 200.0
+
+
+def test_worn_day_with_missing_energy_keeps_the_distance_fallback():
+    # The pre-active-energy era is untouched: no reading → estimate, as before.
+    assert effective_active_kcal(None, 11_500.0, 100.0, watch_worn=True) == pytest.approx(
+        1150.0, abs=0.5
+    )
+
+
+def test_effective_active_kcal_returns_the_reading_when_no_estimate_exists():
+    assert effective_active_kcal(140.0, None, 100.0, watch_worn=False) == 140.0
+    assert effective_active_kcal(140.0, 11_000.0, None, watch_worn=False) == 140.0
+
+
+def test_effective_active_kcal_is_none_when_no_signal_exists():
+    assert effective_active_kcal(None, None, 100.0, watch_worn=False) is None
+    assert effective_active_kcal(None, 11_000.0, None, watch_worn=True) is None

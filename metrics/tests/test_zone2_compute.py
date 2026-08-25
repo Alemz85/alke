@@ -71,6 +71,11 @@ def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True,
     default_params = {
         "id": 1, "stage": "literature", "fast_sat": 26, "rhr_top_amateur": 48,
         "ef_top_factor": 1.6, "b_ref_min_per_wk": 0,  # 0 → guard must kick in
+        # RATIFIED EF baselines = 2.0, the synthetic's genuine detrained-era
+        # first EF (the ramp starts there). EF signals fuse only when their
+        # baseline is ratified in params — never derived from the observation
+        # history (see test_unratified_ef_baseline_never_enters_the_fusion).
+        "run_ef_baseline": 2.0, "bike_ef_baseline": 2.0,
     }
     monkeypatch.setattr(db, "fetch_zone2_fitness_params",
                         lambda sb: params if params is not None else default_params)
@@ -313,6 +318,33 @@ def test_run_ef_weight_matches_the_run_ef_variance(monkeypatch):
     # day 288 is a session day (i%3==0) inside the block → EF age 0.
     w = rows[288]["contributing"]["run_ef"]
     assert w == pytest.approx(1.0 / _m.Z2_RUN_EF_VARIANCE, abs=0.02)
+
+
+def test_unratified_ef_baseline_never_enters_the_fusion(monkeypatch):
+    """Regression for the self-baselining incident: the first-ever bike EF observation
+    became its own baseline (elevation ≡ 0 — a tautology, not a measurement) and
+    fused at the model's strongest weight, crashing the durable calibration below
+    the floor while the confidence band falsely collapsed 2.5×. EF baselines now
+    come ONLY from an owner-ratified params value; without one the signal is
+    collected but withheld from the level fusion — level, confidence and band
+    must be IDENTICAL to having no EF data at all (the swim-EF treatment)."""
+    unratified = {
+        "id": 1, "stage": "literature", "fast_sat": 26, "rhr_top_amateur": 48,
+        "ef_top_factor": 1.6, "b_ref_min_per_wk": 200,  # no *_ef_baseline keys
+    }
+    with_obs = _run_synthetic(monkeypatch, with_ef=True, with_vo2=False,
+                              params=unratified)
+    monkeypatch.undo()
+    without_obs = _run_synthetic(monkeypatch, with_ef=False, with_vo2=False,
+                                 params=unratified)
+
+    assert all(r["contributing"]["bike_ef"] == 0.0 for r in with_obs)
+    assert all(r["contributing"]["run_ef"] == 0.0 for r in with_obs)
+    for a, b in zip(with_obs, without_obs):
+        assert a["durable_base"] == b["durable_base"]
+        assert a["confidence"] == b["confidence"]
+        assert a["durable_band_lo"] == b["durable_band_lo"]
+        assert a["durable_band_hi"] == b["durable_band_hi"]
 
 
 def test_swim_ef_never_enters_durable_fusion(monkeypatch):

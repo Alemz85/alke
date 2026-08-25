@@ -24,7 +24,6 @@ from metrics.models import (
     ctl_atl_series,
     easy_aerobic_seconds,
     ef,
-    estimated_active_kcal,
     ef_eligibility,
     flags_for_day,
     hr_drift_pct,
@@ -1188,21 +1187,29 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # estimate from walking+running distance, using a kcal/km ratio fitted to the
     # user's own days that carry BOTH readings. Days with neither stay absent and
     # contribute nothing.
+    # Watch-off days (resting_hr absent — the watch computes RHR only on the
+    # wrist) get the same rescue even when a reading EXISTS: the phone counts
+    # steps from a pocket but sees little energy (an order of magnitude less per km than when worn), so
+    # a present-but-tiny value is a floor, not a measurement — see
+    # effective_active_kcal. Those days are also excluded from the ratio fit,
+    # where their tiny kcal/km would drag the median toward under-crediting the
+    # very days the fallback exists to fill.
     kcal_per_km = calibrate_kcal_per_km(
         [
             (float(r["active_energy_kcal"]), float(r["walking_running_distance_m"]))
             for r in daily_metrics
             if r.get("active_energy_kcal") is not None
             and r.get("walking_running_distance_m") is not None
+            and r.get("resting_hr") is not None
         ]
     )
     ambient_by_date: dict[date, float] = {}
     for r in daily_metrics:
-        raw = r.get("active_energy_kcal")
-        active = (
-            float(raw)
-            if raw is not None
-            else estimated_active_kcal(r.get("walking_running_distance_m"), kcal_per_km)
+        active = models.effective_active_kcal(
+            r.get("active_energy_kcal"),
+            r.get("walking_running_distance_m"),
+            kcal_per_km,
+            watch_worn=r.get("resting_hr") is not None,
         )
         if active is None:
             continue
@@ -1297,9 +1304,10 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # EF stays WITHHELD: active-set filtering removes rest bias, but returning
     # technique can still dominate pace/HR even with a large N (docs §6). Both remain
     # fully wired whatever today's data holds — signals are built for data the user
-    # may START producing, never trimmed to what currently exists: bike EF lights
-    # up with the first outdoor GPS ride, run EF with the first ≥20-min HR-bearing
-    # Z1–Z2 run (v5: rides so far are indoor/no-distance, runs are the nearer signal).
+    # may START producing, never trimmed to what currently exists: OBSERVATIONS
+    # begin with the first outdoor GPS ride / first ≥20-min HR-bearing Z1–Z2 run,
+    # but each signal enters the LEVEL FUSION only once its detrained baseline is
+    # ratified in zone2_fitness_params — see the baseline block below.
     bike_ef_obs: list[tuple[date, float]] = []
     run_ef_obs: list[tuple[date, float]] = []
     for wk in all_workouts:
@@ -1331,7 +1339,9 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # PERSONAL baselines = the user's OWN most-detrained extreme (v3 pt5):
     #   RHR baseline  = MAX resting HR (highest = most detrained)
     #   VO2max baseline = MIN VO2max   (lowest  = most detrained)
-    #   EF baseline   = earliest/most-detrained EF (first observed)
+    #   EF baseline   = owner-ratified in zone2_fitness_params (see below); NEVER
+    #     derived from the observation history — a signal born mid-training has no
+    #     detrained-era observation to derive one from.
     #
     # F4 fix — RATCHET (only widen, never shrink): the trailing-180d window forgets
     # the true detrained extreme once the user sustains training, so max/min drift
@@ -1350,8 +1360,22 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
 
     rhr_personal_baseline = _widen(stored.get("rhr_lifetime_max"), rhr_window_max, max)
     vo2_personal_baseline = _widen(stored.get("vo2_lifetime_min"), vo2_window_min, min)
-    bike_ef_personal_baseline = bike_ef_obs[0][1] if bike_ef_obs else None
-    run_ef_personal_baseline = run_ef_obs[0][1] if run_ef_obs else None
+    # EF baselines come ONLY from an owner-ratified params value (NULL = the
+    # baseline is unidentified → the signal is collected, stored and displayed
+    # but WITHHELD from the level fusion — the swim-EF treatment). The previous
+    # derivation (first stored observation) proved wrong the day the signal woke:
+    # the first-ever outdoor-ride EF (born MID-TRAINING) became its
+    # own baseline, so elevation ≡ 0 — a tautology, not a measurement — fused at
+    # the model's strongest weight (var 22). That crashed the durable calibration
+    # below the floor (D pinned to the floor track across all history) while the
+    # confidence band FALSELY collapsed 2.5×. No observation count fixes this:
+    # "elevation above the detrained baseline" is unidentifiable from a history
+    # with no detrained-era observation, so ratifying the baseline is an explicit
+    # modeling decision, not an accident of ingestion order. (The natural
+    # candidate: the first post-gap easy Z1–Z2 session's EF, ratified while
+    # genuinely detrained.)
+    bike_ef_personal_baseline = param("bike_ef_baseline", None)
+    run_ef_personal_baseline = param("run_ef_baseline", None)
 
     # valid-day counts ratchet too (widen-only) so the personal baseline's weight
     # never falls back toward the population prior once a season of data exists.

@@ -375,15 +375,20 @@ Z2_SIGNAL_STALENESS_TAU_DAYS = 45.0
 # [LITERATURE PRIOR] bike EF: day-to-day submaximal EF CV ≈ 4%; the elevation map
 #   spans baseline→1.6×baseline (a 0.6·baseline span) onto C_D = 70 pts, so
 #   sd ≈ (0.04/0.6)·70 ≈ 4.7 pts → var ≈ 22.
-#   NOTE (v5): bike EF has zero observations SO FAR — every cycling session to
-#   date is indoor with distance_m NULL, so ef() returns None. It stays fully
-#   wired (collection, baseline, fusion) and becomes a trusted aerobic lead the
-#   day outdoor rides with GPS distance appear; running EF (below) is the
-#   aerobic-specific signal that fires on current data. Model contract: signals
-#   are built for data the user may produce, never trimmed to today's data.
+#   NOTE: the first bike EF observation (an outdoor
+#   ride) exposed a defect in the old baseline derivation: with
+#   the baseline taken from the first stored observation, a signal born
+#   MID-TRAINING self-baselines and reads elevation ≡ 0 at this — the model's
+#   strongest — weight. EF signals therefore fuse only once their detrained
+#   baseline is ratified in zone2_fitness_params (run_ef_baseline /
+#   bike_ef_baseline; NULL = collected and displayed, withheld from the level
+#   fusion). The wiring itself stays per the model contract: signals are built
+#   for data the user may produce, never trimmed to today's data.
 Z2_BIKE_EF_VARIANCE = 22.0
-# [LITERATURE PRIOR] running EF: the aerobic-specific calibration signal that
-#   actually fires (108 runs carry distance + HR, vs 0 usable bike EF). Same
+# [LITERATURE PRIOR] running EF: the nearer aerobic-specific calibration signal
+#   (runs carry distance + HR — though a run must first pass the ≥70% Z1–Z2
+#   eligibility gate, and the channel needs a ratified baseline,
+#   see the bike-EF note above). Same
 #   architecture as bike EF — ef() = (m/min)/bpm, the SAME elevation map spanning
 #   the user's own detrained EF baseline → ef_top_factor×baseline onto C_D, gated
 #   to Z1–Z2 runs — so its variance is derived the SAME way: submaximal running EF
@@ -684,6 +689,49 @@ def estimated_active_kcal(distance_m: float | None, kcal_per_km: float | None) -
     if distance_m is None or kcal_per_km is None or not math.isfinite(distance_m):
         return None
     return max(0.0, float(distance_m) / 1000.0 * kcal_per_km)
+
+
+def effective_active_kcal(
+    measured_kcal: float | None,
+    distance_m: float | None,
+    kcal_per_km: float | None,
+    watch_worn: bool,
+) -> float | None:
+    """The day's active energy as the ambient channel should read it, rescuing
+    WATCH-OFF days whose reading is a floor rather than a measurement.
+
+    The phone counts steps and distance from a pocket, but active energy is
+    overwhelmingly a watch quantity: on >1 km days the measured rate is
+    roughly an order of magnitude higher with the watch worn than without
+    (thousands of phone-counted steps against a few dozen kcal). Taking such a present-but-tiny
+    reading at face value silently zeroes real ambulation the distance channel
+    plainly saw. `watch_worn` is the caller's wear evidence — resting HR exists
+    for a day only if the watch was on the wrist.
+
+    Watch worn → the measured value stands, even when it is BELOW the distance
+    estimate (an efficient or stroller-paced day is a real measurement; the
+    fitted kcal/km is a median, so half of honest days sit under it). Missing
+    energy falls through to the distance estimate exactly as before — the
+    pre-active-energy history keeps its fallback regardless of wear.
+
+    Watch off → max(measured, distance estimate): the phone's partial reading is
+    a lower bound, never contradicted, only raised to what the phone-counted
+    distance prices out at the user's own fitted rate.
+
+    Returns None when no usable signal exists — the day contributes nothing."""
+    measured = (
+        float(measured_kcal)
+        if measured_kcal is not None and math.isfinite(measured_kcal)
+        else None
+    )
+    if watch_worn and measured is not None:
+        return measured
+    estimate = estimated_active_kcal(distance_m, kcal_per_km)
+    if estimate is None:
+        return measured
+    if measured is None:
+        return estimate
+    return max(measured, estimate)
 
 
 def sedentary_ambient_baseline(
