@@ -685,6 +685,39 @@ Deno.test("maps walking_running_distance (km->m, summed per date) and flights_cl
   assertEquals(dm.resting_hr, 54);
 });
 
+Deno.test("maps cycling_distance (km->m, summed per date; placeholder 0 stays null)", () => {
+  // HAE sends cycling_distance as a daily aggregate today (one entry stamped
+  // midnight), but the summed treatment mirrors walking_running_distance so a
+  // future finer aggregation setting still totals correctly.
+  const payload = {
+    data: {
+      workouts: [],
+      metrics: [
+        {
+          name: "cycling_distance",
+          units: "km",
+          data: [
+            { date: "2026-07-14 00:00:00 +0200", qty: 12.345 },
+            { date: "2026-07-15 00:00:00 +0200", qty: 0 }, // placeholder, not a reading
+          ],
+        },
+        {
+          name: "resting_heart_rate",
+          units: "bpm",
+          data: [
+            { date: "2026-07-14 00:00:00 +0200", qty: 54 },
+            { date: "2026-07-15 00:00:00 +0200", qty: 55 },
+          ],
+        },
+      ],
+    },
+  };
+  const result = parseIngestPayload(payload);
+  assertEquals(result.dailyMetrics.length, 2);
+  assertAlmostEquals(result.dailyMetrics[0].cycling_distance_m!, 12345, 0.0001);
+  assertEquals(result.dailyMetrics[1].cycling_distance_m, null); // zero entry never writes 0
+});
+
 Deno.test("walking_running_distance defaults to meters (unitless/unknown units assumed meters)", () => {
   const payload = {
     data: {

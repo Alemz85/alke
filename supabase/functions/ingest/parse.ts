@@ -66,6 +66,7 @@ export interface NormalizedDailyMetric {
   weight_kg: number | null;
   body_fat_pct: number | null;
   walking_running_distance_m: number | null;
+  cycling_distance_m: number | null;
   flights_climbed: number | null;
 }
 
@@ -92,6 +93,10 @@ const FIELD_MAP = {
     weight_body_mass: "weight_kg", // scalar per date, last-wins; unit-converted to kg
     body_fat_percentage: "body_fat_pct", // scalar per date, last-wins; percent 0-100
     walking_running_distance: "walking_running_distance_m", // summed per date; unit-converted to meters
+    cycling_distance: "cycling_distance_m", // summed per date; unit-converted to meters. Captures
+    // TOTAL daily riding incl. unrecorded rides (the watch tracks cycling distance passively;
+    // observed ~2x the logged ride distance on one day). Observational for now — not fed to
+    // the Zone-2 model, whose ambient channel already counts unlogged ride ENERGY.
     flights_climbed: "flights_climbed", // summed per date; integer count
     // sleep_analysis is handled specially (multi-field).
   } as Record<string, keyof NormalizedDailyMetric>,
@@ -738,6 +743,7 @@ function emptyDailyMetric(date: string): NormalizedDailyMetric {
     weight_kg: null,
     body_fat_pct: null,
     walking_running_distance_m: null,
+    cycling_distance_m: null,
     flights_climbed: null,
   };
 }
@@ -792,9 +798,11 @@ function parseMetrics(metrics: unknown): Map<string, NormalizedDailyMetric> {
     if (!column) continue; // unknown metric name: ignore gracefully
 
     const summed = column === "steps" || column === "active_energy_kcal" ||
-      column === "walking_running_distance_m" || column === "flights_climbed";
+      column === "walking_running_distance_m" || column === "cycling_distance_m" ||
+      column === "flights_climbed";
     const isWeight = column === "weight_kg";
-    const isDistance = column === "walking_running_distance_m";
+    const isDistance = column === "walking_running_distance_m" ||
+      column === "cycling_distance_m";
     const isEnergy = column === "active_energy_kcal";
     // The metric-level `units` field applies to every entry in `data`
     // (Health Auto Export doesn't vary units per-entry within one metric).
@@ -957,6 +965,7 @@ const MERGEABLE_COLUMNS = [
   "weight_kg",
   "body_fat_pct",
   "walking_running_distance_m",
+  "cycling_distance_m",
   "flights_climbed",
 ] as const;
 
