@@ -100,6 +100,8 @@ export interface DailyMetric {
   /** Body fat as a percentage 0-100 (not a 0-1 fraction), paired with weight_kg. */
   body_fat_pct: number | null
   walking_running_distance_m: number | null
+  /** Watch-tracked TOTAL daily cycling distance, incl. unrecorded rides. NULL before 2026-08-26 (ingest started then; history not backfilled). */
+  cycling_distance_m: number | null
   flights_climbed: number | null
 }
 
@@ -472,6 +474,10 @@ export interface GymSet {
   rpe: number | null
   is_warmup: boolean
   is_eccentric: boolean
+  // This set was performed single-arm/single-leg (e.g. a single-arm cable
+  // row) — its weight must never be compared against bilateral sets of the
+  // same exercise.
+  is_unilateral: boolean
   note: string | null
 }
 
@@ -508,6 +514,7 @@ export interface NewGymSet {
   rpe?: number | null
   is_warmup?: boolean
   is_eccentric?: boolean
+  is_unilateral?: boolean
   note?: string | null
 }
 
@@ -758,8 +765,8 @@ export interface HealthApi {
   getDbStatus(): Promise<DbStatus>
   /** Most recent raw_payloads.received_at (ISO string), or null if no payloads. Used as the data-freshness probe behind the Refresh button. */
   getLastIngestAt(): Promise<string | null>
-  /** Tokenized URL of the phone gym card (the gymcard Edge Function), or null
-   *  when GYMCARD_TOKEN / SUPABASE_URL are absent from the environment. */
+  /** Tokenized URL of the phone gym card (the gymcard-web Vercel deployment),
+   *  or null when GYMCARD_URL / GYMCARD_TOKEN are absent from the environment. */
   getGymCardUrl(): Promise<string | null>
   getInsightCorrelations(): Promise<InsightCorrelation[]>
   getInsightModels(): Promise<InsightModel[]>

@@ -34,6 +34,7 @@ function metric(
     wrist_temp_deviation_c: null,
     weight_kg: null,
     walking_running_distance_m: distanceM,
+    cycling_distance_m: null,
     flights_climbed: flightsClimbed,
   }
 }

@@ -185,7 +185,8 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
 
     expect(g.buildWindow).toEqual({ start: '2026-07-12', end: '2026-07-13' })
     expect(g.buildOverdue).toBe(false)
-    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-12', '2026-07-13'])
+    // 07-12 already passed (today is 07-13) → clipped; 07-14 was never in the window.
+    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-13'])
     expect(g.markers['2026-07-14']).toBeUndefined()
   })
 
@@ -202,8 +203,8 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     )
     expect(g.buildWindow).toEqual({ start: '2026-07-09', end: '2026-07-10' })
     expect(g.buildOverdue).toBe(true)
-    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-09', '2026-07-10'])
-    expect(g.markers['2026-07-09'].kind).toBe('build')
+    // The passed 07-09 cell is clipped; today keeps the (now due) build mark.
+    expect(Object.keys(g.markers).sort()).toEqual(['2026-07-10'])
     expect(g.markers['2026-07-10'].kind).toBe('build')
   })
 
@@ -222,7 +223,7 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.buildOverdue).toBe(false)
   })
 
-  it('keeps an overdue build window on its real historical dates', () => {
+  it('collapses an overdue build window to a single due-now mark on today', () => {
     const g = zone2CalendarGuidance(
       {
         date: '2026-07-10',
@@ -233,10 +234,15 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
       ['2026-07-01'],
       TODAY
     )
+    // The literal window is reported unchanged, but its passed days carry no
+    // highlight — the actionable mark moves to today.
     expect(g.buildWindow).toEqual({ start: '2026-07-02', end: '2026-07-03' })
     expect(g.buildOverdue).toBe(true)
-    expect(g.markers['2026-07-02'].label).toMatch(/due now/i)
-    expect(g.markers['2026-07-10']).toBeUndefined()
+    expect(g.markers['2026-07-02']).toBeUndefined()
+    expect(g.markers['2026-07-03']).toBeUndefined()
+    expect(Object.keys(g.markers)).toEqual([TODAY])
+    expect(g.markers[TODAY].kind).toBe('build')
+    expect(g.markers[TODAY].label).toMatch(/due now/i)
   })
 
   it('does not invent a build window when no session is on record', () => {
@@ -271,7 +277,7 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.phase).toBe('building')
     expect(g.easesFrom).toBeNull()
     expect(g.holdBy).toBeNull()
-    // No decay/maintain markers anywhere — only the two build-window cells.
+    // No decay/maintain markers anywhere — only build cells (clipped to today+).
     expect(Object.values(g.markers).every((m) => m.kind === 'build')).toBe(true)
     expect(g.summary).toMatch(/still thin|just build/i)
   })
@@ -289,10 +295,11 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.easesFrom).toBe('2026-07-22') // rowDate 07-08 + 14
     expect(g.holdBy).toBe('2026-07-14') // rowDate 07-08 + 6
     expect(g.buildWindow).toEqual({ start: '2026-07-09', end: '2026-07-10' })
+    // Window day 07-09 has passed → one build cell (today) + eases + hold.
     const kinds = Object.values(g.markers)
       .map((m) => m.kind)
       .sort()
-    expect(kinds).toEqual(['build', 'build', 'decay', 'maintain'])
+    expect(kinds).toEqual(['build', 'decay', 'maintain'])
   })
 
   it('build markers win a same-day collision with an eases/hold marker', () => {

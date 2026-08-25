@@ -49,6 +49,7 @@ describe('GymWorkoutPanel read view', () => {
         rpe: id === 2 ? 8.5 : null,
         is_warmup: false,
         is_eccentric: false,
+        is_unilateral: false,
         note: id === 2 ? 'Last rep slowed.' : null
       })),
       created_at: null,

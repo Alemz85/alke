@@ -67,6 +67,7 @@ function makeMetric(overrides: Partial<DailyMetric> & { date: string }): DailyMe
     wrist_temp_deviation_c: null,
     weight_kg: overrides.weight_kg ?? null,
     walking_running_distance_m: null,
+    cycling_distance_m: overrides.cycling_distance_m ?? null,
     flights_climbed: null,
   }
 }

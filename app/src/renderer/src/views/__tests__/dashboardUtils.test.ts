@@ -394,7 +394,13 @@ describe('computeActiveEnergySummary', () => {
       [makeEnergyMetric('2026-07-15', null)],
       '2026-07-16'
     )
-    expect(summary).toEqual({ todayKcal: null, weekAvgKcal: null, hasAnyData: false })
+    expect(summary).toEqual({
+      todayKcal: null,
+      weekAvgKcal: null,
+      hasAnyData: false,
+      latestKcal: null,
+      latestDaysAgo: null
+    })
   })
 
   it("reports today's kcal and the prior-7-day average", () => {
@@ -410,6 +416,9 @@ describe('computeActiveEnergySummary', () => {
     expect(summary.todayKcal).toBe(120)
     expect(summary.weekAvgKcal).toBe(500)
     expect(summary.hasAnyData).toBe(true)
+    // With a real today figure there is no fallback to surface.
+    expect(summary.latestKcal).toBeNull()
+    expect(summary.latestDaysAgo).toBeNull()
   })
 
   it('excludes unsynced days from the average instead of counting them as zero', () => {
@@ -431,6 +440,30 @@ describe('computeActiveEnergySummary', () => {
     )
     expect(summary.todayKcal).toBeNull()
     expect(summary.weekAvgKcal).toBe(450)
+    expect(summary.hasAnyData).toBe(true)
+  })
+
+  it('falls back to the latest synced day when today has no row (HAE exports complete days)', () => {
+    const summary = computeActiveEnergySummary(
+      [makeEnergyMetric('2026-07-14', 500), makeEnergyMetric('2026-07-15', 650)],
+      '2026-07-16'
+    )
+    expect(summary.todayKcal).toBeNull()
+    expect(summary.latestKcal).toBe(650)
+    expect(summary.latestDaysAgo).toBe(1)
+  })
+
+  it('reports how stale the fallback is when the latest sync is days back', () => {
+    const summary = computeActiveEnergySummary([makeEnergyMetric('2026-07-13', 420)], '2026-07-16')
+    expect(summary.latestKcal).toBe(420)
+    expect(summary.latestDaysAgo).toBe(3)
+  })
+
+  it('offers no fallback when nothing synced within the past 7 days', () => {
+    const summary = computeActiveEnergySummary([makeEnergyMetric('2026-07-01', 900)], '2026-07-16')
+    expect(summary.todayKcal).toBeNull()
+    expect(summary.latestKcal).toBeNull()
+    expect(summary.latestDaysAgo).toBeNull()
     expect(summary.hasAnyData).toBe(true)
   })
 })

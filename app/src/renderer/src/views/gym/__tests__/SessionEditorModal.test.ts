@@ -4,10 +4,15 @@ import type { Exercise } from '@shared/types'
 import {
   derivedBodyParts,
   blockEccentricState,
+  blockUnilateralState,
   eccentricFlagsForQuickSetRebuild,
+  unilateralFlagsForQuickSetRebuild,
+  firstInvalidSetMessage,
   insertBlockAfter,
   moveBlock,
   quickSetFieldValue,
+  saveErrorDetail,
+  weightPlaceholderFor,
   type Block,
   type SetRow
 } from '../SessionEditorModal'
@@ -48,6 +53,7 @@ function makeSetRow(overrides: Partial<SetRow> = {}): SetRow {
     note: '',
     isWarmup: false,
     isEccentric: false,
+    isUnilateral: false,
     ...overrides
   }
 }
@@ -59,6 +65,7 @@ function makeBlock(overrides: Partial<Block> = {}): Block {
     exerciseName: 'Back Squat',
     bodyPartFilter: null,
     isEccentric: false,
+    isUnilateral: false,
     rows: [makeSetRow()],
     ...overrides
   }
@@ -189,6 +196,95 @@ describe('eccentric set preservation (source contract)', () => {
     ]
 
     expect(eccentricFlagsForQuickSetRebuild(existing, 3)).toEqual([true, false, false])
+  })
+})
+
+describe('unilateral block flag (source contract)', () => {
+  it('hydrates at block level and serializes only working sets', () => {
+    expect(source).toContain('isUnilateral: s.is_unilateral')
+    expect(source).toContain('is_unilateral: row.isUnilateral && !row.isWarmup')
+  })
+
+  it('presents a neutral block-level checkbox', () => {
+    expect(source).toContain('checked={unilateralState === true}')
+    expect(source).toContain('Unilateral')
+  })
+})
+
+describe('unilateral set preservation (source contract)', () => {
+  it('reports a mixed working-set block without counting warm-ups', () => {
+    expect(
+      blockUnilateralState([
+        makeSetRow({ isUnilateral: true }),
+        makeSetRow({ key: 'r2', isUnilateral: false }),
+        makeSetRow({ key: 'r3', isWarmup: true, isUnilateral: true })
+      ])
+    ).toBe('mixed')
+  })
+
+  it('round-trips the per-set value so a mixed block survives unrelated edits', () => {
+    expect(source).toContain('isUnilateral: s.is_unilateral')
+    expect(source).toContain('is_unilateral: row.isUnilateral && !row.isWarmup')
+  })
+
+  it('derives the block control from working rows and toggles those rows together', () => {
+    expect(source).toContain('const unilateralState = blockUnilateralState(block.rows)')
+    expect(source).toMatch(
+      /rows: block\.rows\.map\(\(row\) => \(\{[\s\S]*isUnilateral: !row\.isWarmup && event\.target\.checked/
+    )
+    expect(source).toContain(
+      "unilateralCheckboxRef.current.indeterminate = unilateralState === 'mixed'"
+    )
+  })
+
+  it('keeps mixed flags by index when quick Sets/Reps rebuilds rows', () => {
+    const existing = [
+      makeSetRow({ key: 'r1', isUnilateral: true }),
+      makeSetRow({ key: 'r2', isUnilateral: false })
+    ]
+    expect(unilateralFlagsForQuickSetRebuild(existing, 4)).toEqual([true, false, false, false])
+    expect(unilateralFlagsForQuickSetRebuild(existing, 1)).toEqual([true])
+  })
+
+  it('indexes existing working sets without letting warm-ups shift unilateral flags', () => {
+    const existing = [
+      makeSetRow({ key: 'warmup', isWarmup: true, isUnilateral: false }),
+      makeSetRow({ key: 'work-1', isUnilateral: true }),
+      makeSetRow({ key: 'work-2', isUnilateral: false })
+    ]
+
+    expect(unilateralFlagsForQuickSetRebuild(existing, 3)).toEqual([true, false, false])
+  })
+})
+
+describe('weightPlaceholderFor (per-hand vs total logging convention)', () => {
+  it('teaches per-hand entry for dumbbell and kettlebell work', () => {
+    expect(weightPlaceholderFor('dumbbell')).toBe('kg/hand')
+    expect(weightPlaceholderFor('kettlebell')).toBe('kg/hand')
+  })
+
+  it('teaches total-load entry for other loaded equipment in the catalog vocabulary', () => {
+    expect(weightPlaceholderFor('barbell')).toBe('kg total')
+    expect(weightPlaceholderFor('machine')).toBe('kg total')
+    expect(weightPlaceholderFor('cable')).toBe('kg total')
+    expect(weightPlaceholderFor('smith machine')).toBe('kg total')
+    expect(weightPlaceholderFor('ez bar')).toBe('kg total')
+    expect(weightPlaceholderFor('trap bar')).toBe('kg total')
+    expect(weightPlaceholderFor('other')).toBe('kg total')
+  })
+
+  it('keeps the plain, un-nudged placeholder for bodyweight, band, unknown and no equipment', () => {
+    expect(weightPlaceholderFor('bodyweight')).toBe('kg')
+    expect(weightPlaceholderFor('band')).toBe('kg')
+    expect(weightPlaceholderFor(null)).toBe('kg')
+    expect(weightPlaceholderFor(undefined)).toBe('kg')
+    expect(weightPlaceholderFor('some-future-equipment')).toBe('kg')
+  })
+
+  it('is wired to the per-row weight input via the block-resolved equipment', () => {
+    expect(source).toContain('const weightPlaceholder = weightPlaceholderFor(equipment)')
+    expect(source).toContain('placeholder={weightPlaceholder}')
+    expect(source).toContain('weightPlaceholder={weightPlaceholder}')
   })
 })
 
@@ -398,5 +494,79 @@ describe('Set effort and note wiring (source contract)', () => {
     expect(source).toContain('step="0.5"')
     expect(source).toContain('aria-label={`Set ${index + 1} note`}')
     expect(source).toContain('maxLength={500}')
+  })
+})
+
+describe('firstInvalidSetMessage', () => {
+  it('accepts in-range rows, including 0 reps and blank doses', () => {
+    const blocks = [
+      makeBlock({
+        rows: [
+          makeSetRow({ reps: 0 }),
+          makeSetRow({ reps: null }),
+          makeSetRow({ reps: null, durationS: 45, doseUnit: 'secs' })
+        ]
+      })
+    ]
+    expect(firstInvalidSetMessage(blocks)).toBeNull()
+  })
+
+  it('names the exercise and set for a negative rep count (the live -5 draft bug)', () => {
+    const blocks = [
+      makeBlock({
+        exerciseName: 'Seated Leg Curl',
+        rows: [makeSetRow(), makeSetRow(), makeSetRow({ reps: -5 })]
+      })
+    ]
+    expect(firstInvalidSetMessage(blocks)).toBe(
+      'Seated Leg Curl, set 3: reps must be a whole number between 0 and 500.'
+    )
+  })
+
+  it('rejects out-of-range holds, weights and RPE with the field named', () => {
+    expect(
+      firstInvalidSetMessage([
+        makeBlock({ rows: [makeSetRow({ reps: null, durationS: 0, doseUnit: 'secs' })] })
+      ])
+    ).toContain('hold must be between 1 and 3600 seconds')
+    expect(firstInvalidSetMessage([makeBlock({ rows: [makeSetRow({ weightKg: -20 })] })])).toContain(
+      'weight must be between 0 and 1500 kg'
+    )
+    expect(firstInvalidSetMessage([makeBlock({ rows: [makeSetRow({ rpe: 11 })] })])).toContain(
+      'RPE must be between 1 and 10'
+    )
+  })
+
+  it('skips rows of a block whose exercise is not chosen yet', () => {
+    const blocks = [makeBlock({ exerciseId: null, rows: [makeSetRow({ reps: -1 })] })]
+    expect(firstInvalidSetMessage(blocks)).toBeNull()
+  })
+
+  it('runs before the save mutation in handleSave (source contract)', () => {
+    expect(source).toContain('const invalidSet = firstInvalidSetMessage(blocks)')
+  })
+})
+
+describe('saveErrorDetail', () => {
+  it('unwraps the IPC error prefix down to the thrown reason', () => {
+    expect(
+      saveErrorDetail(
+        new Error("Error invoking remote method 'db:addGymSession': Error: invalid sets[].reps")
+      )
+    ).toBe('invalid sets[].reps')
+  })
+
+  it('passes plain error messages through and drops empty or oversized ones', () => {
+    expect(saveErrorDetail(new Error('this workout already has a gym log'))).toBe(
+      'this workout already has a gym log'
+    )
+    expect(saveErrorDetail(new Error(''))).toBeNull()
+    expect(saveErrorDetail(new Error('x'.repeat(201)))).toBeNull()
+    expect(saveErrorDetail(undefined)).toBeNull()
+  })
+
+  it('is surfaced by both save catch blocks (source contract)', () => {
+    expect(source).toContain('Could not save the log (${detail}). Your draft is still saved locally.')
+    expect(source).toContain('Could not save changes (${detail}). Your draft is still saved locally.')
   })
 })

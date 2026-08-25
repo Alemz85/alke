@@ -29,7 +29,8 @@ function set(overrides: Partial<GymSet> = {}): GymSet {
     is_warmup: false,
     note: null,
     ...overrides,
-    is_eccentric: overrides.is_eccentric ?? false
+    is_eccentric: overrides.is_eccentric ?? false,
+    is_unilateral: overrides.is_unilateral ?? false
   }
 }
 

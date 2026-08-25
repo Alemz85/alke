@@ -36,7 +36,8 @@ function set(partial: Partial<GymSet> & { exercise_id: string; position: number 
     is_warmup: false,
     note: null,
     ...partial,
-    is_eccentric: partial.is_eccentric ?? false
+    is_eccentric: partial.is_eccentric ?? false,
+    is_unilateral: partial.is_unilateral ?? false
   }
 }
 

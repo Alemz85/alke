@@ -39,6 +39,7 @@ function set(overrides: Partial<GymSet> = {}): GymSet {
     rpe: null,
     is_warmup: false,
     is_eccentric: false,
+    is_unilateral: false,
     note: null,
     ...overrides
   }

@@ -166,3 +166,20 @@
     grid-template-columns: 1fr;
   }
 }
+
+.hr-cardio-ridden {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+}
+
+.hr-cardio-ridden strong {
+  color: var(--color-text);
+  font-weight: var(--type-body-md-bold-weight);
+}
+
+.hr-cardio-ridden-note {
+  color: var(--color-text-tertiary);
+}

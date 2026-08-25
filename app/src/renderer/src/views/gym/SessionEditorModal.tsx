@@ -65,6 +65,9 @@ export interface SetRow extends PrefillSetRow {
   rpe: number | null
   note: string
   isEccentric: boolean
+  // Single-arm/single-leg (e.g. a single-arm cable row) — its weight must
+  // never be compared against bilateral sets of the same exercise.
+  isUnilateral: boolean
   /** Which dose the row is counting. Editor-local: the payload carries whichever
    *  of reps / durationS this selects, and null for the other. */
   doseUnit: DoseUnit
@@ -78,6 +81,7 @@ export interface Block {
   // autofilled in reverse when a picked exercise carries a body_part.
   bodyPartFilter: GymBodyPart | null
   isEccentric: boolean
+  isUnilateral: boolean
   rows: SetRow[]
 }
 
@@ -97,12 +101,34 @@ export function insertBlockAfter(blocks: Block[], afterKey: string, block: Block
     : [...blocks.slice(0, index + 1), block, ...blocks.slice(index + 1)]
 }
 
-export function blockEccentricState(rows: SetRow[]): boolean | 'mixed' {
+/** A block-level flag ("Eccentric"/"Unilateral") is tri-state: off when no
+ *  working set carries it, on when every working set does, and 'mixed' when
+ *  it varies — warm-ups never count toward or against the state. */
+function blockFlagState(rows: SetRow[], key: 'isEccentric' | 'isUnilateral'): boolean | 'mixed' {
   const workingRows = rows.filter((row) => !row.isWarmup)
   if (workingRows.length === 0) return false
-  const eccentricCount = workingRows.filter((row) => row.isEccentric).length
-  if (eccentricCount === 0) return false
-  return eccentricCount === workingRows.length ? true : 'mixed'
+  const flaggedCount = workingRows.filter((row) => row[key]).length
+  if (flaggedCount === 0) return false
+  return flaggedCount === workingRows.length ? true : 'mixed'
+}
+
+export function blockEccentricState(rows: SetRow[]): boolean | 'mixed' {
+  return blockFlagState(rows, 'isEccentric')
+}
+
+export function blockUnilateralState(rows: SetRow[]): boolean | 'mixed' {
+  return blockFlagState(rows, 'isUnilateral')
+}
+
+/** Preserve an existing per-row flag when the quick Sets/Reps control rebuilds rows. */
+function flagsForQuickSetRebuild(
+  existingRows: SetRow[],
+  nextCount: number,
+  key: 'isEccentric' | 'isUnilateral'
+): boolean[] {
+  const workingRows = existingRows.filter((row) => !row.isWarmup)
+  const inherited = workingRows.at(-1)?.[key] ?? blockFlagState(existingRows, key) === true
+  return Array.from({ length: nextCount }, (_, index) => workingRows[index]?.[key] ?? inherited)
 }
 
 /** Preserve existing eccentric work when the quick Sets/Reps control rebuilds rows. */
@@ -110,12 +136,15 @@ export function eccentricFlagsForQuickSetRebuild(
   existingRows: SetRow[],
   nextCount: number
 ): boolean[] {
-  const workingRows = existingRows.filter((row) => !row.isWarmup)
-  const inherited = workingRows.at(-1)?.isEccentric ?? blockEccentricState(existingRows) === true
-  return Array.from(
-    { length: nextCount },
-    (_, index) => workingRows[index]?.isEccentric ?? inherited
-  )
+  return flagsForQuickSetRebuild(existingRows, nextCount, 'isEccentric')
+}
+
+/** Preserve existing unilateral work when the quick Sets/Reps control rebuilds rows. */
+export function unilateralFlagsForQuickSetRebuild(
+  existingRows: SetRow[],
+  nextCount: number
+): boolean[] {
+  return flagsForQuickSetRebuild(existingRows, nextCount, 'isUnilateral')
 }
 
 const DRAFT_VERSION = 'v1'
@@ -187,6 +216,7 @@ function blocksFromDraft(blocks: SessionDraft['blocks']): Block[] {
       exerciseName: block.exerciseName,
       bodyPartFilter: null,
       isEccentric: blockEccentricState(rows) === true,
+      isUnilateral: blockUnilateralState(rows) === true,
       rows
     }
   })
@@ -210,7 +240,8 @@ function blankRow(exerciseId: string, exerciseName: string): SetRow {
     rpe: null,
     note: '',
     isWarmup: false,
-    isEccentric: false
+    isEccentric: false,
+    isUnilateral: false
   }
 }
 
@@ -221,6 +252,7 @@ function blocksFromSession(session: GymSession): Block[] {
     exerciseName: b.exerciseName,
     bodyPartFilter: null,
     isEccentric: b.sets.filter((s) => !s.is_warmup).every((s) => s.is_eccentric),
+    isUnilateral: b.sets.filter((s) => !s.is_warmup).every((s) => s.is_unilateral),
     rows: b.sets.map((s) => ({
       key: nextKey(),
       exerciseId: s.exercise_id,
@@ -234,7 +266,8 @@ function blocksFromSession(session: GymSession): Block[] {
       rpe: s.rpe,
       note: s.note ?? '',
       isWarmup: s.is_warmup,
-      isEccentric: s.is_eccentric
+      isEccentric: s.is_eccentric,
+      isUnilateral: s.is_unilateral
     }))
   }))
 }
@@ -250,7 +283,8 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
         doseUnit: row.durationS != null ? 'secs' : 'reps',
         rpe: row.rpe ?? null,
         note: row.note ?? '',
-        isEccentric: false
+        isEccentric: false,
+        isUnilateral: false
       })
     } else {
       blocks.push({
@@ -259,6 +293,7 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
         exerciseName: row.exerciseName,
         bodyPartFilter: null,
         isEccentric: false,
+        isUnilateral: false,
         rows: [
           {
             ...row,
@@ -266,7 +301,8 @@ function blocksFromPrefill(rows: PrefillSetRow[]): Block[] {
             doseUnit: row.durationS != null ? 'secs' : 'reps',
             rpe: row.rpe ?? null,
             note: row.note ?? '',
-            isEccentric: false
+            isEccentric: false,
+            isUnilateral: false
           }
         ]
       })
@@ -290,11 +326,62 @@ function blocksToNewSets(blocks: Block[]): NewGymSession['sets'] {
         rpe: row.rpe,
         note: row.note.trim() || null,
         is_warmup: row.isWarmup,
-        is_eccentric: row.isEccentric && !row.isWarmup
+        is_eccentric: row.isEccentric && !row.isWarmup,
+        is_unilateral: row.isUnilateral && !row.isWarmup
       })
     }
   }
   return out
+}
+
+/**
+ * Pre-flight check of the set rows against the same bounds the main process
+ * enforces (db.ts assertGymSets), returning a message that names the offending
+ * set — or null when all rows are in range. The main-process assert protects
+ * the DB; without this copy a single bad value (found live: a stray "-5" in a
+ * reps field) fails the whole save with a generic error, and the restored
+ * draft re-fails identically on every retry with no hint of where.
+ */
+export function firstInvalidSetMessage(blocks: Block[]): string | null {
+  for (const block of blocks) {
+    if (!block.exerciseId) continue
+    for (const [i, row] of block.rows.entries()) {
+      const where = `${block.exerciseName || 'Exercise'}, set ${i + 1}`
+      if (
+        row.doseUnit === 'reps' &&
+        row.reps != null &&
+        (!Number.isInteger(row.reps) || row.reps < 0 || row.reps > 500)
+      ) {
+        return `${where}: reps must be a whole number between 0 and 500.`
+      }
+      if (
+        row.doseUnit === 'secs' &&
+        row.durationS != null &&
+        (!Number.isInteger(row.durationS) || row.durationS < 1 || row.durationS > 3600)
+      ) {
+        return `${where}: a hold must be between 1 and 3600 seconds.`
+      }
+      if (row.weightKg != null && (row.weightKg < 0 || row.weightKg > 1500)) {
+        return `${where}: weight must be between 0 and 1500 kg.`
+      }
+      if (row.rpe != null && (row.rpe < 1 || row.rpe > 10)) {
+        return `${where}: RPE must be between 1 and 10.`
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * The reason a save was rejected, mined out of the IPC error wrapper
+ * ("Error invoking remote method 'x': Error: <detail>"). Null when there is
+ * no usable detail (empty or unreasonably long) — the caller falls back to
+ * its generic message alone.
+ */
+export function saveErrorDetail(err: unknown): string | null {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  const detail = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').trim()
+  return detail.length > 0 && detail.length <= 200 ? detail : null
 }
 
 /**
@@ -324,16 +411,50 @@ export function derivedBodyParts(
   return GYM_BODY_PARTS.filter((p) => found.has(p))
 }
 
+// Equipment that is held/loaded one implement per hand — the logging
+// convention is ONE implement's weight, never the pair's combined total.
+const PER_HAND_EQUIPMENT = new Set(['dumbbell', 'kettlebell'])
+// Every other loaded implement in the exercises.equipment vocabulary (see the
+// gym_exercise_catalog migration's check constraint): the whole moved load is
+// entered as a single total.
+const TOTAL_LOAD_EQUIPMENT = new Set([
+  'barbell',
+  'machine',
+  'cable',
+  'smith machine',
+  'ez bar',
+  'trap bar',
+  'other'
+])
+
+/**
+ * The weight-input placeholder teaches the logging convention for the
+ * exercise's equipment. 'bodyweight'/'band'/unrecognized/null equipment keep
+ * the plain "kg" placeholder — a blank there is a reading (no external load,
+ * or nobody recorded one) rather than an omission the input should nudge
+ * (agent_log #17), so only equipment we can confidently qualify gets a hint.
+ */
+export function weightPlaceholderFor(equipment: string | null | undefined): string {
+  // Kept short enough to survive the narrow weight input un-clipped.
+  if (equipment && PER_HAND_EQUIPMENT.has(equipment)) return 'kg/hand'
+  if (equipment && TOTAL_LOAD_EQUIPMENT.has(equipment)) return 'kg total'
+  return 'kg'
+}
+
 // ── set row ──────────────────────────────────────────────────────────────────
 
 function SetRowEditor({
   index,
   row,
+  weightPlaceholder,
   onChange,
   onRemove
 }: {
   index: number
   row: SetRow
+  /** "kg" / "kg/hand" / "kg total" — derived from the block's exercise
+   *  equipment (see weightPlaceholderFor). */
+  weightPlaceholder: string
   onChange: (patch: Partial<SetRow>) => void
   onRemove: () => void
 }): ReactElement {
@@ -348,6 +469,7 @@ function SetRowEditor({
           className="gym-input gym-set-input gym-template-dose-input"
           type="number"
           aria-label={`Set ${index + 1} ${row.doseUnit === 'secs' ? 'hold in seconds' : 'reps'}`}
+          min={row.doseUnit === 'secs' ? 1 : 0}
           placeholder={row.doseUnit === 'secs' ? 'secs' : 'reps'}
           value={(row.doseUnit === 'secs' ? row.durationS : row.reps) ?? ''}
           onChange={(e) => {
@@ -375,10 +497,14 @@ function SetRowEditor({
         className="gym-input gym-set-input"
         type="number"
         aria-label={`Set ${index + 1} load in kilograms`}
-        // Not "kg (bw)": a blank here is an unrecorded weight as often as a
-        // bodyweight one, and the placeholder shouldn't teach the reading that
-        // made a blank machine set look like a real performance (agent_log #17).
-        placeholder="kg"
+        min={0}
+        // Never "kg (bw)": a blank here is an unrecorded weight as often as a
+        // bodyweight one, and for that equipment the placeholder shouldn't
+        // teach the reading that made a blank machine set look like a real
+        // performance (agent_log #17). Where the equipment IS a loaded
+        // implement, the placeholder instead teaches the entry convention —
+        // one dumbbell's weight, not the pair's total — via weightPlaceholder.
+        placeholder={weightPlaceholder}
         value={row.weightKg ?? ''}
         onChange={(e) =>
           onChange({ weightKg: e.target.value === '' ? null : Number(e.target.value) })
@@ -428,6 +554,7 @@ function ExerciseBlockEditor({
   block,
   usage,
   lastHint,
+  equipment,
   onChange,
   onRemove,
   onMove,
@@ -438,6 +565,9 @@ function ExerciseBlockEditor({
   block: Block
   usage: Map<string, { count: number; lastIso: string | null }>
   lastHint: string | null
+  /** The block's resolved exercise equipment, or null before one is picked —
+   *  drives the weight input's placeholder (weightPlaceholderFor). */
+  equipment: string | null
   onChange: (block: Block) => void
   onRemove: () => void
   onMove: (direction: 'up' | 'down') => void
@@ -452,6 +582,7 @@ function ExerciseBlockEditor({
   // (draft), so the derivation doesn't fight a mid-edit value like "1" on
   // its way to "12"; on blur the field snaps back to the true derived count.
   const derivedDose = uniformPrefillDose(block.rows)
+  const weightPlaceholder = weightPlaceholderFor(equipment)
   const eccentricState = blockEccentricState(block.rows)
   const eccentricCheckboxRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -459,6 +590,13 @@ function ExerciseBlockEditor({
       eccentricCheckboxRef.current.indeterminate = eccentricState === 'mixed'
     }
   }, [eccentricState])
+  const unilateralState = blockUnilateralState(block.rows)
+  const unilateralCheckboxRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (unilateralCheckboxRef.current) {
+      unilateralCheckboxRef.current.indeterminate = unilateralState === 'mixed'
+    }
+  }, [unilateralState])
   const [setsDraft, setSetsDraft] = useState<string | null>(null)
   const [repsDraft, setRepsDraft] = useState<string | null>(null)
   const quickSets = quickSetFieldValue(setsDraft, derivedDose.sets)
@@ -500,6 +638,7 @@ function ExerciseBlockEditor({
     )
     if (!rows) return
     const eccentricFlags = eccentricFlagsForQuickSetRebuild(block.rows, rows.length)
+    const unilateralFlags = unilateralFlagsForQuickSetRebuild(block.rows, rows.length)
     onChange({
       ...block,
       rows: rows.map((row, index) => ({
@@ -509,7 +648,8 @@ function ExerciseBlockEditor({
         doseUnit: 'reps' as const,
         rpe: null,
         note: '',
-        isEccentric: eccentricFlags[index]
+        isEccentric: eccentricFlags[index],
+        isUnilateral: unilateralFlags[index]
       }))
     })
   }
@@ -585,6 +725,26 @@ function ExerciseBlockEditor({
         <span className="gym-check-mark" aria-hidden="true" />
         Eccentric
       </label>
+      <label className="gym-check gym-block-unilateral">
+        <input
+          ref={unilateralCheckboxRef}
+          className="gym-check-input"
+          type="checkbox"
+          checked={unilateralState === true}
+          onChange={(event) =>
+            onChange({
+              ...block,
+              isUnilateral: event.target.checked,
+              rows: block.rows.map((row) => ({
+                ...row,
+                isUnilateral: !row.isWarmup && event.target.checked
+              }))
+            })
+          }
+        />
+        <span className="gym-check-mark" aria-hidden="true" />
+        Unilateral
+      </label>
       <div className="gym-quick-sets" aria-label="Quick sets and reps">
         <label className="gym-quick-set-field">
           <span>Sets</span>
@@ -634,6 +794,7 @@ function ExerciseBlockEditor({
           key={row.key}
           index={i}
           row={row}
+          weightPlaceholder={weightPlaceholder}
           onChange={(patch) => updateRow(row.key, patch)}
           onRemove={() => removeRow(row.key)}
         />
@@ -879,6 +1040,7 @@ export function SessionEditorModal({
         exerciseName: '',
         bodyPartFilter: null,
         isEccentric: false,
+        isUnilateral: false,
         rows: [blankRow('', '')]
       }
     ])
@@ -903,6 +1065,7 @@ export function SessionEditorModal({
       exerciseName: '',
       bodyPartFilter: null,
       isEccentric: false,
+      isUnilateral: false,
       rows: [blankRow('', '')]
     }
     setBlocks((previous) => insertBlockAfter(previous, key, block))
@@ -964,6 +1127,11 @@ export function SessionEditorModal({
       setError('Finish or remove the exercise row without a name.')
       return
     }
+    const invalidSet = firstInvalidSetMessage(blocks)
+    if (invalidSet) {
+      setError(invalidSet)
+      return
+    }
     const sets = blocksToNewSets(blocks)
     const patchTitle = title.trim() || null
     const patchNotes = notes.trim() || null
@@ -994,8 +1162,13 @@ export function SessionEditorModal({
           }
         })
         finishSave()
-      } catch {
-        setError('Could not save changes. Your draft is still saved locally.')
+      } catch (err) {
+        const detail = saveErrorDetail(err)
+        setError(
+          detail
+            ? `Could not save changes (${detail}). Your draft is still saved locally.`
+            : 'Could not save changes. Your draft is still saved locally.'
+        )
       }
       return
     }
@@ -1020,8 +1193,13 @@ export function SessionEditorModal({
     try {
       await addMutation.mutateAsync(payload)
       finishSave()
-    } catch {
-      setError('Could not save the log. Your draft is still saved locally.')
+    } catch (err) {
+      const detail = saveErrorDetail(err)
+      setError(
+        detail
+          ? `Could not save the log (${detail}). Your draft is still saved locally.`
+          : 'Could not save the log. Your draft is still saved locally.'
+      )
     }
   }
 
@@ -1284,6 +1462,9 @@ export function SessionEditorModal({
                 block={block}
                 usage={usage}
                 lastHint={lastHintFor(block)}
+                equipment={
+                  block.exerciseId ? (exercisesById.get(block.exerciseId)?.equipment ?? null) : null
+                }
                 onChange={(b) => updateBlock(block.key, b)}
                 onRemove={() => removeBlock(block.key)}
                 onMove={(direction) => moveExerciseBlock(block.key, direction)}

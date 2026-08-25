@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
-import type { Workout } from '@shared/types'
+import type { DailyMetric, Workout } from '@shared/types'
 import { ChartCard, EmptyState, RecentSessionsCard } from '../components'
 import { HeroNumber } from '../components/HeroNumber'
 import { CHART, chartTooltipStyle } from '../lib/chartTheme'
@@ -17,6 +17,7 @@ import { EM_DASH, formatDurationHM } from '../lib/format'
 import {
   avgHrByMonth,
   lifetimeCardioStats,
+  monthRiddenTotals,
   monthlyCardioTotals,
   yearlyCardioTotals,
   type PeriodCardioTotals
@@ -28,6 +29,8 @@ interface HrCardioViewProps {
   modalityKey: 'cycling' | 'rowing'
   label: string
   workouts: Workout[]
+  /** Daily metrics for the total-ridden line (cycling only; the watch tracks daily cycling distance incl. unrecorded rides). */
+  dailyMetrics?: DailyMetric[]
   timezone: string | null
   onOpenSessions?: (activity?: string) => void
 }
@@ -87,12 +90,20 @@ export function HrCardioView({
   modalityKey,
   label,
   workouts,
+  dailyMetrics,
   timezone,
   onOpenSessions
 }: HrCardioViewProps): ReactElement {
   const lifetime = useMemo(() => lifetimeCardioStats(workouts), [workouts])
   const thisMonth = useMemo(() => monthlyCardioTotals(workouts, timezone), [workouts, timezone])
   const thisYear = useMemo(() => yearlyCardioTotals(workouts, timezone), [workouts, timezone])
+  const ridden = useMemo(
+    () =>
+      modalityKey === 'cycling'
+        ? monthRiddenTotals(workouts, dailyMetrics ?? [], timezone)
+        : null,
+    [modalityKey, workouts, dailyMetrics, timezone]
+  )
   const monthlyHr = useMemo(() => avgHrByMonth(workouts, timezone), [workouts, timezone])
 
   const hrAxis = buildNumericAxis(
@@ -140,6 +151,20 @@ export function HrCardioView({
           <PeriodStats label="This month" totals={thisMonth} />
           <PeriodStats label="This year" totals={thisYear} />
         </div>
+        {ridden?.totalKm != null && (
+          <p className="hr-cardio-ridden">
+            Ridden this month: <strong className="tabular-nums">{ridden.totalKm.toFixed(1)} km</strong> total
+            {' · '}
+            <strong className="tabular-nums">
+              {ridden.recordedKm != null ? `${ridden.recordedKm.toFixed(1)} km` : '0 km'}
+            </strong>{' '}
+            in recorded sessions
+            <span className="hr-cardio-ridden-note">
+              {' '}
+              — total is the watch&apos;s daily cycling distance, so unrecorded rides count too
+            </span>
+          </p>
+        )}
       </section>
 
       <div className="zone2-grid">

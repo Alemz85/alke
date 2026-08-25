@@ -274,6 +274,11 @@ export function computeBodyWeightSummary(
  * Days without a synced value are excluded from the average rather than
  * counted as zero: an absent row means "no sync", not "burned nothing"
  * (active-energy history can start later than other series).
+ *
+ * The HAE automation exports active energy for COMPLETE days only, so today's
+ * row typically doesn't exist until tomorrow. Rather than pinning an em-dash
+ * to the pill all day, the summary also surfaces the latest synced day within
+ * the past week so the pill can lead with a real number, honestly labeled.
  */
 export interface ActiveEnergySummary {
   /** Today's active kcal so far, or null when today hasn't synced yet. */
@@ -282,6 +287,11 @@ export interface ActiveEnergySummary {
   weekAvgKcal: number | null
   /** False until any active-energy value has ever synced — pill shows empty state. */
   hasAnyData: boolean
+  /** Latest synced day's total, shown when today hasn't synced. Null when
+   *  today HAS a value, or when nothing synced within the past 7 days. */
+  latestKcal: number | null
+  /** How many days back that latest reading is (1 = yesterday). Null iff latestKcal is. */
+  latestDaysAgo: number | null
 }
 
 export function computeActiveEnergySummary(
@@ -293,7 +303,7 @@ export function computeActiveEnergySummary(
       typeof m.active_energy_kcal === 'number'
   )
   if (readings.length === 0) {
-    return { todayKcal: null, weekAvgKcal: null, hasAnyData: false }
+    return { todayKcal: null, weekAvgKcal: null, hasAnyData: false, latestKcal: null, latestDaysAgo: null }
   }
 
   const todayRow = readings.find((m) => m.date === todayKey)
@@ -306,10 +316,16 @@ export function computeActiveEnergySummary(
       ? priorWeek.reduce((sum, m) => sum + m.active_energy_kcal, 0) / priorWeek.length
       : null
 
+  // priorWeek is ascending (metricsAsc order), so its last row is the most
+  // recent complete day — the fallback figure when today hasn't synced.
+  const latestRow = todayRow == null ? priorWeek.at(-1) : undefined
+
   return {
     todayKcal: todayRow?.active_energy_kcal ?? null,
     weekAvgKcal,
-    hasAnyData: true
+    hasAnyData: true,
+    latestKcal: latestRow?.active_energy_kcal ?? null,
+    latestDaysAgo: latestRow ? daysBetweenDates(latestRow.date, todayKey) : null
   }
 }
 

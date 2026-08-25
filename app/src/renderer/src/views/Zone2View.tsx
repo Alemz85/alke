@@ -681,6 +681,7 @@ export function Zone2View({ onOpenSessions }: Zone2ViewProps): ReactElement {
           modalityKey={activeView}
           label={cardioModalityByKey(activeView).label}
           workouts={workouts.filter((workout) => cardioModalityOf(workout.type) === activeView)}
+          dailyMetrics={dailyMetrics}
           timezone={timezone}
           onOpenSessions={onOpenSessions}
         />

@@ -352,8 +352,9 @@ function buildDoseCopy(buildIntervalDays: number): string {
  * session history. PURE when `nowIso` is supplied.
  *
  * The build marker is the literal +24h to +48h interval after the latest Zone 2
- * workout. Erosion and hold markers trace to their model horizon columns and
- * remain anchored at the model row date.
+ * workout, clipped to today-or-later — passed days never keep a highlight, and
+ * an overdue window shows as one due-now mark on today. Erosion and hold markers
+ * trace to their model horizon columns and remain anchored at the model row date.
  *
  * `sessionStarts` are ISO workout timestamps, any order, duplicates tolerated.
  * Date-only values remain accepted for older callers and tests. `today` is the
@@ -450,11 +451,15 @@ export function zone2CalendarGuidance(
     const label = buildOverdue
       ? `Due now — train today to keep building. ${buildDose ?? ''}`.trim()
       : `Build window · train ${range} to keep building. ${buildDose ?? ''}`.trim()
-    let markerDate = start
+    // A day that has passed never keeps its highlight: only today-or-later window
+    // days are marked, and a fully overdue window collapses to a single due-now
+    // mark on today (the summary/legend already say "train now").
+    let markerDate = maxKey(start, today)
     while (markerDate <= end) {
       markers[markerDate] = { kind: 'build', label }
       markerDate = addDaysKey(markerDate, 1)
     }
+    if (buildOverdue) markers[today] = { kind: 'build', label }
   }
 
   // ── PHASE. warn_after_days (the durable-erosion-vs-band "eases" horizon) is

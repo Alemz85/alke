@@ -686,7 +686,8 @@ select.gym-input {
   outline-offset: var(--focus-ring-offset);
 }
 
-.gym-block-eccentric {
+.gym-block-eccentric,
+.gym-block-unilateral {
   align-self: flex-start;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);

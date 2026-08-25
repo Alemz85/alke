@@ -16,9 +16,11 @@ export interface BodyWeightPillProps {
   /** Weigh-in history behind the headline number, oldest first. Optional: the
       pill is still correct without it, it just loses the trend shape. */
   trend?: SparklinePoint[]
+  /** Opens the metric-detail popup — the pill renders as a button when provided. */
+  onClick?: () => void
 }
 
-export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): ReactElement {
+export function BodyWeightPill({ summary, trend = [], onClick }: BodyWeightPillProps): ReactElement {
   const {
     latestKg,
     latestDateLabel,
@@ -54,8 +56,8 @@ export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): Re
           ? 'down'
           : 'neutral'
 
-  return (
-    <div className={`bodyweight-pill${isStale ? ' bodyweight-pill--stale' : ''}`}>
+  const body = (
+    <>
       <span className="bodyweight-pill-eyebrow">Body weight</span>
       <div className="bodyweight-pill-figure">
         <span className="bodyweight-pill-value tabular-nums">{latestKg.toFixed(1)} kg</span>
@@ -93,6 +95,22 @@ export function BodyWeightPill({ summary, trend = [] }: BodyWeightPillProps): Re
         {stalenessLabel ? `Weighed ${stalenessLabel.toLowerCase()}` : latestDateLabel}
         {stalenessLabel && stalenessLabel !== 'Today' ? ` · ${latestDateLabel}` : ''}
       </span>
-    </div>
+    </>
   )
+
+  const pillClass = `bodyweight-pill${isStale ? ' bodyweight-pill--stale' : ''}`
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`${pillClass} bodyweight-pill--button`}
+        onClick={onClick}
+        aria-haspopup="dialog"
+        aria-label="Body weight — open details"
+      >
+        {body}
+      </button>
+    )
+  }
+  return <div className={pillClass}>{body}</div>
 }

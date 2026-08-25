@@ -65,11 +65,13 @@ export interface DashboardViewProps {
   onOpenGymTemplates: () => void
 }
 
-/** The remaining clickable dashboard metric (RHR) — load metrics moved to Recovery › Load. */
-type DashboardMetricKey = 'rhr'
+/** The clickable dashboard metrics — CTL/ATL load metrics moved to Recovery › Load. */
+type DashboardMetricKey = 'rhr' | 'energy'
 
 const METRIC_EXPLANATIONS: Record<DashboardMetricKey, string> = {
-  rhr: 'Resting heart rate is your lowest heart rate at rest, usually measured on waking. A lower or stable RHR generally tracks good recovery; a noticeable jump above your usual baseline can signal accumulated fatigue, poor sleep, or the early signs of illness. This is informational self-tracking, not a medical diagnosis.'
+  rhr: 'Resting heart rate is your lowest heart rate at rest, usually measured on waking. A lower or stable RHR generally tracks good recovery; a noticeable jump above your usual baseline can signal accumulated fatigue, poor sleep, or the early signs of illness. This is informational self-tracking, not a medical diagnosis.',
+  energy:
+    'Active energy is the kcal Apple Health attributes to movement beyond resting burn — workouts plus everyday activity. The phone exports complete days only, so the newest point is usually yesterday. Day-to-day swings are normal; the multi-week shape is the signal.'
 }
 
 /** Builds a MetricDetailPoint[] from daily-metric rows, formatting the x-axis label from the "YYYY-MM-DD" date. */
@@ -357,7 +359,7 @@ export function DashboardView({
       })
     : ''
 
-  // --- RHR metric-detail popup (the one remaining clickable metric here) ---
+  // --- Metric-detail popups: RHR tile + the body-weight / active-energy pills ---
   const rhrConfig = useMemo<MetricDetailConfig>(() => {
     const rhrSeries = toDetailSeries(sortedMetrics, (r: DailyMetric) => ({
       date: r.date,
@@ -376,6 +378,56 @@ export function DashboardView({
     }
   }, [sortedMetrics, latestRhr])
   const [rhrOpen, setRhrOpen] = useState(false)
+
+  // Body weight: sparse weigh-ins → dots at each real reading, no explanation
+  // section (the number speaks for itself), recovery accent like the pill.
+  const weightConfig = useMemo<MetricDetailConfig>(() => {
+    const series = toDetailSeries(sortedMetrics, (r: DailyMetric) => ({
+      date: r.date,
+      value: r.weight_kg
+    }))
+    return {
+      title: 'Body weight',
+      currentValueDisplay:
+        weightSummary.latestKg === null ? EM_DASH : `${weightSummary.latestKg.toFixed(1)} kg`,
+      // deltaLabel already reads "+1.0 kg vs 1 mo ago" — use it verbatim.
+      currentValueCaption: weightSummary.deltaLabel ?? undefined,
+      series,
+      domain: 'recovery',
+      seriesName: 'Weight',
+      unit: 'kg',
+      showDots: true
+    }
+  }, [sortedMetrics, weightSummary])
+  const [weightOpen, setWeightOpen] = useState(false)
+
+  // Active energy: daily and noisy → smoothed trend overlay, load accent.
+  const energyConfig = useMemo<MetricDetailConfig>(() => {
+    const series = toDetailSeries(sortedMetrics, (r: DailyMetric) => ({
+      date: r.date,
+      value: r.active_energy_kcal
+    }))
+    const displayKcal = energySummary.todayKcal ?? energySummary.latestKcal
+    return {
+      title: 'Active energy',
+      currentValueDisplay: displayKcal === null ? EM_DASH : `${Math.round(displayKcal)} kcal`,
+      currentValueCaption:
+        energySummary.todayKcal !== null
+          ? 'so far today'
+          : energySummary.latestDaysAgo === 1
+            ? 'yesterday · no sync yet today'
+            : energySummary.latestDaysAgo !== null
+              ? `last synced ${energySummary.latestDaysAgo} days ago`
+              : undefined,
+      series,
+      explanation: METRIC_EXPLANATIONS.energy,
+      domain: 'load',
+      seriesName: 'Active energy',
+      unit: 'kcal',
+      showTrend: true
+    }
+  }, [sortedMetrics, energySummary])
+  const [energyOpen, setEnergyOpen] = useState(false)
 
   return (
     <div className="view">
@@ -443,9 +495,17 @@ export function DashboardView({
 
         {/* Glance row: the three standing figures, each with its trend shape. */}
         <div className="dashboard-glance-grid">
-          <BodyWeightPill summary={weightSummary} trend={weightTrend} />
+          <BodyWeightPill
+            summary={weightSummary}
+            trend={weightTrend}
+            onClick={() => setWeightOpen(true)}
+          />
           <ProteinPill timezone={timezone} />
-          <ActiveEnergyPill summary={energySummary} trend={energyTrend} />
+          <ActiveEnergyPill
+            summary={energySummary}
+            trend={energyTrend}
+            onClick={() => setEnergyOpen(true)}
+          />
         </div>
       </div>
 
@@ -513,6 +573,8 @@ export function DashboardView({
       )}
 
       {rhrOpen && <MetricDetailModal config={rhrConfig} onClose={() => setRhrOpen(false)} />}
+      {weightOpen && <MetricDetailModal config={weightConfig} onClose={() => setWeightOpen(false)} />}
+      {energyOpen && <MetricDetailModal config={energyConfig} onClose={() => setEnergyOpen(false)} />}
 
       {templateView && (
         <TemplateViewModal

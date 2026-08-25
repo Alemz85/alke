@@ -15,6 +15,22 @@
   border-radius: var(--radius-lg);
 }
 
+/* Clickable variant — see BodyWeightPill.css for the shared rationale. */
+.activeenergy-pill--button {
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.activeenergy-pill--button:hover,
+.activeenergy-pill--button:focus-visible {
+  background: var(--color-surface-hover);
+}
+
 /* Shared glance-pill skeleton — see BodyWeightPill.css for the rationale. */
 .activeenergy-pill-eyebrow {
   display: flex;

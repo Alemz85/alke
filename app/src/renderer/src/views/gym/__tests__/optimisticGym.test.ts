@@ -119,4 +119,36 @@ describe('optimistic Gym records', () => {
 
     expect(result.sets[0].is_eccentric).toBe(true)
   })
+
+  it('defaults an omitted optimistic unilateral flag to false', () => {
+    const input: NewGymSession = {
+      performed_at: '2026-07-13T12:00:00Z',
+      sets: [{ exercise_id: 'exercise-1', reps: 8, weight_kg: 60 }]
+    }
+
+    const result = makeOptimisticSession(
+      input,
+      exercises,
+      'optimistic:session',
+      input.performed_at as string
+    )
+
+    expect(result.sets[0].is_unilateral).toBe(false)
+  })
+
+  it('preserves a true unilateral flag in the optimistic mapping', () => {
+    const input: NewGymSession = {
+      performed_at: '2026-07-13T12:00:00Z',
+      sets: [{ exercise_id: 'exercise-1', reps: 8, weight_kg: 60, is_unilateral: true }]
+    }
+
+    const result = makeOptimisticSession(
+      input,
+      exercises,
+      'optimistic:session',
+      input.performed_at as string
+    )
+
+    expect(result.sets[0].is_unilateral).toBe(true)
+  })
 })

@@ -102,10 +102,11 @@ const MIN_SESSION_EFFECTIVE_AEROBIC_S = 600
  * (metrics/models.py Z2_EASY_AEROBIC_WEIGHT vs the z2 weight) — at or above ten
  * effective minutes. An easy walk that earns a genuine half-weight dose therefore
  * qualifies; a fragment that grazed the zones does not. Strength/core/other
- * modalities are excluded outright, so pure-gym days never appear on the Zone-2
- * calendar. A cardio workout whose zones haven't been computed yet
- * (computed == null) is still shown — we can't yet rule out its aerobic minutes,
- * and dropping fresh swims/bikes would understate the calendar.
+ * modalities are excluded outright. This gate anchors the GUIDANCE (build
+ * window / markers) only — the calendar grid itself shows every cardio session,
+ * qualifying or not. A cardio workout whose zones haven't been computed yet
+ * (computed == null) still qualifies — we can't yet rule out its aerobic
+ * minutes, and dropping fresh swims/bikes would stall the build-window anchor.
  */
 function isZone2Session(w: Workout): boolean {
   if (cardioModalityOf(w.type) == null) return false
@@ -164,17 +165,6 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const rows = useMemo(() => fitnessQuery.data ?? [], [fitnessQuery.data])
   const latest = useMemo(() => latestZone2Row(rows), [rows])
 
-  // Only Zone-2 cardio sessions belong on this tab's calendar — strength/gym days
-  // are filtered out entirely, and a day is kept only when it had actual Zone-2 work.
-  const zone2Workouts = useMemo(
-    () => (monthWorkoutsQuery.data ?? []).filter(isZone2Session),
-    [monthWorkoutsQuery.data]
-  )
-  const daysByKey = useMemo(
-    () => groupWorkoutsByDay(zone2Workouts, timezone),
-    [zone2Workouts, timezone]
-  )
-
   // Full timestamps from trailing history anchor the literal +24h to +48h
   // build window. Do not derive this from the viewed month: paging the calendar
   // must not change what the most recent Zone-2 session was.
@@ -197,11 +187,11 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     [latest, timezone, todayKey, zone2SessionStarts]
   )
 
-  // Drawer needs a day bucket that still includes every CARDIO workout of the
-  // day (isZone2Session above additionally requires actual Z2/Z3 seconds, so
-  // a cardio session with no zone time yet would otherwise vanish from the
-  // drawer) — but never gym/strength, so a mixed swim+gym day only shows the
-  // swim here. Built from the raw month-workouts query, cardio-filtered.
+  // Calendar grid + drawer source: every CARDIO workout of the day — including
+  // sessions that don't qualify as Zone-2 work (a short run still shows as a
+  // cardio session; it just never anchors a build window, since the guidance
+  // above filters with isZone2Session) — but never gym/strength, so a mixed
+  // swim+gym day only shows the swim here. Raw month-workouts, cardio-filtered.
   const allDaysByKey = useMemo(
     () =>
       groupWorkoutsByDay(
@@ -298,9 +288,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
     { label: 'Z2 min/mo', value: formatPerMonth(cardioZ2MinPerMonth) }
   ]
 
-  const selectedBucket = selectedDayKey
-    ? (allDaysByKey.get(selectedDayKey) ?? daysByKey.get(selectedDayKey))
-    : undefined
+  const selectedBucket = selectedDayKey ? allDaysByKey.get(selectedDayKey) : undefined
   const selectedDateLabel = selectedDayKey
     ? new Date(`${selectedDayKey}T12:00:00Z`).toLocaleDateString('en-US', {
         weekday: 'long',
@@ -357,19 +345,15 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
   const atRisk = hasMaintenanceFlag(latest)
   const reason = evidenceReason(latest.evidence_state)
 
-  // Any guidance marker that falls outside the visible month is called out in the
+  // Any RENDERED marker that falls outside the visible month is called out in the
   // summary line instead of the grid (dates are still shown, just not annotated).
-  // A null marker (horizon column not yet populated) is simply absent — never off-month.
-  const markerInMonth = (key: string | null): boolean => {
-    if (key == null) return true
+  // Checked against the marker record, not the raw window bounds — past window
+  // days are clipped out of the markers and must not trigger the note.
+  const markerInMonth = (key: string): boolean => {
     const [y, m] = key.split('-').map(Number)
     return y === viewYear && m === viewMonth
   }
-  const anyMarkerOffMonth =
-    !markerInMonth(guidance.buildWindow?.start ?? null) ||
-    !markerInMonth(guidance.buildWindow?.end ?? null) ||
-    !markerInMonth(guidance.easesFrom) ||
-    !markerInMonth(guidance.holdBy)
+  const anyMarkerOffMonth = Object.keys(guidance.markers).some((key) => !markerInMonth(key))
 
   return (
     <section className="z2f" aria-label="Cardio fitness">
@@ -496,7 +480,7 @@ export function Zone2FitnessHeader({ timezone }: Props): ReactElement | null {
             year={viewYear}
             month={viewMonth}
             today={today}
-            daysByKey={daysByKey}
+            daysByKey={allDaysByKey}
             onSelectDay={openDay}
             onPrevMonth={handlePrevMonth}
             onNextMonth={handleNextMonth}

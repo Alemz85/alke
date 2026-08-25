@@ -16,6 +16,24 @@
   border-radius: var(--radius-lg);
 }
 
+/* Clickable variant (opens the metric-detail popup) — same affordance as the
+   RHR .stat-square tile so the interactive tiles read as one family. The
+   resets neutralize the UA button styles the div variant never had. */
+.bodyweight-pill--button {
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.bodyweight-pill--button:hover,
+.bodyweight-pill--button:focus-visible {
+  background: var(--color-surface-hover);
+}
+
 /* The three glance pills share one skeleton: an eyebrow row of fixed height,
    the figure, then the footnote pinned to the bottom edge. The fixed row height
    is set by the tallest of the three heads (Protein's 32px inline add), so all

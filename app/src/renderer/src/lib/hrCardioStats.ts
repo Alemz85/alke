@@ -1,7 +1,9 @@
-// Pure stats helpers for HR-only cardio modalities (cycling, rowing): no
-// distance signal exists for these workout types today, so duration and
-// avg-HR/energy are the volume and effort proxies instead of pace/distance.
-import type { Workout } from '@shared/types'
+// Pure stats helpers for the HR-led cardio modalities (cycling, rowing):
+// most sessions here carry no distance (indoor), so duration and avg-HR/energy
+// are the primary volume and effort proxies. Cycling additionally has a
+// DAILY watch-tracked total distance (daily_metrics.cycling_distance_m,
+// includes unrecorded rides) — see monthRiddenTotals.
+import type { DailyMetric, Workout } from '@shared/types'
 import { toZonedYMD } from '../hooks/sessionsDate'
 
 export interface LifetimeCardioStats {
@@ -79,6 +81,56 @@ export function monthlyCardioTotals(
   now: Date = new Date()
 ): PeriodCardioTotals {
   return periodCardioTotals(workouts, timezone, 'month', now)
+}
+
+export interface MonthRiddenTotals {
+  /** Watch-tracked total km this calendar month, incl. unrecorded rides. Null when NO row in the month carries a value (pre-ingest dates), so callers hide rather than show a false 0. */
+  totalKm: number | null
+  /** Sum of recorded sessions' distance this month; null when no session carries distance (indoor rides). */
+  recordedKm: number | null
+}
+
+/**
+ * This calendar month's ridden distance (in `timezone`): the watch's daily
+ * cycling total (daily_metrics.cycling_distance_m — counts unrecorded rides)
+ * against what recorded sessions account for. Same null-over-false-zero
+ * convention as walkingStats.periodDistanceTotals: a month with no data rows
+ * at all yields null, not 0 — cycling_distance_m only exists from when that column was first ingested.
+ */
+export function monthRiddenTotals(
+  workouts: Workout[],
+  metrics: DailyMetric[],
+  timezone: string | null | undefined,
+  now: Date = new Date()
+): MonthRiddenTotals {
+  const { year, month } = toZonedYMD(now.toISOString(), timezone)
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
+
+  let totalM = 0
+  let hasDaily = false
+  for (const m of metrics) {
+    if (!m.date.startsWith(monthPrefix)) continue
+    if (m.cycling_distance_m != null) {
+      totalM += m.cycling_distance_m
+      hasDaily = true
+    }
+  }
+
+  let recordedM = 0
+  let hasRecorded = false
+  for (const w of workouts) {
+    const ymd = toZonedYMD(w.start_at, timezone)
+    if (ymd.year !== year || ymd.month !== month) continue
+    if (w.distance_m != null) {
+      recordedM += w.distance_m
+      hasRecorded = true
+    }
+  }
+
+  return {
+    totalKm: hasDaily ? totalM / 1000 : null,
+    recordedKm: hasRecorded ? recordedM / 1000 : null
+  }
 }
 
 /** This calendar year's totals (in `timezone`). */

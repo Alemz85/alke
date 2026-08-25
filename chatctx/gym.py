@@ -73,6 +73,8 @@ leave the DB mid-way through a logical operation if a later step fails:
       {"exercise": "lat machine", "reps": 12, "kg": 45},    // one set (no "sets" key)
       {"exercise": "pelvic drop", "sets": 3, "reps": 10},   // kg omitted: carries no load
       {"exercise": "wall sit", "sets": 3, "secs": 45},      // a HOLD, not "1 rep"
+      {"exercise": "seated cable row", "sets": 3, "reps": 12, "kg": 10,
+       "unilateral": true},              // single-arm/-leg: kg is PER SIDE
       {"exercise": "heel walk", "warmup": true, "create": true,   // create mints a catalog row
        "body_part": "legs", "primary_muscles": ["tibialis"],      // …fill it in while you are here
        "equipment": "bodyweight", "mechanics": "isolation", "movement_pattern": "carry"}
@@ -187,6 +189,10 @@ EQUIPMENT = (
 # value — and an unknown/uncatalogued one — means the weight was simply never
 # entered. See load_text() for why the difference has to survive into display.
 UNLOADED_EQUIPMENT = ("bodyweight", "band")
+# Equipment whose weight_kg is PER HAND — one implement's weight (the rack
+# increment), never the pair's total. See load_text() for why the marker has
+# to survive into display (agent_log #30).
+PER_HAND_EQUIPMENT = ("dumbbell", "kettlebell")
 MECHANICS = ("compound", "isolation")
 MOVEMENT_PATTERNS = (
     "squat", "hinge", "lunge", "horizontal push", "vertical push", "horizontal pull",
@@ -851,8 +857,16 @@ def load_text(weight_kg, equipment: str | None, *, missing: str = "?kg") -> str:
     cases, so use it — and treat an uncatalogued exercise as unknown rather than
     guessing bodyweight, since asserting a load the user never entered is the
     failure being fixed. Fill the gap with `exercise-update --equipment ..`.
+
+    Dumbbell/kettlebell weights are stored PER HAND (the convention in
+    modes/_shared.md) and render with an explicit "/hand" so a per-hand load on Incline
+    Dumbbell Press can't be misread as the pair's total — the same
+    silent-error shape as the blank-weight ambiguity, but worse because the
+    bare number LOOKS valid (agent_log #30).
     """
     if weight_kg is not None:
+        if equipment in PER_HAND_EQUIPMENT:
+            return f"{weight_kg}/hand"
         return str(weight_kg)
     return "bw" if equipment in UNLOADED_EQUIPMENT else missing
 
@@ -1053,7 +1067,7 @@ def cmd_list(args) -> None:
     since = (datetime.date.today() - datetime.timedelta(days=args.days)).isoformat()
     rows = _request("GET", "gym_sessions", params={
         "select": "id,performed_at,title,notes,source,body_parts,workout_id,"
-                  "gym_sets(exercise_id,reps,duration_s,weight_kg,is_warmup,"
+                  "gym_sets(exercise_id,reps,duration_s,weight_kg,is_warmup,is_unilateral,"
                   "exercises(name,equipment))",
         "performed_at": f"gte.{since}",
         "order": "performed_at.desc",
@@ -1072,10 +1086,14 @@ def cmd_list(args) -> None:
                     continue
                 ex_name = (s.get("exercises") or {}).get("name") or "?"
                 by_ex.setdefault(ex_name, []).append(s)
+            # "·uni" marks a single-arm/-leg set: its load is per SIDE and must
+            # never be compared against bilateral sets of the same exercise
+            # (agent_log #31 — a single-arm row at half the load is not a regression).
             content = "; ".join(
                 f"{name} " + " ".join(
                     f"{set_dose_text(s)}"
                     f"x{load_text(s.get('weight_kg'), (s.get('exercises') or {}).get('equipment'))}"
+                    f"{'·uni' if s.get('is_unilateral') else ''}"
                     for s in ex_sets
                 )
                 for name, ex_sets in by_ex.items()
@@ -1172,7 +1190,7 @@ def cmd_log(args) -> None:
                 and exercise.get("equipment") not in UNLOADED_EQUIPMENT):
             unweighted.append(exercise["name"])
         for _ in range(count):
-            set_rows.append({
+            set_row = {
                 "exercise_id": exercise["id"],
                 "reps": reps,
                 "duration_s": secs,
@@ -1180,7 +1198,13 @@ def cmd_log(args) -> None:
                 "rpe": entry.get("rpe"),
                 "is_warmup": bool(entry.get("warmup")),
                 "note": entry.get("note"),
-            })
+            }
+            # Single-arm/-leg set: kg is per side, not comparable to bilateral
+            # sets of the same exercise (agent_log #31). Key sent only when
+            # true so the insert stays valid on a DB predating the column.
+            if entry.get("unilateral"):
+                set_row["is_unilateral"] = True
+            set_rows.append(set_row)
 
     created = _request("POST", "gym_sessions", body=session, prefer="return=representation")
     session_id = created[0]["id"]

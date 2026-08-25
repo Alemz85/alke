@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Workout } from '@shared/types'
-import { avgHrByMonth, lifetimeCardioStats, monthlyCardioTotals, periodCardioTotals, yearlyCardioTotals } from '../hrCardioStats'
+import type { DailyMetric, Workout } from '@shared/types'
+import { avgHrByMonth, lifetimeCardioStats, monthRiddenTotals, monthlyCardioTotals, periodCardioTotals, yearlyCardioTotals } from '../hrCardioStats'
 
 function workout(
   id: string,
@@ -96,5 +96,34 @@ describe('avgHrByMonth', () => {
 
   it('handles empty input', () => {
     expect(avgHrByMonth([], 'UTC')).toEqual([])
+  })
+})
+
+describe('monthRiddenTotals', () => {
+  const dm = (date: string, cyclingM: number | null): DailyMetric =>
+    ({ date, cycling_distance_m: cyclingM }) as DailyMetric
+
+  const now = new Date('2026-08-26T12:00:00Z')
+
+  it('sums the month daily totals and recorded session distance separately', () => {
+    const rides = [
+      { ...workout('a', '2026-08-18T17:00:00Z', 1800, 140), distance_m: 6200 },
+      workout('b', '2026-08-10T10:00:00Z', 1800, 135) // indoor, no distance
+    ]
+    const metrics = [
+      dm('2026-08-18', 12000),
+      dm('2026-08-17', 1500),
+      dm('2026-07-31', 9999), // previous month must not leak in
+      dm('2026-08-25', null) // null row contributes nothing
+    ]
+    const t = monthRiddenTotals(rides, metrics, 'UTC', now)
+    expect(t.totalKm).toBeCloseTo(13.5, 3)
+    expect(t.recordedKm).toBeCloseTo(6.2, 3)
+  })
+
+  it('yields null (not 0) when no month row carries a daily value — pre-ingest dates hide the line', () => {
+    const t = monthRiddenTotals([], [dm('2026-08-24', null)], 'UTC', now)
+    expect(t.totalKm).toBeNull()
+    expect(t.recordedKm).toBeNull()
   })
 })

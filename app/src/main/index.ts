@@ -358,11 +358,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.getLastIngestAt, () => db.getLastIngestAt())
   // The token never enters the renderer except inside this URL, and the URL
   // exists to leave the machine anyway (QR → the owner's phone).
+  // GYMCARD_URL is the Vercel deployment (gymcard-web/), not the Supabase
+  // function: Supabase rewrites text/html to text/plain on *.supabase.co
+  // (anti-phishing), so the phone showed raw source. No Supabase fallback on
+  // purpose — a missing var should hide the button, not QR a broken page.
   ipcMain.handle(IPC_CHANNELS.getGymCardUrl, () => {
-    const base = process.env.SUPABASE_URL
+    const base = process.env.GYMCARD_URL?.replace(/\/+$/, '')
     const token = process.env.GYMCARD_TOKEN
     if (!base || !token) return null
-    return `${base}/functions/v1/gymcard?key=${token}`
+    return `${base}/?key=${token}`
   })
   ipcMain.handle(IPC_CHANNELS.getInsightCorrelations, () => db.getInsightCorrelations())
   ipcMain.handle(IPC_CHANNELS.getInsightModels, () => db.getInsightModels())
