@@ -1,14 +1,33 @@
 // Pure HTML renderer for the phone gym card — no I/O, unit tested.
 //
 // The card is the answer to one question, asked between sets on a phone:
-// "what do I do next?" So exercise name and dose lead every row, technique
-// notes stay attached but recede, and the whole page is a single static HTML
-// document with inline styles — no scripts, no external assets, nothing to
-// fail on gym Wi-Fi. Dark like the desktop app; system font stack because
-// the page must be self-contained.
+// "what do I do next?" So exercise name, dose, and last logged sets lead
+// every row; coaching notes collapse to previews; template cards fold.
+// The whole page is one HTML document with inline styles and a single
+// inline script (collapse persistence — progressive enhancement only):
+// zero network dependencies, nothing to fail on gym Wi-Fi, which is also
+// why type stays on the system stack. Tokens follow DESIGN.md (true-black
+// canvas, luminance elevation, hairlines, sessions accent #FB923C).
+
+export interface CardLastSet {
+  reps: number | null;
+  weight_kg: number | null;
+  duration_s: number | null;
+  /** Single-arm/-leg set: weight is PER SIDE, never comparable to bilateral sets (agent_log #31). */
+  is_unilateral?: boolean;
+}
+
+/** The working sets last logged for this exercise ON THIS TEMPLATE (family). */
+export interface CardLastLog {
+  /** YYYY-MM-DD of the session the sets come from. */
+  date: string;
+  sets: CardLastSet[];
+}
 
 export interface CardTemplateItem {
   exercise_name: string;
+  /** Dumbbell/kettlebell: stored weights are PER HAND (modes/_shared.md convention) and render "kg/hand". */
+  per_hand?: boolean;
   position: number;
   target_sets: number | null;
   target_reps: number | null;
@@ -16,10 +35,13 @@ export interface CardTemplateItem {
   target_weight_kg: number | null;
   rest_after_s: number | null;
   note: string | null;
+  last_log?: CardLastLog | null;
 }
 
 export interface CardTemplate {
   id: string;
+  /** Version family — the stable identity used to persist collapse state. */
+  family_id?: string;
   name: string;
   version: number;
   notes: string | null;
@@ -72,6 +94,124 @@ export function doseText(item: CardTemplateItem): string {
     : null;
   if (measure === null) return item.target_sets != null ? `${item.target_sets} sets` : "—";
   return item.target_sets != null ? `${item.target_sets} × ${measure}` : measure;
+}
+
+/**
+ * "60 kg × 10, 10, 8" — the sets actually done, compressed for one line.
+ * Uniform weight leads once; mixed weights list per set; bodyweight lists
+ * the bare measures (the row's prescription supplies the unit context).
+ * Unilateral sets carry a "·uni" marker (weight is per SIDE — same vocabulary
+ * as gym.py list and the app's Unilateral checkbox), and the marker is part of
+ * a set's grouping identity: a unilateral and a bilateral set at the same
+ * weight must never fold into one run, because their loads are incomparable
+ * (agent_log #31). `perHand` renders dumbbell/kettlebell weights "kg/hand"
+ * (per-hand storage convention, agent_log #30).
+ */
+export function lastLogText(log: CardLastLog, perHand = false): string {
+  const measure = (s: CardLastSet) =>
+    s.duration_s != null ? `${s.duration_s}s` : s.reps != null ? String(s.reps) : "—";
+  const kgUnit = perHand ? "kg/hand" : "kg";
+  const identity = (s: CardLastSet) =>
+    `${s.weight_kg == null ? "bw" : String(s.weight_kg)}|${s.is_unilateral === true}`;
+  const identities = new Set(log.sets.map(identity));
+  if (identities.size <= 1) {
+    const w = log.sets[0]?.weight_kg;
+    const uni = log.sets[0]?.is_unilateral === true ? " ·uni" : "";
+    const measures = log.sets.map(measure).join(", ");
+    return w != null ? `${w} ${kgUnit} × ${measures}${uni}` : `${measures}${uni}`;
+  }
+  // Mixed weights: consecutive same-identity sets fold into one run, so a
+  // drop-set day reads "45kg×10,10 · 40kg×10,10" instead of four tokens.
+  const runs: { w: number | null; uni: boolean; ms: string[] }[] = [];
+  for (const s of log.sets) {
+    const w = s.weight_kg ?? null;
+    const uni = s.is_unilateral === true;
+    const prev = runs[runs.length - 1];
+    if (prev && String(prev.w) === String(w) && prev.uni === uni) prev.ms.push(measure(s));
+    else runs.push({ w, uni, ms: [measure(s)] });
+  }
+  return runs
+    .map((r) =>
+      `${r.w != null ? `${r.w}${kgUnit}` : "bw"}×${r.ms.join(",")}${r.uni ? "·uni" : ""}`
+    )
+    .join(" · ");
+}
+
+// Raw query rows the handlers feed into buildLastLogs — kept structural so
+// both the Deno and Vercel handlers can pass their supabase-js results as-is.
+export interface SessionLinkRow {
+  /** Template VERSION id the session was logged against (any version). */
+  template_id: string;
+  session_id: string;
+  performed_at: string | null;
+}
+
+export interface LoggedSetRow {
+  session_id: string;
+  exercise_id: string;
+  position: number;
+  reps: number | null;
+  /** numeric comes back as number or string depending on the driver. */
+  weight_kg: number | string | null;
+  duration_s: number | null;
+  is_unilateral?: boolean | null;
+}
+
+/**
+ * Last logged working sets per (template family, exercise), keyed
+ * `${family_id}|${exercise_id}`. Sessions count for a template only when
+ * linked to it via gym_session_templates — so doing exercise A under
+ * template A never surfaces on template B's card, even if B also lists A.
+ * Matching by family keeps history across template version bumps.
+ */
+export function buildLastLogs(
+  links: SessionLinkRow[],
+  sets: LoggedSetRow[],
+  familyByVersion: Map<string, string>,
+): Map<string, CardLastLog> {
+  const sessionDate = new Map<string, string>();
+  const sessionFamilies = new Map<string, Set<string>>();
+  for (const link of links) {
+    if (link.performed_at == null) continue;
+    const family = familyByVersion.get(link.template_id);
+    if (family === undefined) continue;
+    sessionDate.set(link.session_id, String(link.performed_at));
+    let families = sessionFamilies.get(link.session_id);
+    if (!families) sessionFamilies.set(link.session_id, families = new Set());
+    families.add(family);
+  }
+
+  const bySessionExercise = new Map<string, LoggedSetRow[]>();
+  for (const set of sets) {
+    const key = `${set.session_id}|${set.exercise_id}`;
+    let group = bySessionExercise.get(key);
+    if (!group) bySessionExercise.set(key, group = []);
+    group.push(set);
+  }
+
+  const latest = new Map<string, { at: string; log: CardLastLog }>();
+  for (const [key, group] of bySessionExercise) {
+    const [sessionId, exerciseId] = key.split("|");
+    const at = sessionDate.get(sessionId);
+    if (at === undefined) continue;
+    const log: CardLastLog = {
+      date: at.slice(0, 10),
+      sets: [...group]
+        .sort((a, b) => a.position - b.position)
+        .map((s) => ({
+          reps: s.reps,
+          weight_kg: s.weight_kg == null ? null : Number(s.weight_kg),
+          duration_s: s.duration_s,
+          is_unilateral: s.is_unilateral === true,
+        })),
+    };
+    for (const family of sessionFamilies.get(sessionId) ?? []) {
+      const target = `${family}|${exerciseId}`;
+      const current = latest.get(target);
+      if (!current || at > current.at) latest.set(target, { at, log });
+    }
+  }
+  return new Map([...latest].map(([key, value]) => [key, value.log]));
 }
 
 export function restText(seconds: number): string {
@@ -170,18 +310,52 @@ export function rehabDoseText(item: CardRehabItem): string {
   return "—";
 }
 
+/** Month-day, year only when it differs from the render year: "Aug 18" / "Aug 18 2025". */
+function fmtDay(iso: string, contextYear?: number): string {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  const MONTHS = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  const day = `${MONTHS[(m ?? 1) - 1]} ${d}`;
+  return contextYear != null && y === contextYear ? day : `${day} ${y}`;
+}
+
+/**
+ * A coaching note: short ones render whole; long ones collapse to a two-line
+ * preview that expands on tap. <details> keeps the page script-free, and the
+ * full text stays in the DOM (the clamp is visual only) for find-in-page
+ * and screen readers.
+ */
+function noteHtml(note: string | null): string {
+  if (!note) return "";
+  if (note.length <= 140) return `<p class="note">${escapeHtml(note)}</p>`;
+  return `<details class="cue"><summary><span class="txt">${
+    escapeHtml(note)
+  }</span><span class="chev" aria-hidden="true"></span></summary></details>`;
+}
+
 function rehabItemHtml(item: CardRehabItem): string {
   const steps = item.steps ?? [];
-  const week = item.weekly_target != null
-    ? `${item.done_this_week}/${item.weekly_target} this week`
-    : null;
+  const target = item.weekly_target;
+  const done = target != null ? Math.min(item.done_this_week, target) : 0;
+  // Weekly adherence as a dot meter (filled = days done); the count text
+  // carries the meaning, the dots are the glance.
+  const dots = target != null && target >= 1 && target <= 10
+    ? `<span class="wk" aria-hidden="true">${
+      Array.from({ length: target }, (_, i) => `<i${i < done ? ' class="on"' : ""}></i>`).join("")
+    }</span>`
+    : "";
+  const week = target != null
+    ? `<div class="last"><span class="lk">Week</span><b>${
+      escapeHtml(`${item.done_this_week}/${target} this week`)
+    }</b>${dots}</div>`
+    : "";
   return `<li>
-<div class="row">
-<span class="name">${escapeHtml(item.name)}<small class="tag">${escapeHtml(item.injury_name)}</small></span>
-<span class="dose">${escapeHtml(rehabDoseText(item))}${
-    week ? `<small>${escapeHtml(week)}</small>` : ""
-  }</span>
-</div>
+<span class="name">${escapeHtml(item.name)}<span class="tag">${escapeHtml(item.injury_name)}</span></span>
+<span class="dose">${escapeHtml(rehabDoseText(item))}</span>
+<div class="sub">
+${week}
 ${
     steps.length > 1
       ? `<ul class="steps">${
@@ -193,77 +367,95 @@ ${
       }</ul>`
       : ""
   }
-${steps.length === 1 && steps[0].note ? `<p class="note">${escapeHtml(steps[0].note)}</p>` : ""}
+${steps.length === 1 && steps[0].note ? noteHtml(steps[0].note) : ""}
+</div>
 </li>`;
 }
 
 function rehabSectionHtml(items: CardRehabItem[]): string {
   if (items.length === 0) return "";
-  return `<section>
-<header>
+  return `<details class="tcard rehab" data-key="rehab" open>
+<summary>
 <h2>Recovery plan</h2>
-<p class="status">Accountable rehab, current-week dose in force</p>
-</header>
-<ol>
+<p class="meta">Accountable rehab · this week's dose in force</p>
+<i class="chev" aria-hidden="true"></i>
+</summary>
+<ol class="rlist">
 ${items.map(rehabItemHtml).join("\n")}
 </ol>
-</section>`;
+</details>`;
 }
 
-function fmtDay(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
-  const MONTHS = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  return `${MONTHS[(m ?? 1) - 1]} ${d} ${y}`;
-}
-
-function statusText(template: CardTemplate): string {
-  if (template.active_since) return `Active since ${fmtDay(template.active_since)}`;
-  if (template.last_done) return `Last done ${fmtDay(template.last_done)}`;
+function statusText(template: CardTemplate, year: number): string {
+  if (template.active_since) return `Active since ${fmtDay(template.active_since, year)}`;
+  if (template.last_done) return `Last done ${fmtDay(template.last_done, year)}`;
   return "Not started";
 }
 
-function itemHtml(item: CardTemplateItem, defaultRest: number | null): string {
+function itemHtml(
+  item: CardTemplateItem,
+  defaultRest: number | null,
+  index: number,
+  year: number,
+): string {
   const rest = item.rest_after_s ?? defaultRest;
   const meta: string[] = [];
-  if (item.target_weight_kg != null) meta.push(`${item.target_weight_kg} kg`);
+  if (item.target_weight_kg != null) {
+    meta.push(`${item.target_weight_kg} ${item.per_hand ? "kg/hand" : "kg"}`);
+  }
   if (item.rest_after_s != null && rest != null) meta.push(`rest ${restText(rest)}`);
+  const last = item.last_log
+    ? `<div class="last"><span class="lk">Last</span><b>${
+      escapeHtml(lastLogText(item.last_log, item.per_hand === true))
+    }</b><span class="when">${escapeHtml(fmtDay(item.last_log.date, year))}</span></div>`
+    : "";
   return `<li>
-<div class="row">
+<span class="idx">${index}</span>
 <span class="name">${escapeHtml(item.exercise_name)}</span>
 <span class="dose">${escapeHtml(doseText(item))}${
     meta.length ? `<small>${escapeHtml(meta.join(" · "))}</small>` : ""
   }</span>
+<div class="sub">
+${last}
+${noteHtml(item.note)}
 </div>
-${item.note ? `<p class="note">${escapeHtml(item.note)}</p>` : ""}
 </li>`;
 }
 
-function templateHtml(template: CardTemplate): string {
+function templateHtml(template: CardTemplate, year: number): string {
   const items = [...template.items].sort((a, b) => a.position - b.position);
-  const chips = [
+  const facts = [
     template.version > 1 ? `v${template.version}` : null,
     `${items.length} exercise${items.length === 1 ? "" : "s"}`,
     template.default_rest_s != null ? `rest ${restText(template.default_rest_s)}` : null,
     template.done_count > 0 ? `done ${template.done_count}×` : null,
-  ].filter((chip): chip is string => chip !== null);
-  return `<section>
-<header>
+  ].filter((fact): fact is string => fact !== null);
+  const active = template.active_since !== null;
+  // Active templates open (that's today's session); idle ones fold to a bar.
+  // data-key lets the inline script remember manual folds across refreshes.
+  return `<details class="tcard${active ? " is-active" : ""}" data-key="${
+    escapeHtml(template.family_id ?? template.id)
+  }"${active ? " open" : ""}>
+<summary>
 <h2>${escapeHtml(template.name)}</h2>
-<p class="status${template.active_since ? " is-active" : ""}">${escapeHtml(statusText(template))}</p>
-<p class="chips">${chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}</p>
-</header>
+<p class="meta"><span class="status${active ? " is-active" : ""}">${
+    active ? '<i class="dot"></i>' : ""
+  }${escapeHtml(statusText(template, year))}</span>${
+    facts.map((fact) => ` · ${escapeHtml(fact)}`).join("")
+  }</p>
+<i class="chev" aria-hidden="true"></i>
+</summary>
 ${
     template.notes
-      ? `<details><summary>Programme notes</summary><p>${escapeHtml(template.notes)}</p></details>`
+      ? `<details class="tnotes"><summary>Programme notes</summary><p>${
+        escapeHtml(template.notes)
+      }</p></details>`
       : ""
   }
-<ol>
-${items.map((item) => itemHtml(item, template.default_rest_s)).join("\n")}
+<ol class="items">
+${items.map((item, i) => itemHtml(item, template.default_rest_s, i + 1, year)).join("\n")}
 </ol>
-</section>`;
+</details>`;
 }
 
 /** `generatedAt` is injected for testability; pass `new Date()` in the handler. */
@@ -277,71 +469,164 @@ export function renderGymCard(
     const runDiff = Number(b.active_since !== null) - Number(a.active_since !== null);
     return runDiff !== 0 ? runDiff : a.name.localeCompare(b.name);
   });
+  const year = generatedAt.getUTCFullYear();
   const body = (ordered.length === 0
     ? `<p class="empty">No active templates. Create one in the desktop app.</p>`
-    : ordered.map(templateHtml).join("\n")) + rehabSectionHtml(rehab);
-  const stamp = generatedAt.toISOString().slice(0, 16).replace("T", " ");
+    : ordered.map((t) => templateHtml(t, year)).join("\n")) + rehabSectionHtml(rehab);
+  const iso = generatedAt.toISOString();
+  const stamp = `Updated ${fmtDay(iso, year)} · ${iso.slice(11, 16)} UTC`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>Alke · Gym card</title>
 <style>
-:root { color-scheme: dark; }
+/* Tokens from DESIGN.md: true-black canvas, luminance elevation (no shadows),
+   hairline dividers, tabular figures, sessions/adherence accent #FB923C.
+   System stack on purpose: the page must render whole on gym Wi-Fi. */
+:root {
+  color-scheme: dark;
+  --t1: #fff; --t2: rgba(255,255,255,0.72); --t3: rgba(255,255,255,0.48);
+  --t4: rgba(255,255,255,0.30); --card: #16181A; --inset: #0A0A0A;
+  --hair: rgba(255,255,255,0.12); --soft: rgba(255,255,255,0.06);
+  --acc: #FB923C; --acc-dim: rgba(251,146,60,0.15);
+}
 * { box-sizing: border-box; margin: 0; }
 body {
-  background: #000; color: rgba(255,255,255,0.72);
+  background: #000; color: var(--t2);
   font: 400 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  padding: 20px 16px 48px; max-width: 560px; margin: 0 auto;
+  padding: 24px 16px calc(48px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto;
+  -webkit-text-size-adjust: 100%;
 }
-h1 { color: #fff; font-size: 20px; font-weight: 600; letter-spacing: -0.2px; }
-.generated { color: rgba(255,255,255,0.48); font-size: 12px; margin-top: 2px; }
-section {
-  margin-top: 24px; border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 16px; background: #0a0a0a; overflow: hidden;
+h1 { color: var(--t1); font-size: 22px; font-weight: 650; letter-spacing: -0.3px; }
+.generated { color: var(--t3); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+/* Collapsible template cards. The summary is the whole header: name + meta,
+   one tap target. It stays pinned while the open card's exercises scroll
+   past, so mid-set you always know which day you're looking at. */
+.tcard { margin-top: 16px; border-radius: 20px; background: var(--card); }
+.tcard.is-active { border: 1px solid var(--hair); }
+.tcard > summary {
+  list-style: none; display: block; position: sticky; top: 0; z-index: 2;
+  background: var(--card); border-radius: 20px; padding: 15px 44px 13px 16px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
-section > header { padding: 16px 16px 12px; }
-h2 { color: #fff; font-size: 17px; font-weight: 600; }
-.status { font-size: 12px; color: rgba(255,255,255,0.48); margin-top: 3px; }
-.status.is-active { color: #a5b4fc; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chips span {
-  font-size: 11px; padding: 3px 9px; border-radius: 999px;
-  background: #16181a; color: rgba(255,255,255,0.72);
-  font-variant-numeric: tabular-nums;
+.tcard > summary:active { background: #1D2023; }
+.tcard > summary::-webkit-details-marker { display: none; }
+.tcard[open] > summary { border-radius: 20px 20px 0 0; border-bottom: 1px solid var(--soft); }
+h2 { color: var(--t1); font-size: 18px; font-weight: 600; letter-spacing: -0.2px; }
+.meta {
+  margin-top: 4px; font-size: 12px; color: var(--t3);
+  font-variant-numeric: tabular-nums; line-height: 1.6;
 }
-details { border-top: 1px solid rgba(255,255,255,0.06); padding: 10px 16px; }
-summary { font-size: 12px; color: rgba(255,255,255,0.48); cursor: pointer; }
-details p { font-size: 13px; line-height: 1.55; padding: 8px 0 4px; white-space: pre-wrap; }
-ol { list-style: none; padding: 0; }
-li { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.06); }
-.row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-/* min-width: 0 lets long names shrink and wrap instead of pushing the nowrap
-   dose column past a phone viewport (flex min-width:auto refuses to shrink). */
-.name { color: #fff; font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.status.is-active { color: var(--acc); font-weight: 500; }
+.dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 999px;
+  background: currentColor; margin-right: 6px; vertical-align: 1px;
+}
+.tcard > summary .chev {
+  position: absolute; right: 19px; top: 25px; width: 8px; height: 8px;
+  border-right: 1.5px solid var(--t3); border-bottom: 1.5px solid var(--t3);
+  transform: rotate(45deg); transition: transform 150ms ease-out;
+}
+.tcard[open] > summary .chev { transform: rotate(225deg); top: 29px; }
+.tnotes { border-bottom: 1px solid var(--soft); padding: 10px 16px; }
+.tnotes summary { font-size: 12px; color: var(--t3); cursor: pointer; }
+.tnotes p { font-size: 13px; line-height: 1.55; padding: 8px 0 4px; white-space: pre-wrap; color: var(--t2); }
+ol, ul { list-style: none; padding: 0; }
+.items > li, .rlist > li {
+  display: grid; column-gap: 10px; padding: 12px 16px 13px;
+  border-top: 1px solid var(--soft);
+}
+.items > li:first-child, .rlist > li:first-child { border-top: 0; }
+.items > li { grid-template-columns: 20px minmax(0,1fr) auto; grid-template-areas: "idx name dose" ". sub sub"; }
+.rlist > li { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "name dose" "sub sub"; }
+.idx {
+  grid-area: idx; padding-top: 3.5px; font-size: 11px; font-weight: 500;
+  color: var(--t3); font-variant-numeric: tabular-nums;
+}
+.name {
+  grid-area: name; color: var(--t1); font-size: 16px; font-weight: 600;
+  letter-spacing: -0.1px; min-width: 0; overflow-wrap: anywhere;
+}
 .dose {
-  color: #fff; font-size: 15px; font-variant-numeric: tabular-nums;
-  text-align: right; white-space: nowrap; flex-shrink: 0;
+  grid-area: dose; color: var(--t1); font-size: 16px; font-weight: 600;
+  font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+  letter-spacing: -0.1px;
 }
-.dose small { display: block; font-size: 11px; color: rgba(255,255,255,0.48); font-weight: 400; }
-.note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: rgba(255,255,255,0.48); }
-.tag { display: block; font-size: 11px; font-weight: 400; color: rgba(255,255,255,0.48); margin-top: 1px; }
-.steps { list-style: none; padding: 0; margin-top: 8px; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }
-.steps li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; font-size: 13px; }
+.dose small { display: block; font-size: 11px; color: var(--t3); font-weight: 400; margin-top: 1px; }
+.sub { grid-area: sub; min-width: 0; }
+/* The reality line: what was actually lifted, last time this template ran. */
+.last { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; min-width: 0; }
+.lk {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--t3); flex-shrink: 0;
+}
+.last b {
+  font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85);
+  font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere;
+}
+.when { margin-left: auto; padding-left: 8px; font-size: 11px; color: var(--t3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wk { margin-left: auto; padding-left: 8px; display: flex; gap: 3px; align-items: center; }
+.wk i { width: 6px; height: 6px; border-radius: 2px; background: var(--acc-dim); }
+.wk i.on { background: var(--acc); }
+.note { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--t3); white-space: pre-wrap; }
+/* Long coaching notes: two-line preview, tap to expand. Script-free. */
+.cue { margin-top: 6px; }
+.cue summary { list-style: none; cursor: pointer; position: relative; padding-right: 22px; -webkit-tap-highlight-color: transparent; }
+.cue summary::-webkit-details-marker { display: none; }
+.cue .txt {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; font-size: 12.5px; line-height: 1.5; color: var(--t3);
+  white-space: pre-wrap;
+}
+.cue[open] .txt { display: block; }
+.cue .chev {
+  position: absolute; right: 4px; top: 5px; width: 7px; height: 7px;
+  border-right: 1.5px solid var(--t4); border-bottom: 1.5px solid var(--t4);
+  transform: rotate(45deg); transition: transform 150ms ease-out;
+}
+.cue[open] .chev { transform: rotate(225deg); top: 8px; }
+@media (prefers-reduced-motion: reduce) { .cue .chev { transition: none; } }
+summary:focus-visible { outline: 1px solid rgba(255,255,255,0.4); outline-offset: 2px; border-radius: 4px; }
+.tag {
+  display: block; font-size: 11px; font-weight: 400; color: var(--t3);
+  margin-top: 2px; letter-spacing: 0; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.steps { margin-top: 8px; background: var(--inset); border-radius: 12px; }
+.steps li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: 13px; }
 .steps li span:first-child { min-width: 0; overflow-wrap: anywhere; }
-.steps li + li { border-top: 1px solid rgba(255,255,255,0.06); }
-.steps li span:last-child { color: rgba(255,255,255,0.72); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.empty { margin-top: 24px; color: rgba(255,255,255,0.48); }
+.steps li + li { border-top: 1px solid var(--soft); }
+.steps li span:last-child { color: var(--t2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.empty { margin-top: 24px; color: var(--t3); }
 </style>
 </head>
 <body>
+<header class="page">
 <h1>Gym card</h1>
-<p class="generated">As of ${escapeHtml(stamp)} UTC · pull to refresh</p>
+<p class="generated">${escapeHtml(stamp)} · pull to refresh</p>
+</header>
 ${body}
+<script>
+// Progressive enhancement only: remember which cards were folded, because
+// pull-to-refresh reloads the page. Inline and network-free by design; with
+// JS off the server defaults (active = open) simply apply on every load.
+document.querySelectorAll("details.tcard").forEach((d) => {
+  const key = "gymcard:" + d.dataset.key;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved === "1") d.open = true;
+    else if (saved === "0") d.open = false;
+  } catch {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, d.open ? "1" : "0"); } catch {}
+  });
+});
+</script>
 </body>
 </html>`;
 }

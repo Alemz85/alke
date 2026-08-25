@@ -1,11 +1,14 @@
 import { assert, assertEquals } from "jsr:@std/assert";
 import {
+  buildLastLogs,
   type CardRehabItem,
   type CardTemplate,
   currentPlanWeek,
   doseText,
   escapeHtml,
   isoWeekStart,
+  lastLogText,
+  type LoggedSetRow,
   rehabDoseText,
   renderGymCard,
   resolveWeeklyTarget,
@@ -94,7 +97,9 @@ Deno.test("running templates sort before idle ones and read as active", () => {
   });
   const html = renderGymCard([idle, running], [], NOW);
   assert(html.indexOf("Z running") < html.indexOf("A idle"));
-  assert(html.includes("Active since Aug 16 2026"));
+  // Same-year dates drop the year on the phone card.
+  assert(html.includes("Active since Aug 16"));
+  assert(!html.includes("Aug 16 2026"));
 });
 
 Deno.test("status falls back to last-done, then to not started", () => {
@@ -103,9 +108,14 @@ Deno.test("status falls back to last-done, then to not started", () => {
     [],
     NOW,
   );
-  assert(done.includes("Last done Aug 9 2026"));
+  assert(done.includes("Last done Aug 9"));
   assert(done.includes("done 4×"));
   assert(renderGymCard([template()], [], NOW).includes("Not started"));
+  // A stale template keeps its year.
+  assert(
+    renderGymCard([template({ last_done: "2025-12-30" })], [], NOW)
+      .includes("Last done Dec 30 2025"),
+  );
 });
 
 Deno.test("template and item text is HTML-escaped", () => {
@@ -140,6 +150,230 @@ Deno.test("template and item text is HTML-escaped", () => {
 
 Deno.test("an empty template set explains itself instead of a blank page", () => {
   assert(renderGymCard([], [], NOW).includes("No active templates"));
+});
+
+Deno.test("active templates start expanded, idle ones start collapsed", () => {
+  const html = renderGymCard(
+    [
+      template({ id: "t1", name: "Idle day" }),
+      template({ id: "t2", name: "Running day", active_since: "2026-08-16" }),
+    ],
+    [rehabItem()],
+    NOW,
+  );
+  assert(html.includes('<details class="tcard is-active" data-key="t2" open>'));
+  assert(html.includes('<details class="tcard" data-key="t1">'));
+  // Rehab is accountable daily work: collapsible but open by default.
+  assert(html.includes('<details class="tcard rehab" data-key="rehab" open>'));
+});
+
+// ── last logged sets per (template family, exercise) ────────────────────────
+
+function setRow(overrides: Partial<LoggedSetRow> = {}): LoggedSetRow {
+  return {
+    session_id: "s1",
+    exercise_id: "ex-press",
+    position: 1,
+    reps: 10,
+    weight_kg: 60,
+    duration_s: null,
+    ...overrides,
+  };
+}
+
+Deno.test("last-log text compresses uniform weight, lists mixed, handles bodyweight and holds", () => {
+  const uniform = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 60, duration_s: null },
+      { reps: 10, weight_kg: 60, duration_s: null },
+      { reps: 8, weight_kg: 60, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(uniform), "60 kg × 10, 10, 8");
+  const mixed = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 60, duration_s: null },
+      { reps: 8, weight_kg: 65, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(mixed), "60kg×10 · 65kg×8");
+  // Consecutive same-weight sets fold into one run.
+  const dropSet = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 45, duration_s: null },
+      { reps: 10, weight_kg: 45, duration_s: null },
+      { reps: 10, weight_kg: 40, duration_s: null },
+      { reps: 9, weight_kg: 40, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(dropSet), "45kg×10,10 · 40kg×10,9");
+  const bodyweight = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 12, weight_kg: null, duration_s: null },
+      { reps: 11, weight_kg: null, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(bodyweight), "12, 11");
+  const hold = {
+    date: "2026-08-20",
+    sets: [
+      { reps: null, weight_kg: null, duration_s: 45 },
+      { reps: null, weight_kg: null, duration_s: 40 },
+    ],
+  };
+  assertEquals(lastLogText(hold), "45s, 40s");
+});
+
+Deno.test("lastLogText: unilateral sets carry ·uni and never merge with bilateral sets at the same weight", () => {
+  // Uniform all-unilateral (e.g. a single-arm Seated Cable Row, weight per side).
+  const uniform = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 12, weight_kg: 10, duration_s: null, is_unilateral: true },
+      { reps: 12, weight_kg: 10, duration_s: null, is_unilateral: true },
+      { reps: 12, weight_kg: 10, duration_s: null, is_unilateral: true },
+    ],
+  };
+  assertEquals(lastLogText(uniform), "10 kg × 12, 12, 12 ·uni");
+  // A unilateral and a bilateral set at the SAME weight are incomparable loads
+  // (agent_log #31) — the flag is part of the grouping identity, so they must
+  // stay separate runs instead of folding into "10 kg × 12, 10".
+  const sameWeightMixed = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 12, weight_kg: 10, duration_s: null, is_unilateral: true },
+      { reps: 10, weight_kg: 10, duration_s: null, is_unilateral: false },
+    ],
+  };
+  assertEquals(lastLogText(sameWeightMixed), "10kg×12·uni · 10kg×10");
+});
+
+Deno.test("lastLogText: perHand renders dumbbell/kettlebell weights as kg/hand", () => {
+  const uniform = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 14, duration_s: null },
+      { reps: 10, weight_kg: 14, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(uniform, true), "14 kg/hand × 10, 10");
+  const mixed = {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 14, duration_s: null },
+      { reps: 8, weight_kg: 16, duration_s: null },
+    ],
+  };
+  assertEquals(lastLogText(mixed, true), "14kg/hand×10 · 16kg/hand×8");
+});
+
+Deno.test("a session logged under template A never surfaces on template B, even for a shared exercise", () => {
+  const familyByVersion = new Map([["tplA", "famA"], ["tplB", "famB"]]);
+  const logs = buildLastLogs(
+    [{ template_id: "tplA", session_id: "s1", performed_at: "2026-08-20T18:00:00+00:00" }],
+    [setRow()],
+    familyByVersion,
+  );
+  assertEquals(logs.get("famA|ex-press")?.date, "2026-08-20");
+  assertEquals(logs.get("famB|ex-press"), undefined);
+});
+
+Deno.test("the latest linked session wins and its sets keep position order", () => {
+  const familyByVersion = new Map([["tplA", "famA"]]);
+  const logs = buildLastLogs(
+    [
+      { template_id: "tplA", session_id: "s-old", performed_at: "2026-08-10T18:00:00+00:00" },
+      { template_id: "tplA", session_id: "s-new", performed_at: "2026-08-20T18:00:00+00:00" },
+    ],
+    [
+      setRow({ session_id: "s-old", reps: 8, weight_kg: 55 }),
+      setRow({ session_id: "s-new", position: 2, reps: 9 }),
+      setRow({ session_id: "s-new", position: 1, reps: 10 }),
+    ],
+    familyByVersion,
+  );
+  assertEquals(logs.get("famA|ex-press"), {
+    date: "2026-08-20",
+    sets: [
+      { reps: 10, weight_kg: 60, duration_s: null, is_unilateral: false },
+      { reps: 9, weight_kg: 60, duration_s: null, is_unilateral: false },
+    ],
+  });
+});
+
+Deno.test("sessions logged against an older template version still count for the family", () => {
+  // tplA-v1 was superseded by tplA-v2; the card shows v2 but history is v1's.
+  const familyByVersion = new Map([["tplA-v1", "famA"], ["tplA-v2", "famA"]]);
+  const logs = buildLastLogs(
+    [{ template_id: "tplA-v1", session_id: "s1", performed_at: "2026-08-20T18:00:00+00:00" }],
+    [setRow({ weight_kg: "62.50" })], // numeric may arrive as a string
+    familyByVersion,
+  );
+  assertEquals(logs.get("famA|ex-press")?.sets[0].weight_kg, 62.5);
+});
+
+Deno.test("the card renders the last log under its exercise row", () => {
+  const withLog = template({
+    items: [
+      {
+        exercise_name: "Leg Press",
+        position: 1,
+        target_sets: 4,
+        target_reps: 10,
+        target_duration_seconds: null,
+        target_weight_kg: 80,
+        rest_after_s: null,
+        note: null,
+        last_log: {
+          date: "2026-08-14",
+          sets: [
+            { reps: 10, weight_kg: 77.5, duration_s: null },
+            { reps: 9, weight_kg: 77.5, duration_s: null },
+          ],
+        },
+      },
+    ],
+  });
+  const html = renderGymCard([withLog], [], NOW);
+  assert(html.includes("77.5 kg × 10, 9"));
+  assert(html.includes(">Aug 14<")); // same-year date, no year
+  assert(html.includes('class="last"'));
+  // No log, no line.
+  assert(!renderGymCard([template()], [], NOW).includes('class="last"'));
+});
+
+Deno.test("long coaching notes collapse to a preview; short ones render whole", () => {
+  const long = "Slow 3s lowering, full range, no yanking the weight up. ".repeat(4);
+  const html = renderGymCard(
+    [
+      template({
+        items: [
+          {
+            exercise_name: "RDL",
+            position: 1,
+            target_sets: 3,
+            target_reps: 8,
+            target_duration_seconds: null,
+            target_weight_kg: null,
+            rest_after_s: null,
+            note: long,
+          },
+        ],
+      }),
+    ],
+    [],
+    NOW,
+  );
+  assert(html.includes('<details class="cue">'));
+  assert(html.includes("Slow 3s lowering"));
+  const short = renderGymCard([template()], [], NOW);
+  // template()'s "Control the range." note is short: plain, not collapsible.
+  assert(short.includes('<p class="note">Control the range.</p>'));
+  assert(!short.includes('class="cue"'));
 });
 
 // ── recovery-plan resolution (ports of chatctx/injuries.py) ─────────────────

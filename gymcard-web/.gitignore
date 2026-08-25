@@ -1,0 +1,6 @@
+node_modules/
+.vercel/
+# Deploy-time copy of supabase/functions/gymcard/render.ts (npm run sync) -
+# the Deno original is the single source of truth and keeps the unit tests.
+render.ts
+.vercel

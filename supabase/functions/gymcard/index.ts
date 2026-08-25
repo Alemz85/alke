@@ -9,12 +9,15 @@
 // Rotation: `supabase secrets set GYMCARD_TOKEN=...`.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
+  buildLastLogs,
   type CardRehabItem,
   type CardTemplate,
   currentPlanWeek,
   isoWeekStart,
+  type LoggedSetRow,
   renderGymCard,
   resolveWeeklyTarget,
+  type SessionLinkRow,
 } from "./render.ts";
 
 function getSupabaseClient() {
@@ -63,19 +66,34 @@ Deno.serve(async (req: Request) => {
 
   const { data: templates, error } = await supabase
     .from("gym_templates")
-    .select("id, name, version, notes, default_rest_s, archived, is_current")
+    .select("id, family_id, name, version, notes, default_rest_s, archived, is_current")
     .eq("is_current", true)
     .eq("archived", false)
     .order("created_at", { ascending: true });
   if (error) return new Response(`query failed: ${error.message}`, { status: 500 });
 
   const ids = (templates ?? []).map((t) => t.id);
+  const familyIds = [...new Set((templates ?? []).map((t) => t.family_id as string))];
+
+  // Every version in each family: sessions stay linked to the version they
+  // were logged against, so per-template history has to match family-wide.
+  const family = familyIds.length
+    ? await supabase.from("gym_templates").select("id, family_id").in("family_id", familyIds)
+    : { data: [], error: null };
+  if (family.error) {
+    return new Response(`query failed: ${family.error.message}`, { status: 500 });
+  }
+  const familyByVersion = new Map(
+    (family.data ?? []).map((row) => [row.id as string, row.family_id as string]),
+  );
+  const allVersionIds = [...familyByVersion.keys()];
+
   const [items, runs, sessions] = await Promise.all([
     ids.length
       ? supabase
         .from("gym_template_exercises")
         .select(
-          "template_id, position, target_sets, target_reps, target_duration_seconds, target_weight_kg, rest_after_s, note, exercise:exercises(name)",
+          "template_id, exercise_id, position, target_sets, target_reps, target_duration_seconds, target_weight_kg, rest_after_s, note, exercise:exercises(name, equipment)",
         )
         .in("template_id", ids)
         .order("position", { ascending: true })
@@ -86,7 +104,16 @@ Deno.serve(async (req: Request) => {
         .select("template_id, started_at, ended_at")
         .in("template_id", ids)
       : Promise.resolve({ data: [], error: null }),
-    supabase.from("gym_sessions").select("performed_at, template_ids"),
+    // Sessions link to templates via the gym_session_templates join table
+    // (gym_sessions.template_id is only the legacy/primary link) — same source
+    // the app's own template stats read. Fetched family-wide for the last-set
+    // lookup; the done-count/last-done stats below still filter to t.id.
+    allVersionIds.length
+      ? supabase
+        .from("gym_session_templates")
+        .select("template_id, session_id, session:gym_sessions(performed_at)")
+        .in("template_id", allVersionIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   for (const result of [items, runs, sessions]) {
     if (result.error) {
@@ -94,20 +121,63 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // ── Last logged working sets per (family, exercise) ──────────────────────
+  const linkRows: SessionLinkRow[] = (sessions.data ?? []).map((link) => ({
+    template_id: link.template_id as string,
+    session_id: link.session_id as string,
+    performed_at:
+      (link.session as unknown as { performed_at: string } | null)?.performed_at ?? null,
+  }));
+  // Newest-first unique sessions, capped so the sets query's URL stays
+  // bounded; an exercise absent from the last 80 linked sessions shows none.
+  const seenSessions = new Set<string>();
+  const recentSessionIds = linkRows
+    .filter((row) => row.performed_at != null)
+    .sort((a, b) => String(b.performed_at).localeCompare(String(a.performed_at)))
+    .filter((row) =>
+      seenSessions.has(row.session_id) ? false : (seenSessions.add(row.session_id), true)
+    )
+    .slice(0, 80)
+    .map((row) => row.session_id);
+  const exerciseIds = [
+    ...new Set((items.data ?? []).map((row) => row.exercise_id as string)),
+  ];
+  const sets = recentSessionIds.length && exerciseIds.length
+    ? await supabase
+      .from("gym_sets")
+      .select("session_id, exercise_id, position, reps, weight_kg, duration_s, is_unilateral")
+      .in("session_id", recentSessionIds)
+      .in("exercise_id", exerciseIds)
+      .eq("is_warmup", false)
+    : { data: [], error: null };
+  if (sets.error) {
+    return new Response(`query failed: ${sets.error.message}`, { status: 500 });
+  }
+  const lastLogs = buildLastLogs(
+    linkRows,
+    (sets.data ?? []) as LoggedSetRow[],
+    familyByVersion,
+  );
+
   const cards: CardTemplate[] = (templates ?? []).map((t) => {
     const activeRun = (runs.data ?? []).find(
       (r) => r.template_id === t.id && r.ended_at === null,
     );
     let lastDone: string | null = null;
     let doneCount = 0;
-    for (const s of sessions.data ?? []) {
-      if (!(s.template_ids ?? []).includes(t.id)) continue;
+    for (const link of sessions.data ?? []) {
+      if (link.template_id !== t.id) continue;
+      const performedAt =
+        (link.session as unknown as { performed_at: string } | null)
+          ?.performed_at;
+      if (performedAt == null) continue;
       doneCount += 1;
-      const day = String(s.performed_at).slice(0, 10);
+      const day = String(performedAt).slice(0, 10);
       if (lastDone === null || day > lastDone) lastDone = day;
     }
     return {
       id: t.id,
+      family_id: t.family_id as string,
       name: t.name,
       version: t.version,
       notes: t.notes,
@@ -120,6 +190,11 @@ Deno.serve(async (req: Request) => {
         .map((row) => ({
           exercise_name:
             (row.exercise as unknown as { name: string } | null)?.name ?? "?",
+          // Dumbbell/kettlebell loads are stored PER HAND (modes/_shared.md);
+          // the renderer stamps "kg/hand" so a per-hand load can't read as the pair's total.
+          per_hand: ["dumbbell", "kettlebell"].includes(
+            (row.exercise as unknown as { equipment?: string | null } | null)?.equipment ?? "",
+          ),
           position: row.position,
           target_sets: row.target_sets,
           target_reps: row.target_reps,
@@ -127,6 +202,7 @@ Deno.serve(async (req: Request) => {
           target_weight_kg: row.target_weight_kg,
           rest_after_s: row.rest_after_s,
           note: row.note,
+          last_log: lastLogs.get(`${t.family_id}|${row.exercise_id}`) ?? null,
         })),
     };
   });

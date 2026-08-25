@@ -1,0 +1,17 @@
+{
+  "name": "gymcard-web",
+  "private": true,
+  "description": "Vercel host for the phone gym card - Supabase blocks rendered HTML on *.supabase.co (see api/gymcard.ts)",
+  "scripts": {
+    "sync": "cp ../supabase/functions/gymcard/render.ts render.ts",
+    "typecheck": "npm run sync && tsc --noEmit",
+    "deploy": "npm run typecheck && vercel deploy --prod --yes"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "@vercel/node": "^3.2.0",
+    "typescript": "^5.5.0"
+  }
+}
