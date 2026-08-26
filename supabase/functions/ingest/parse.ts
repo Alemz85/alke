@@ -1031,3 +1031,112 @@ export function mergeDailyMetric(
   }
   return merged as DailyMetricRow;
 }
+
+// --- Replaced-workout adoption ----------------------------------------
+//
+// Apple Health can REPLACE a workout object rather than update it: the
+// original HKWorkout is deleted and an identical one re-created under a fresh
+// UUID. Strava's Health write-back does exactly this — it rewrites its own
+// entry once the activity has been processed server-side (observed in
+// practice: the same run delivered under one UUID in the evening, then under
+// a fresh UUID the next morning, the first UUID never sent again).
+//
+// Since `workouts.external_id` IS that UUID, the replacement is
+// indistinguishable from a new workout and gets inserted alongside the
+// original, which then double-counts into the day's TRIMP downstream.
+//
+// The fix is to recognise the replacement and re-point the EXISTING row at the
+// new UUID, so `workouts.id` never changes: HR samples, route points, geo,
+// computed_workout and the hand-written injury_notes / gym_sessions links all
+// stay attached, and the ordinary upsert-on-external_id then refreshes the
+// row's fields from the new payload.
+
+/** Seconds of start-time drift still considered the same physical session. */
+export const ADOPTION_START_TOLERANCE_S = 60;
+
+export interface ExistingWorkoutKey {
+  id: string;
+  external_id: string;
+  type: string | null;
+  start_at: string | null;
+}
+
+export interface WorkoutAdoption {
+  /** workouts.id of the row to re-point (unchanged by the adoption). */
+  id: string;
+  from_external_id: string;
+  to_external_id: string;
+}
+
+/**
+ * Works out which stored workouts are the same session as an incoming
+ * workout delivered under a new UUID.
+ *
+ * A stored row is adopted when it has the same `type`, its `start_at` is
+ * within ADOPTION_START_TOLERANCE_S of the incoming one, and — critically —
+ * its own external_id is ABSENT from this delivery. That last condition is
+ * what makes this safe: HAE sends every workout in the requested window, so
+ * a stored workout that still exists in HealthKit arrives in the same payload
+ * and is therefore never a candidate. Only a row the phone has stopped
+ * sending — i.e. deleted upstream — can be adopted.
+ *
+ * Two same-type sessions starting within a minute of each other are not
+ * physically distinguishable events, so the type+start match cannot collapse
+ * genuinely separate workouts. Ambiguous groups (more than one candidate, or
+ * more than one incoming claiming the same row) are left alone rather than
+ * guessed at — the duplicate is the lesser evil, and
+ * scripts/dedupe_replaced_workouts.py resolves it against delivery evidence.
+ */
+export function planWorkoutAdoptions(
+  incoming: readonly {
+    external_id: string;
+    type: string | null;
+    start_at: string | null;
+  }[],
+  existing: readonly ExistingWorkoutKey[],
+): WorkoutAdoption[] {
+  const deliveredIds = new Set(incoming.map((w) => w.external_id));
+  const storedIds = new Set(existing.map((w) => w.external_id));
+  const toleranceMs = ADOPTION_START_TOLERANCE_S * 1000;
+
+  // Rows eligible to be adopted: not delivered in this payload (so gone from
+  // HealthKit), and carrying the fields the natural key needs.
+  const candidates = existing.filter((w) =>
+    !deliveredIds.has(w.external_id) && w.type !== null && w.start_at !== null
+  );
+  if (candidates.length === 0) return [];
+
+  const claims = new Map<string, WorkoutAdoption[]>();
+  for (const w of incoming) {
+    // Already stored under this UUID: an ordinary re-delivery, nothing to adopt.
+    if (storedIds.has(w.external_id)) continue;
+    if (w.type === null || w.start_at === null) continue;
+    const startMs = Date.parse(w.start_at);
+    if (!Number.isFinite(startMs)) continue;
+
+    const matches = candidates.filter((c) => {
+      if (c.type !== w.type) return false;
+      const candidateMs = Date.parse(c.start_at as string);
+      if (!Number.isFinite(candidateMs)) return false;
+      return Math.abs(candidateMs - startMs) <= toleranceMs;
+    });
+    // Ambiguous on the incoming side — refuse to pick.
+    if (matches.length !== 1) continue;
+
+    const match = matches[0];
+    const claim: WorkoutAdoption = {
+      id: match.id,
+      from_external_id: match.external_id,
+      to_external_id: w.external_id,
+    };
+    const existingClaims = claims.get(match.id) ?? [];
+    existingClaims.push(claim);
+    claims.set(match.id, existingClaims);
+  }
+
+  // Ambiguous on the stored side: two incoming workouts both matched the same
+  // row, so neither can be trusted to be its replacement.
+  return [...claims.values()]
+    .filter((group) => group.length === 1)
+    .map((group) => group[0]);
+}

@@ -128,3 +128,51 @@ class _FrozenNow(datetime):
     @classmethod
     def now(cls, tz=None):
         return NOW.astimezone(tz) if tz else NOW
+
+
+# --- Replaced-workout duplicates ------------------------------------------
+# Apple Health can replace a workout object — delete it and re-create an
+# identical one under a fresh UUID — leaving the same session stored twice.
+# Each duplicate row adds its TRIMP to the day again, which is the same class
+# of silent daily-chain corruption as the pre-window zeroing above.
+
+_RUN_START = "2026-08-25T16:00:00+00:00"
+
+
+def _workout(id_, external_id, type_="outdoor_run", start_at=_RUN_START):
+    return {"id": id_, "external_id": external_id, "type": type_, "start_at": start_at}
+
+
+def test_dedupe_replaced_workouts_collapses_same_session_under_two_uuids():
+    stale = _workout("a", "OLD")
+    fresh = _workout("b", "NEW")
+    gym = _workout("c", "GYM", "traditional_strength_training",
+                   "2026-08-26T15:00:00+00:00")
+
+    kept, dropped = compute.dedupe_replaced_workouts([stale, fresh, gym],
+                                                     {"a": 120.0})
+
+    assert [w["id"] for w in kept] == ["a", "c"]
+    assert len(dropped) == 1
+    winner, loser = dropped[0]
+    assert winner["id"] == "a"
+    assert loser["id"] == "b"
+
+
+def test_dedupe_replaced_workouts_prefers_the_row_with_known_trimp():
+    """The freshly-inserted replacement usually has no computed_workout row
+    yet; keeping it would zero the day rather than double it."""
+    kept, _ = compute.dedupe_replaced_workouts(
+        [_workout("b", "NEW"), _workout("a", "OLD")], {"a": 120.0}
+    )
+    assert [w["id"] for w in kept] == ["a"]
+
+
+def test_dedupe_replaced_workouts_leaves_distinct_sessions_alone():
+    first = _workout("a", "A", start_at="2026-08-25T06:00:00+00:00")
+    second = _workout("b", "B")
+
+    kept, dropped = compute.dedupe_replaced_workouts([first, second], {})
+
+    assert [w["id"] for w in kept] == ["a", "b"]
+    assert dropped == []

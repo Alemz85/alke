@@ -3,11 +3,14 @@
 // unit tested). This file wires up auth, persistence, and the HTTP contract.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
+  ADOPTION_START_TOLERANCE_S,
   type DailyMetricRow,
+  type ExistingWorkoutKey,
   mergeDailyMetric,
   type NormalizedWorkout,
   ParseError,
   parseIngestPayload,
+  planWorkoutAdoptions,
 } from "./parse.ts";
 
 // Health Auto Export can send large backfills. Reject bodies above this
@@ -167,9 +170,61 @@ Deno.serve(async (req: Request) => {
 
   let inserted = 0;
   let updated = 0;
+  // Stored workouts re-pointed at a new HealthKit UUID (see adoption block).
+  let adopted = 0;
 
   // --- Workouts: upsert on external_id -------------------------------
   if (parsed.workouts.length > 0) {
+    // Adopt replaced workouts BEFORE the upsert reads/writes external_ids.
+    // Apple Health sometimes deletes a workout object and re-creates it under
+    // a fresh UUID for the same session (Strava's Health write-back does this
+    // after processing an activity server-side). Re-pointing the stored row at
+    // the new UUID here turns what would be a duplicate INSERT into an ordinary
+    // UPDATE further down, and keeps workouts.id — and therefore every child
+    // row and injury_notes/gym_sessions link — attached. See
+    // planWorkoutAdoptions in parse.ts for why the match is safe.
+    const startMsValues = parsed.workouts
+      .map((w) => (w.start_at === null ? NaN : Date.parse(w.start_at)))
+      .filter((ms) => Number.isFinite(ms));
+    if (startMsValues.length > 0) {
+      const padMs = ADOPTION_START_TOLERANCE_S * 1000;
+      const { data: nearbyWorkouts, error: nearbyErr } = await supabase
+        .from("workouts")
+        .select("id, external_id, type, start_at")
+        .gte(
+          "start_at",
+          new Date(Math.min(...startMsValues) - padMs).toISOString(),
+        )
+        .lte(
+          "start_at",
+          new Date(Math.max(...startMsValues) + padMs).toISOString(),
+        );
+      if (nearbyErr) {
+        return jsonResponse({
+          error: `failed to read nearby workouts: ${nearbyErr.message}`,
+        }, 500);
+      }
+      const adoptions = planWorkoutAdoptions(
+        parsed.workouts,
+        (nearbyWorkouts ?? []) as ExistingWorkoutKey[],
+      );
+      for (const adoption of adoptions) {
+        // Matching on the old external_id too makes this a no-op rather than a
+        // clobber if a concurrent delivery already adopted the same row.
+        const { error: adoptErr } = await supabase
+          .from("workouts")
+          .update({ external_id: adoption.to_external_id })
+          .eq("id", adoption.id)
+          .eq("external_id", adoption.from_external_id);
+        if (adoptErr) {
+          return jsonResponse({
+            error: `failed to adopt replaced workout: ${adoptErr.message}`,
+          }, 500);
+        }
+        adopted++;
+      }
+    }
+
     const externalIds = parsed.workouts.map((w) => w.external_id);
     const { data: existingWorkouts, error: existingErr } = await supabase
       .from("workouts")
@@ -411,7 +466,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return jsonResponse({ inserted, updated }, 200);
+  return jsonResponse({ inserted, updated, adopted }, 200);
 
   async function saveRawAndFail(
     rawText: string,

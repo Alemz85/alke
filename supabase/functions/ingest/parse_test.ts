@@ -5,12 +5,15 @@ import {
   assertThrows,
 } from "jsr:@std/assert@1";
 import {
+  ADOPTION_START_TOLERANCE_S,
   downsampleRoute,
+  type ExistingWorkoutKey,
   mergeDailyMetric,
   type NormalizedDailyMetric,
   type NormalizedWorkout,
   ParseError,
   parseIngestPayload,
+  planWorkoutAdoptions,
 } from "./parse.ts";
 
 // ---------------------------------------------------------------------------
@@ -1727,4 +1730,121 @@ Deno.test("drops workouts lacking a type or resolvable start (NOT NULL guard)", 
   const result = parseIngestPayload(payload);
   assertEquals(result.workouts.length, 1);
   assertEquals(result.workouts[0].external_id, "keeper");
+});
+
+// ---------------------------------------------------------------------------
+// planWorkoutAdoptions — replaced-workout (new HealthKit UUID) detection
+// ---------------------------------------------------------------------------
+
+/** A run re-delivered under a second UUID the next morning (Strava write-back). */
+const storedRun: ExistingWorkoutKey = {
+  id: "row-1",
+  external_id: "AAAA0001-OLD",
+  type: "outdoor_run",
+  start_at: "2026-03-10T09:00:37.000Z",
+};
+
+function incoming(
+  external_id: string,
+  start_at: string,
+  type = "outdoor_run",
+) {
+  return { external_id, type, start_at };
+}
+
+Deno.test("adopts a stored workout re-delivered under a new UUID", () => {
+  const adoptions = planWorkoutAdoptions(
+    [incoming("BBBB0002-NEW", "2026-03-10T09:00:37.000Z")],
+    [storedRun],
+  );
+  assertEquals(adoptions, [{
+    id: "row-1",
+    from_external_id: "AAAA0001-OLD",
+    to_external_id: "BBBB0002-NEW",
+  }]);
+});
+
+Deno.test("adopts across start drift up to the tolerance, not beyond", () => {
+  const withinMs = (ADOPTION_START_TOLERANCE_S - 1) * 1000;
+  const beyondMs = (ADOPTION_START_TOLERANCE_S + 1) * 1000;
+  const base = Date.parse(storedRun.start_at as string);
+
+  const within = planWorkoutAdoptions(
+    [incoming("NEW", new Date(base + withinMs).toISOString())],
+    [storedRun],
+  );
+  assertEquals(within.length, 1);
+
+  const beyond = planWorkoutAdoptions(
+    [incoming("NEW", new Date(base + beyondMs).toISOString())],
+    [storedRun],
+  );
+  assertEquals(beyond.length, 0);
+});
+
+Deno.test("does not adopt when the stored workout is itself in the delivery", () => {
+  // The safety property: HAE sends every workout in the requested window, so a
+  // workout that still exists in HealthKit arrives alongside. Only a row the
+  // phone has stopped sending can be a replacement candidate. Here both the
+  // old and new UUID are present, so they are two genuine workouts.
+  const adoptions = planWorkoutAdoptions(
+    [
+      incoming("AAAA0001-OLD", "2026-03-10T09:00:37.000Z"),
+      incoming("BBBB0002-NEW", "2026-03-10T09:00:50.000Z"),
+    ],
+    [storedRun],
+  );
+  assertEquals(adoptions, []);
+});
+
+Deno.test("does not adopt an ordinary re-delivery of an already-stored workout", () => {
+  const adoptions = planWorkoutAdoptions(
+    [incoming("AAAA0001-OLD", "2026-03-10T09:00:37.000Z")],
+    [storedRun],
+  );
+  assertEquals(adoptions, []);
+});
+
+Deno.test("does not adopt across workout types", () => {
+  const adoptions = planWorkoutAdoptions(
+    [incoming("NEW", "2026-03-10T09:00:37.000Z", "outdoor_cycling")],
+    [storedRun],
+  );
+  assertEquals(adoptions, []);
+});
+
+Deno.test("refuses ambiguous matches rather than guessing", () => {
+  const secondStored: ExistingWorkoutKey = {
+    id: "row-2",
+    external_id: "OTHER-OLD",
+    type: "outdoor_run",
+    start_at: "2026-03-10T09:00:40.000Z",
+  };
+  // One incoming, two plausible stored rows -> ambiguous on the incoming side.
+  assertEquals(
+    planWorkoutAdoptions(
+      [incoming("NEW", "2026-03-10T09:00:37.000Z")],
+      [storedRun, secondStored],
+    ),
+    [],
+  );
+  // Two incoming both matching one stored row -> ambiguous on the stored side.
+  assertEquals(
+    planWorkoutAdoptions(
+      [
+        incoming("NEW-A", "2026-03-10T09:00:37.000Z"),
+        incoming("NEW-B", "2026-03-10T09:00:38.000Z"),
+      ],
+      [storedRun],
+    ),
+    [],
+  );
+});
+
+Deno.test("leaves genuinely new workouts alone", () => {
+  const adoptions = planWorkoutAdoptions(
+    [incoming("BRAND-NEW", "2026-03-11T08:15:41.000Z")],
+    [storedRun],
+  );
+  assertEquals(adoptions, []);
 });

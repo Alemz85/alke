@@ -90,6 +90,50 @@ def workout_local_date(workout: dict, tz: ZoneInfo) -> date:
     return workout_recorded_start(workout, tz).date()
 
 
+def dedupe_replaced_workouts(
+    workouts: list[dict], trimp_by_id: dict[str, float]
+) -> tuple[list[dict], list[tuple[dict, dict]]]:
+    """Collapse workout rows that are the same session stored twice.
+
+    Apple Health can replace a workout object — delete it and re-create an
+    identical one under a fresh UUID — which the ingest function normally
+    absorbs (see planWorkoutAdoptions in supabase/functions/ingest/parse.ts).
+    It deliberately refuses ambiguous cases rather than guessing, so a
+    duplicate pair can still reach the DB, and every duplicate row here adds
+    its TRIMP to the day again: a replaced run would double that day's TRIMP
+    and drag CTL/ATL/TSB/ACWR with it.
+
+    Grouping on (type, start_at) is the same natural key the ingest adoption
+    uses: two same-type sessions cannot start at the same instant. Within a
+    group the row with the HIGHEST known TRIMP wins, which keeps the day
+    honest even when the other row has no computed_workout row yet (the
+    freshly-inserted replacement typically doesn't).
+
+    Returns (kept, dropped_pairs) where each dropped pair is (kept, dropped),
+    so the caller can warn — this silences the double-count, it does not
+    resolve the duplicate. scripts/dedupe_replaced_workouts.py does that.
+    """
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for w in workouts:
+        groups[(w.get("type"), w.get("start_at"))].append(w)
+
+    kept: list[dict] = []
+    dropped_pairs: list[tuple[dict, dict]] = []
+    for group in groups.values():
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        winner = max(group, key=lambda w: (trimp_by_id.get(w["id"], 0.0), str(w["id"])))
+        kept.append(winner)
+        for w in group:
+            if w["id"] != winner["id"]:
+                dropped_pairs.append((winner, w))
+
+    # Preserve the caller's ordering; downstream weekly bucketing reads it.
+    kept_ids = {w["id"] for w in kept}
+    return [w for w in workouts if w["id"] in kept_ids], dropped_pairs
+
+
 def goal_progress_rows(goal_id: str, result: list[dict]) -> list[dict]:
     """Normalize exec_readonly_sql output (agent-authored metric_sql, one row
     per day) into goal_progress upsert rows. Tolerant of schema drift: rows
@@ -260,9 +304,23 @@ def run(full: bool) -> None:
         if r.get("trimp") is not None
     }
     trimp_by_id.update({r["workout_id"]: r["trimp"] for r in computed_rows})
+    # Guard against the same session being stored under two HealthKit UUIDs;
+    # without this each duplicate row adds its TRIMP to the day a second time.
+    deduped_workouts, duplicate_pairs = dedupe_replaced_workouts(
+        all_workouts, trimp_by_id
+    )
+    for winner, dropped in duplicate_pairs:
+        print(
+            f"WARNING: duplicate workout ignored for daily load — "
+            f"{dropped['type']} at {dropped['start_at']} is stored as both "
+            f"{winner['external_id']} (counted) and {dropped['external_id']} "
+            f"(ignored). Run scripts/dedupe_replaced_workouts.py to collapse it.",
+            file=sys.stderr,
+        )
+
     trimp_by_date: dict[date, float] = defaultdict(float)
     workouts_by_week: dict[tuple[int, int], list[dict]] = defaultdict(list)
-    for w in all_workouts:
+    for w in deduped_workouts:
         day = workout_local_date(w, tz)
         trimp_by_date[day] += trimp_by_id.get(w["id"], 0.0)
         iso = day.isocalendar()
