@@ -4,7 +4,6 @@ import { TabHeader } from './TabHeader'
 import { DayDetailDrawer } from '../components/DayDetailDrawer'
 import { SessionList } from '../components/SessionList'
 import { SessionFilters, type SessionTypeOption } from '../components/SessionFilters'
-import { ManualCardioInputs } from '../components/ManualCardioInputs'
 import { activityGroupLabel } from '../components/modalityAccent'
 import { useAllWorkouts, useUserConfig } from '../hooks/useSessionsData'
 import { groupWorkoutsByDay } from '../hooks/sessionsCompute'
@@ -108,12 +107,6 @@ export function SessionsView({ onBack, initialActivity }: SessionsViewProps): Re
       </button>
 
       <TabHeader eyebrow="Sessions · Adherence" title="Sessions" />
-
-      {/* Indoor sessions can only reach the Zone-2 efficiency signal through
-          owner-typed inputs (agent_log 34/35). The panel reads the SAME filtered
-          set as the list below, so narrowing to "Cycling" narrows it too, and it
-          renders nothing when the filters contain no indoor cardio. */}
-      <ManualCardioInputs workouts={filteredWorkouts} timezone={timezone} />
 
       <div className="sessions-list-section">
         <div className="sessions-list-header">

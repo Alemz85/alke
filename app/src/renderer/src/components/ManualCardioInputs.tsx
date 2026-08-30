@@ -1,11 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Heart } from 'lucide-react'
 import type { Workout, WorkoutManualInputsPatch } from '@shared/types'
-import { ActivityBadge } from './ActivityBadge'
-import { ModalityIcon } from './ModalityIcon'
-import { activityEnvironmentAccent, modalityLabel } from './modalityAccent'
-import { EM_DASH, formatDurationHM } from '../lib/format'
 import './ManualCardioInputs.css'
 
 /**
@@ -18,11 +13,11 @@ import './ManualCardioInputs.css'
  * Zone-2 confidence band most once a session with real distance or power
  * reaches it — was closed to every indoor session.
  *
- * This panel is the way in, one field set per machine. It mirrors the rules in
- * metrics/models.py exactly; if those change, change these together.
+ * ManualCardioSection is the way in: it renders inside the day drawer's session
+ * card (the same slot the gym log occupies for strength workouts), one field set
+ * per machine. It mirrors the rules in metrics/models.py exactly; if those
+ * change, change these together.
  */
-
-const PAGE_SIZE = 5
 
 type ManualField = 'manual_avg_watts' | 'manual_distance_m' | 'manual_incline_pct'
 
@@ -88,74 +83,17 @@ export function parseField(raw: string, spec: FieldSpec): number | null | 'inval
   return parsed
 }
 
-export interface ManualCardioInputsProps {
-  workouts: Workout[]
-  timezone: string | null | undefined
-}
-
-export function ManualCardioInputs({
-  workouts,
-  timezone
-}: ManualCardioInputsProps): ReactElement | null {
-  const [expanded, setExpanded] = useState(false)
-
-  const eligible = useMemo(
-    () =>
-      workouts
-        .filter((w) => manualFieldsFor(w.type) !== null)
-        .sort((a, b) => b.start_at.localeCompare(a.start_at)),
-    [workouts]
-  )
-
-  if (eligible.length === 0) return null
-
-  const shown = expanded ? eligible : eligible.slice(0, PAGE_SIZE)
-
-  return (
-    <section className="manual-cardio" aria-labelledby="manual-cardio-title">
-      <div className="manual-cardio-head">
-        <h3 className="manual-cardio-title" id="manual-cardio-title">
-          Indoor cardio inputs
-        </h3>
-        <p className="manual-cardio-note">
-          Indoor machines report no trustworthy distance, so these sessions reach the Zone-2
-          efficiency signal only through what you type here. Values are picked up by the next
-          nightly metrics run, which recomputes the last 60 days — an older session needs a
-          full recompute.
-        </p>
-      </div>
-
-      <ul className="manual-cardio-rows">
-        {shown.map((workout) => (
-          <ManualCardioRow key={workout.id} workout={workout} timezone={timezone} />
-        ))}
-      </ul>
-
-      {eligible.length > PAGE_SIZE && (
-        <button
-          type="button"
-          className="manual-cardio-more"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {expanded ? 'Show fewer' : `Show all ${eligible.length}`}
-        </button>
-      )}
-    </section>
-  )
-}
-
-function ManualCardioRow({
-  workout,
-  timezone
-}: {
-  workout: Workout
-  timezone: string | null | undefined
-}): ReactElement {
-  const specs = manualFieldsFor(workout.type) as FieldSpec[]
+/**
+ * Machine-data entry for one indoor-cardio session, drawn as a drawer section.
+ * Renders null for any workout `manualFieldsFor` does not recognize, so the
+ * caller may mount it unconditionally on non-strength sessions.
+ */
+export function ManualCardioSection({ workout }: { workout: Workout }): ReactElement | null {
+  const specs = manualFieldsFor(workout.type)
   const queryClient = useQueryClient()
 
   const stored = useMemo(
-    () => Object.fromEntries(specs.map((s) => [s.key, fmtStored(workout[s.key])])),
+    () => Object.fromEntries((specs ?? []).map((s) => [s.key, fmtStored(workout[s.key])])),
     // The stored values are the edit baseline; they change only when a save (or a
     // nightly sync) refetches the workout.
     [workout, specs]
@@ -176,11 +114,13 @@ function ManualCardioRow({
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Save failed')
   })
 
+  if (specs === null) return null
+
   const dirty = specs.some((s) => (draft[s.key] ?? '') !== (stored[s.key] ?? ''))
 
   function handleSave(): void {
     const patch: WorkoutManualInputsPatch = {}
-    for (const spec of specs) {
+    for (const spec of specs ?? []) {
       const value = parseField(draft[spec.key] ?? '', spec)
       if (value === 'invalid') {
         setError(`${spec.label} must be between ${spec.min} and ${spec.max} ${spec.unit}`)
@@ -192,51 +132,9 @@ function ManualCardioRow({
     save.mutate(patch)
   }
 
-  const dateLabel = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone || 'UTC',
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  }).format(new Date(workout.start_at))
-
-  // Cycling shows POWER EF (W/bpm); everything else shows speed EF (m/min per
-  // beat). Different units — deliberately never rendered on one shared scale.
-  const isPower = specs[0].key === 'manual_avg_watts'
-  const efValue = isPower ? workout.computed?.power_ef : workout.computed?.ef
-  const efUnit = isPower ? 'W/bpm' : 'm/min/bpm'
-
   return (
-    <li className="manual-cardio-row">
-      <div className="manual-cardio-meta">
-        <span className="manual-cardio-date tabular-nums">{dateLabel}</span>
-        <span
-          className="manual-cardio-modality"
-          style={{ color: activityEnvironmentAccent(workout.type) }}
-        >
-          <ModalityIcon type={workout.type} className="manual-cardio-modality-icon" />
-          <ActivityBadge type={workout.type} label={modalityLabel(workout.type)} />
-        </span>
-        <span className="manual-cardio-stat tabular-nums">
-          {formatDurationHM(workout.duration_s ?? 0)}
-        </span>
-        <span className="manual-cardio-stat tabular-nums">
-          {workout.avg_hr !== null ? (
-            <>
-              <Heart size={12} strokeWidth={1.75} className="manual-cardio-hr-icon" />
-              {Math.round(workout.avg_hr)}
-            </>
-          ) : (
-            EM_DASH
-          )}
-        </span>
-        <span className="manual-cardio-ef tabular-nums">
-          {efValue !== null && efValue !== undefined
-            ? `EF ${efValue.toFixed(2)} ${efUnit}`
-            : `EF ${EM_DASH}`}
-        </span>
-      </div>
-
+    <div className="manual-cardio">
+      <div className="day-drawer-section-label">Machine data</div>
       <div className="manual-cardio-fields">
         {specs.map((spec) => (
           <label key={spec.key} className="manual-cardio-field">
@@ -249,9 +147,7 @@ function ManualCardioRow({
                 placeholder={spec.unit}
                 value={draft[spec.key] ?? ''}
                 title={spec.hint}
-                aria-label={`${spec.label} in ${spec.unit} for the ${modalityLabel(
-                  workout.type
-                )} session on ${dateLabel}`}
+                aria-label={`${spec.label} in ${spec.unit}`}
                 onChange={(e) => setDraft({ ...draft, [spec.key]: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && dirty) handleSave()
@@ -270,12 +166,16 @@ function ManualCardioRow({
           {save.isPending ? 'Saving' : 'Save'}
         </button>
       </div>
-
+      <p className="manual-cardio-note">
+        The machine's numbers are this session's only path into the Zone-2 efficiency signal.
+        Read by the next nightly run, which covers the last 60 days — an older session needs a
+        full recompute.
+      </p>
       {error && (
         <p className="manual-cardio-error" role="alert">
           {error}
         </p>
       )}
-    </li>
+    </div>
   )
 }

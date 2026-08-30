@@ -1,101 +1,26 @@
-/* Indoor-cardio EF inputs. A quiet utility panel, not a headline surface: it
-   borrows the session-list card treatment so it reads as part of the Sessions
-   view rather than a new feature demanding attention. */
+/* Indoor-cardio machine-data entry, drawn as a section inside the day drawer's
+   session card (the slot the gym log occupies for strength sessions). Quiet
+   utility styling — the section label comes from the drawer's own idiom. */
 .manual-cardio {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.manual-cardio-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xxs);
-}
-
-.manual-cardio-title {
-  font-family: var(--font-display);
-  font-size: var(--type-heading-sm-size);
-  font-weight: var(--type-heading-sm-weight);
-  line-height: var(--type-heading-sm-line-height);
-  letter-spacing: var(--type-heading-sm-letter-spacing);
-  color: var(--color-text);
+  gap: var(--space-xs);
 }
 
 .manual-cardio-note {
-  max-width: 68ch;
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line-height);
-  letter-spacing: var(--type-body-sm-letter-spacing);
-  color: var(--color-text-tertiary);
-}
-
-.manual-cardio-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  list-style: none;
-}
-
-.manual-cardio-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  background: var(--color-surface-elevated);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-md);
-}
-
-.manual-cardio-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  min-width: 0;
-}
-
-.manual-cardio-date {
-  font-family: var(--font-body);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text);
-}
-
-.manual-cardio-modality {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-}
-
-.manual-cardio-modality-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-
-.manual-cardio-stat,
-.manual-cardio-ef {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  max-width: 60ch;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
+  line-height: var(--type-body-sm-line-height);
   letter-spacing: var(--type-caption-letter-spacing);
   color: var(--color-text-tertiary);
-}
-
-.manual-cardio-hr-icon {
-  color: var(--color-recovery);
 }
 
 .manual-cardio-fields {
   display: flex;
   align-items: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-xs);
-  flex-shrink: 0;
 }
 
 .manual-cardio-field {
@@ -153,8 +78,7 @@
   color: var(--color-text-tertiary);
 }
 
-.manual-cardio-save,
-.manual-cardio-more {
+.manual-cardio-save {
   height: 32px;
   padding: 0 14px;
   background: transparent;
@@ -169,8 +93,7 @@
   transition: background var(--motion-hover);
 }
 
-.manual-cardio-save:hover:not(:disabled),
-.manual-cardio-more:hover {
+.manual-cardio-save:hover:not(:disabled) {
   background: var(--color-surface-hover);
 }
 
@@ -179,18 +102,12 @@
   cursor: default;
 }
 
-.manual-cardio-save:focus-visible,
-.manual-cardio-more:focus-visible {
+.manual-cardio-save:focus-visible {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
 
-.manual-cardio-more {
-  align-self: flex-start;
-}
-
 .manual-cardio-error {
-  flex-basis: 100%;
   font-family: var(--font-body);
   font-size: var(--type-caption-size);
   color: var(--color-flag-text);

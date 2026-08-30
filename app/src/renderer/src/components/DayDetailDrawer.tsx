@@ -4,6 +4,7 @@ import { ChevronDown, Heart, X } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { GymSession, SwimSet, Workout, WorkoutHrSample } from '@shared/types'
 import { BadgeDomain } from './BadgeDomain'
+import { ManualCardioSection, manualFieldsFor } from './ManualCardioInputs'
 import { ModalityIcon } from './ModalityIcon'
 import { modalityLabel, modalityToDomain } from './modalityAccent'
 import { RouteMap } from './RouteMap'
@@ -253,6 +254,11 @@ function SessionCard({
   ]
   if (!isStrength) {
     technicalStats.push({ label: 'EF', value: ef != null ? ef.toFixed(2) : EM_DASH })
+    // Watts-per-beat EF from owner-entered avg power (indoor rides). A different
+    // unit from the speed-based EF above — shown as its own stat, never merged.
+    if (computed?.power_ef != null) {
+      technicalStats.push({ label: 'Power EF', value: computed.power_ef.toFixed(2) })
+    }
     technicalStats.push({
       label: 'Decoupling',
       value: decoupling != null ? `${decoupling.toFixed(1)}%` : EM_DASH
@@ -298,6 +304,8 @@ function SessionCard({
           </div>
         )}
       </div>
+
+      {manualFieldsFor(workout.type) !== null && <ManualCardioSection workout={workout} />}
 
       {isStrength && showGymLog && (
         <GymLogSection isLoading={gymSessionQuery.isLoading} session={gymSessionQuery.data} />
