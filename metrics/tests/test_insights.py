@@ -662,8 +662,8 @@ def test_block_bootstrap_stability_strong_vs_noise_and_deterministic():
 def test_calendar_block_bootstrap_keeps_every_session_from_a_sampled_date_together():
     from metrics import insights
 
-    sampler = getattr(insights, "_calendar_block_bootstrap_sample", None)
-    assert callable(sampler)
+    make_sampler = getattr(insights, "_make_block_sampler", None)
+    assert callable(make_sampler)
 
     days = pd.date_range("2026-01-01", periods=6, freq="D")
     index = pd.DatetimeIndex(
@@ -678,7 +678,10 @@ def test_calendar_block_bootstrap_keeps_every_session_from_a_sampled_date_togeth
         index=index,
     )
 
-    sample = sampler(data, np.random.default_rng(925), block_len=2)
+    sampler = make_sampler(
+        pd.DatetimeIndex(data.index).normalize(), len(data), 2, cluster_dates=True
+    )
+    sample = data.iloc[sampler(np.random.default_rng(925))]
 
     for _, group in sample.groupby(pd.DatetimeIndex(sample.index).normalize()):
         counts = group["slot"].value_counts()

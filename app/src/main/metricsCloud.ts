@@ -19,7 +19,11 @@ const WORKFLOW_FILE = 'nightly-metrics.yml'
 const API_BASE = `https://api.github.com/repos/${OWNER_REPO}/actions`
 
 const FIND_RUN_TIMEOUT_MS = 90 * 1000
-const RUN_TIMEOUT_MS = 6 * 60 * 1000
+// Polling budget. The dispatched run skips the insight finders (see the
+// skip_insights workflow input) and finishes in ~2 minutes; 10 gives headroom
+// for runner queue delays. Exhausting it is reported as `pending`, not
+// failure — the run keeps going in the cloud and lands its rows on its own.
+const RUN_TIMEOUT_MS = 10 * 60 * 1000
 const POLL_INTERVAL_MS = 5 * 1000
 // GitHub's clock and ours can disagree by a little; when matching "the run
 // our dispatch created" by created_at, look slightly before dispatch time.
@@ -104,10 +108,14 @@ export async function runCloudMetricsJob(
   const dispatchedAtMs = Date.now()
   let dispatch: Response
   try {
+    // skip_insights: the button's job is refreshing training-load/zone2/daily
+    // rows fast; the insight finders (the slowest stage) stay nightly-only.
+    // The input must exist in the workflow file on main — if an older commit
+    // is checked out there, GitHub answers 422 and we fall back locally.
     dispatch = await fetch(`${API_BASE}/workflows/${WORKFLOW_FILE}/dispatches`, {
       method: 'POST',
       headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: 'main' })
+      body: JSON.stringify({ ref: 'main', inputs: { skip_insights: 'true' } })
     })
   } catch (error) {
     throw new CloudDispatchUnavailable(
@@ -124,11 +132,15 @@ export async function runCloudMetricsJob(
   let latest = run
   while (latest.status !== 'completed') {
     if (Date.now() >= deadline) {
+      // Not a failure: the run is still executing and will write its rows
+      // when it completes — we just stop watching. pending lets the renderer
+      // phrase this as "check back shortly" instead of an error.
       return {
         ok: false,
+        pending: true,
         summaryLines: [],
         durationMs: Date.now() - startedAt,
-        error: `cloud run #${latest.run_number} still not finished after ${RUN_TIMEOUT_MS / 60000} minutes — check ${latest.html_url}`
+        error: `cloud run #${latest.run_number} is taking longer than ${RUN_TIMEOUT_MS / 60000} minutes — it keeps running and the data will be in on your next refresh (${latest.html_url})`
       }
     }
     await sleep(POLL_INTERVAL_MS)

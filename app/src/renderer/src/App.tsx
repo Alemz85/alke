@@ -180,6 +180,13 @@ function App(): ReactElement {
         // Recomputed CTL/TSB, zone2, and insights only exist in the DB after
         // this resolves — refetch so the new numbers show without a restart.
         await queryClient.refetchQueries()
+      } else if (result.pending) {
+        // The cloud run outlived our polling budget but keeps running; its
+        // rows arrive on their own — phrase as a heads-up, not a failure.
+        setToast({
+          message: `Still recomputing — ${result.error ?? 'the cloud run is taking longer than expected'}.`,
+          tone: 'info'
+        })
       } else {
         setToast({
           message: `Couldn't recompute metrics — ${result.error ?? 'unknown error'}.`,

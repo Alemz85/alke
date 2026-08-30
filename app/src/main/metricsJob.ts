@@ -26,6 +26,10 @@ export interface MetricsJobResult {
   summaryLines: string[]
   durationMs: number
   error?: string
+  // True when the job wasn't observed to completion but is still running in
+  // the cloud (polling budget exhausted) — a "check back shortly", not a
+  // failure. The renderer shows this as info, not an error.
+  pending?: boolean
 }
 
 // Checked in order. `python3` first (respects the hydrated PATH / any venv
@@ -218,7 +222,9 @@ function runCompute(interpreter: string, startedAt: number): Promise<MetricsJobR
     let stderr = ''
     let settled = false
 
-    const child = spawn(interpreter, ['-m', 'metrics.compute'], {
+    // --skip-insights: on-demand runs skip the insight finders (the slowest
+    // stage by far); the nightly cron recomputes them on the full path.
+    const child = spawn(interpreter, ['-m', 'metrics.compute', '--skip-insights'], {
       cwd: REPO_ROOT,
       env: process.env
     })

@@ -202,7 +202,7 @@ def configured_float(config: dict, key: str, default: float) -> float:
     return float(default if value is None else value)
 
 
-def run(full: bool) -> None:
+def run(full: bool, skip_insights: bool = False) -> None:
     sb = db.client()
     config = db.fetch_user_config(sb)
     tz = ZoneInfo(config.get("timezone") or "UTC")
@@ -424,7 +424,13 @@ def run(full: bool) -> None:
     print(f"computed_daily: {len(daily_rows)} rows ({days[0]} → {days[-1]})")
 
     # ---- insights (SPEC §5.4) ----
-    run_insights(sb, all_workouts, daily_metrics, daily_rows, tz)
+    if skip_insights:
+        # On-demand runs (the app's "Run metrics now" button) skip the two
+        # insight finders — by far the slowest stage — leaving last night's
+        # insight rows in place; the nightly cron always recomputes them.
+        print("insights: skipped (--skip-insights); nightly run will refresh them")
+    else:
+        run_insights(sb, all_workouts, daily_metrics, daily_rows, tz)
 
     # ---- Zone 2 fitness model (docs/zone2-fitness-model.md) ----
     run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now)
@@ -1972,9 +1978,14 @@ def run_geocoding(sb) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nightly health metrics job")
     parser.add_argument("--full", action="store_true", help="recompute all history")
+    parser.add_argument(
+        "--skip-insights",
+        action="store_true",
+        help="skip the insight finders (slowest stage); used by on-demand runs",
+    )
     args = parser.parse_args()
     try:
-        run(full=args.full)
+        run(full=args.full, skip_insights=args.skip_insights)
     except Exception as e:  # noqa: BLE001 — fail loudly for Actions
         print(f"metrics job failed: {e}", file=sys.stderr)
         raise

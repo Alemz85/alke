@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '30 3 * * *'
   workflow_dispatch:
+    inputs:
+      skip_insights:
+        description: 'Skip the insight finders (fast on-demand recompute)'
+        type: boolean
+        default: false
 
 jobs:
   compute:
@@ -14,7 +19,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r metrics/requirements.txt
-      - run: python -m metrics.compute
+      - run: python -m metrics.compute ${{ inputs.skip_insights == true && '--skip-insights' || '' }}
         env:
+          # Stage prints flush as they happen, so run logs carry real timings.
+          PYTHONUNBUFFERED: '1'
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

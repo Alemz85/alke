@@ -986,6 +986,9 @@ export interface MetricsJobResult {
   summaryLines: string[]
   durationMs: number
   error?: string
+  // True when a cloud run outlived the polling budget: it is still executing
+  // and will land its rows on its own — an info state, not an error.
+  pending?: boolean
 }
 
 // Chat sessions are routed to a role via chatctx's `health` skill: the first

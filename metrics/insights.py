@@ -575,12 +575,49 @@ def _drop_collinear_controls(df: pd.DataFrame, controls: list[str], threshold: f
     return kept, dropped
 
 
+def _lstsq_residuals(design: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """Least-squares residuals of each target column against the design's
+    column span. SVD-based, so an exactly collinear design still yields the
+    unique projection residuals (residuals are span properties — any
+    least-squares solution gives the same ones)."""
+    coef, _, _, _ = np.linalg.lstsq(design, targets, rcond=None)
+    return targets - design @ coef
+
+
+def _drop_degenerate_controls(
+    data: pd.DataFrame, controls: list[str]
+) -> tuple[list[str], list[str]]:
+    """Controls adding no rank beyond the intercept and earlier-kept controls.
+
+    Two real cases produce these: a dummy whose category vanished with the
+    spec's dropna (all-zero column — e.g. a rarely logged modality's dummy),
+    and a dummy family that sums to the intercept once its reference category
+    is filtered out. Either way the column lies in the span of what's already
+    there, so dropping it leaves every residual and reported coefficient
+    unchanged — it only removes the rank-deficient directions that made every
+    downstream OLS fit warn (and pick an arbitrary parameterization)."""
+    basis = np.ones((len(data), 1))
+    kept: list[str] = []
+    dropped: list[str] = []
+    for control in controls:
+        col = data[control].to_numpy(dtype=float)
+        norm = float(np.linalg.norm(col))
+        resid = col - (basis @ np.linalg.lstsq(basis, col, rcond=None)[0])
+        if norm == 0.0 or float(np.linalg.norm(resid)) <= 1e-8 * norm:
+            dropped.append(control)
+        else:
+            kept.append(control)
+            basis = np.column_stack([basis, col])
+    return kept, dropped
+
+
 def _residualize(df: pd.DataFrame, controls: list[str]) -> tuple[pd.Series, pd.Series]:
     """x and y with the controls (plus intercept) regressed out."""
-    matrix = sm.add_constant(df[controls].astype(float), has_constant="add")
-    x_resid = sm.OLS(df["x"], matrix).fit().resid
-    y_resid = sm.OLS(df["y"], matrix).fit().resid
-    return x_resid, y_resid
+    design = np.column_stack(
+        [np.ones(len(df)), df[controls].to_numpy(dtype=float)]
+    )
+    resid = _lstsq_residuals(design, df[["x", "y"]].to_numpy(dtype=float))
+    return pd.Series(resid[:, 0], index=df.index), pd.Series(resid[:, 1], index=df.index)
 
 
 def _partial_r(df: pd.DataFrame, controls: list[str]) -> float:
@@ -615,36 +652,41 @@ def _calendar_covariates(index: pd.Index) -> pd.DataFrame:
     return pd.concat([calendar, weekdays], axis=1)
 
 
-def _calendar_block_bootstrap_sample(
-    data: pd.DataFrame,
-    rng: np.random.Generator,
-    block_len: int = BOOT_BLOCK_LEN,
-) -> pd.DataFrame:
-    """Sample contiguous calendar-day blocks while keeping date clusters whole."""
-    if data.empty:
-        return data.copy()
-    normalized = pd.DatetimeIndex(data.index).normalize()
+def _make_block_sampler(
+    normalized: pd.DatetimeIndex,
+    n: int,
+    block_len: int,
+    cluster_dates: bool,
+):
+    """Row-index sampler for the moving-block bootstrap; one rng.integers draw
+    per replicate, matching the historical draw sequence exactly so seeded
+    verdicts reproduce. Row mode resamples contiguous ROW blocks; cluster mode
+    resamples contiguous CALENDAR-DAY blocks keeping each date's rows whole
+    (the day→row-positions table is built once here, not per replicate)."""
+    if not cluster_dates:
+        n_blocks = int(math.ceil(n / block_len))
+        offsets = np.arange(block_len)
+
+        def sample(rng: np.random.Generator) -> np.ndarray:
+            starts = rng.integers(0, n - block_len + 1, size=n_blocks)
+            return (starts[:, None] + offsets[None, :]).ravel()[:n]
+
+        return sample
+
     calendar = pd.date_range(normalized.min(), normalized.max(), freq="D")
     actual_block_len = min(block_len, len(calendar))
     n_blocks = int(math.ceil(len(calendar) / actual_block_len))
-    starts = rng.integers(
-        0,
-        len(calendar) - actual_block_len + 1,
-        size=n_blocks,
-    )
-    sampled_days = np.concatenate(
-        [calendar[start : start + actual_block_len].to_numpy() for start in starts]
-    )[: len(calendar)]
-    positions_by_day = {
-        day: np.flatnonzero(normalized == day)
-        for day in pd.DatetimeIndex(normalized.unique())
-    }
-    pieces = [
-        data.iloc[positions_by_day[pd.Timestamp(day)]]
-        for day in sampled_days
-        if pd.Timestamp(day) in positions_by_day
-    ]
-    return pd.concat(pieces) if pieces else data.iloc[0:0].copy()
+    day_offsets = np.arange(actual_block_len)
+    codes = calendar.get_indexer(normalized)  # calendar position of each row
+    positions_by_day = [np.flatnonzero(codes == day) for day in range(len(calendar))]
+
+    def sample(rng: np.random.Generator) -> np.ndarray:
+        starts = rng.integers(0, len(calendar) - actual_block_len + 1, size=n_blocks)
+        sampled_days = (starts[:, None] + day_offsets[None, :]).ravel()[: len(calendar)]
+        pieces = [positions_by_day[day] for day in sampled_days if len(positions_by_day[day])]
+        return np.concatenate(pieces) if pieces else np.empty(0, dtype=np.intp)
+
+    return sample
 
 
 def _block_bootstrap_stability(
@@ -677,22 +719,27 @@ def _block_bootstrap_stability(
     if span_days < 2 * block_len or point == 0 or not np.isfinite(point):
         return {"stable": False, "agree": 0.0, "n_valid": 0}
     rng = np.random.default_rng(zlib.crc32(seed_name.encode("utf-8")))
+    xy = data[["x", "y"]].to_numpy(dtype=float)
+    ctrl = data[controls].to_numpy(dtype=float) if controls else None
+    sampler = _make_block_sampler(normalized, n, block_len, cluster_dates)
     values: list[float] = []
     for _ in range(reps):
-        if cluster_dates:
-            sample = _calendar_block_bootstrap_sample(data, rng, block_len)
-        else:
-            n_blocks = int(math.ceil(n / block_len))
-            starts = rng.integers(0, n - block_len + 1, size=n_blocks)
-            idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
-            sample = data.iloc[idx]
-        sample = sample.reset_index(drop=True)
-        if sample["x"].std(ddof=0) == 0 or sample["y"].std(ddof=0) == 0:
+        idx = sampler(rng)
+        if len(idx) == 0:
             continue
-        try:
-            value = _partial_r(sample, controls)
-        except (ValueError, np.linalg.LinAlgError):
+        pair = xy[idx]
+        if pair[:, 0].std() == 0 or pair[:, 1].std() == 0:
             continue
+        if ctrl is not None:
+            design = np.column_stack([np.ones(len(idx)), ctrl[idx]])
+            pair = _lstsq_residuals(design, pair)
+        centered = pair - pair.mean(axis=0)
+        denom = math.sqrt(
+            float(centered[:, 0] @ centered[:, 0]) * float(centered[:, 1] @ centered[:, 1])
+        )
+        if denom == 0.0:
+            continue
+        value = float(centered[:, 0] @ centered[:, 1]) / denom
         if np.isfinite(value):
             values.append(value)
     if len(values) < reps // 2:
@@ -742,24 +789,26 @@ def _cyclic_bootstrap_stability(
     if span_days < 2 * block_len:
         return {"stable": False, "within_6h": 0.0, "resultant": 0.0, "n_valid": 0}
     rng = np.random.default_rng(zlib.crc32(seed_name.encode("utf-8")))
+    # Design column order mirrors _fit_cyclic: const, start_sin, start_cos, controls.
+    exog = data[["start_sin", "start_cos", *controls]].to_numpy(dtype=float)
+    y_raw = data["y"].to_numpy(dtype=float)
+    sampler = _make_block_sampler(normalized, n, block_len, cluster_dates)
     peaks: list[float] = []
     for _ in range(reps):
-        if cluster_dates:
-            sample = _calendar_block_bootstrap_sample(data, rng, block_len)
-        else:
-            n_blocks = int(math.ceil(n / block_len))
-            starts = rng.integers(0, n - block_len + 1, size=n_blocks)
-            idx = np.concatenate([np.arange(s, s + block_len) for s in starts])[:n]
-            sample = data.iloc[idx]
-        sample = sample.reset_index(drop=True)
-        if sample["y"].std(ddof=0) == 0:
+        idx = sampler(rng)
+        if len(idx) == 0:
             continue
+        ys = y_raw[idx]
+        sd = ys.std()
+        if sd == 0:
+            continue
+        ys = (ys - ys.mean()) / sd
+        design = np.column_stack([np.ones(len(idx)), exog[idx]])
         try:
-            fit = _fit_cyclic(sample, controls)
-        except (ValueError, np.linalg.LinAlgError):
+            coef, _, _, _ = np.linalg.lstsq(design, ys, rcond=None)
+        except np.linalg.LinAlgError:
             continue
-        beta_sin = float(fit.params.get("start_sin", np.nan))
-        beta_cos = float(fit.params.get("start_cos", np.nan))
+        beta_sin, beta_cos = float(coef[1]), float(coef[2])
         if np.isfinite(beta_sin) and np.isfinite(beta_cos) and math.hypot(beta_sin, beta_cos) > 1e-9:
             peaks.append(_cyclic_peak_hour(beta_sin, beta_cos))
     if len(peaks) < reps // 2:
@@ -858,11 +907,17 @@ def _evaluate_cyclic_spec(
         }
 
     kept, dropped = _drop_collinear_controls(data, raw_controls)
-    controls = kept + calendar.columns.tolist()
+    controls, degenerate = _drop_degenerate_controls(data, kept + calendar.columns.tolist())
+    dropped = dropped + degenerate
     control_matrix = sm.add_constant(data[controls].astype(float), has_constant="add")
-    y_resid = sm.OLS(data["y"], control_matrix).fit().resid
-    sin_resid = sm.OLS(data["start_sin"], control_matrix).fit().resid
-    cos_resid = sm.OLS(data["start_cos"], control_matrix).fit().resid
+    control_design = np.asarray(control_matrix, dtype=float)
+    resids = _lstsq_residuals(
+        control_design,
+        data[["y", "start_sin", "start_cos"]].to_numpy(dtype=float),
+    )
+    y_resid = pd.Series(resids[:, 0], index=data.index)
+    sin_resid = pd.Series(resids[:, 1], index=data.index)
+    cos_resid = pd.Series(resids[:, 2], index=data.index)
     n_eff = min(
         _effective_n(len(data), _lag1_autocorr(sin_resid), _lag1_autocorr(y_resid)),
         _effective_n(len(data), _lag1_autocorr(cos_resid), _lag1_autocorr(y_resid)),
@@ -1020,7 +1075,8 @@ def _evaluate_spec(
         }
 
     kept, dropped = _drop_collinear_controls(data, raw_controls)
-    controls = kept + calendar.columns.tolist()
+    controls, degenerate = _drop_degenerate_controls(data, kept + calendar.columns.tolist())
+    dropped = dropped + degenerate
     x_resid, y_resid = _residualize(data, controls)
     # Effective information AFTER the controls: with a lagged-outcome control the
     # residuals are near-iid and n_eff ≈ n; without one, smooth series can carry

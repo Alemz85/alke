@@ -181,7 +181,7 @@ describe('metricsJob', () => {
       const result = await resultPromise
       expect(result.ok).toBe(true)
       expect(spawnMock).toHaveBeenNthCalledWith(1, 'python3', expect.arrayContaining(['-c']))
-      expect(spawnMock).toHaveBeenNthCalledWith(2, 'python3', ['-m', 'metrics.compute'], expect.anything())
+      expect(spawnMock).toHaveBeenNthCalledWith(2, 'python3', ['-m', 'metrics.compute', '--skip-insights'], expect.anything())
     })
 
     it('skips a failing candidate and falls through to the next passing one', async () => {
@@ -202,7 +202,7 @@ describe('metricsJob', () => {
       expect(spawnMock).toHaveBeenNthCalledWith(
         3,
         CANDIDATE_INTERPRETERS[1],
-        ['-m', 'metrics.compute'],
+        ['-m', 'metrics.compute', '--skip-insights'],
         expect.anything()
       )
     })
@@ -263,7 +263,7 @@ describe('metricsJob', () => {
 
       expect(result.ok).toBe(true)
       expect(spawnMock).toHaveBeenCalledTimes(3) // no new probe spawn — cached
-      expect(spawnMock).toHaveBeenNthCalledWith(3, 'python3', ['-m', 'metrics.compute'], expect.anything())
+      expect(spawnMock).toHaveBeenNthCalledWith(3, 'python3', ['-m', 'metrics.compute', '--skip-insights'], expect.anything())
     })
 
     it('re-probes after a failed run instead of reusing the stale cached interpreter', async () => {

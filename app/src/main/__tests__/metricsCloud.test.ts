@@ -82,7 +82,7 @@ describe('metricsCloud', () => {
       expect(fetchMock.mock.calls[0][0]).toMatch(/dispatches$/)
       const dispatchInit = fetchMock.mock.calls[0][1] as RequestInit
       expect(dispatchInit.method).toBe('POST')
-      expect(JSON.parse(dispatchInit.body as string)).toEqual({ ref: 'main' })
+      expect(JSON.parse(dispatchInit.body as string)).toEqual({ ref: 'main', inputs: { skip_insights: 'true' } })
     })
 
     it('polls an in-progress run to completion and reports a failed conclusion without throwing', async () => {
