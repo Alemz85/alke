@@ -244,10 +244,14 @@ function addDaysKey(dateKey: string, n: number): string {
 // "eases" marker being loud-when-fresh / silent-when-detrained):
 //
 //   BUILD WINDOW — the literal interval from 24h through 48h after the LAST
-//     SESSION timestamp. It is never clamped forward: an elapsed window stays on
-//     the dates when it actually occurred, while copy reports that it is overdue.
-//     build_interval_days still supplies the model-derived dose copy, but does
-//     not redefine a UI band labelled "24–48h".
+//     SESSION timestamp. Passed days never keep their highlight; a freshly-
+//     overdue window collapses to one due-now mark on today, for one more
+//     build-cadence cycle of grace past the window's close. Beyond that grace
+//     the window is stale and the marker (and buildWindow itself) is dropped —
+//     a miss from days ago must not keep re-painting today as due, which is
+//     indistinguishable from a same-day miss and reads as arbitrary once the
+//     gap grows. build_interval_days supplies both the model-derived dose copy
+//     and the grace length; it does not redefine the UI band labelled "24–48h".
 //
 //   EASES / HOLD — FROM-TODAY durable-erosion projections, so they anchor at the
 //     ROW date (its state already embeds the gap). They appear ONLY in the
@@ -353,8 +357,16 @@ function buildDoseCopy(buildIntervalDays: number): string {
  *
  * The build marker is the literal +24h to +48h interval after the latest Zone 2
  * workout, clipped to today-or-later — passed days never keep a highlight, and
- * an overdue window shows as one due-now mark on today. Erosion and hold markers
- * trace to their model horizon columns and remain anchored at the model row date.
+ * a freshly-overdue window shows as one due-now mark on today so a same-day or
+ * next-day miss still surfaces. That collapse is bounded to one more
+ * build-cadence cycle past the window's close (`staleAfterMs` below; dynamic in
+ * `build_interval_days`, never a hardcoded day count) — beyond it the literal
+ * window is stale (a miss from days ago, not today), so the marker is dropped
+ * rather than sticking to today indefinitely. Without this bound a lapse of any
+ * length re-painted "today" forever, which read as an unexplained, seemingly
+ * arbitrary due-today flag once the gap grew past a few days. Erosion and hold
+ * markers trace to their model horizon columns and remain anchored at the model
+ * row date.
  *
  * `sessionStarts` are ISO workout timestamps, any order, duplicates tolerated.
  * Date-only values remain accepted for older callers and tests. `today` is the
@@ -443,23 +455,36 @@ export function zone2CalendarGuidance(
   if (cadence != null && lastSessionAt != null) {
     const windowStartMs = lastSessionAt + 24 * 60 * 60 * 1000
     const windowEndMs = lastSessionAt + 48 * 60 * 60 * 1000
-    buildOverdue = nowMs >= windowEndMs
+    // One more build-cadence cycle of grace past the window's close before the
+    // literal window is considered stale. Dynamic in the stored cadence (never a
+    // hardcoded day count) — a thin base with a short cadence goes stale sooner
+    // than a banked one with a longer cadence, matching how "how overdue is too
+    // overdue" should scale with the user's own training rhythm.
+    const staleAfterMs = windowEndMs + Math.max(cadence, 1) * 24 * 60 * 60 * 1000
+    const isOverdue = nowMs >= windowEndMs
+    const isStale = nowMs >= staleAfterMs
+    buildOverdue = isOverdue && !isStale
     const start = localKey(windowStartMs)
     const end = localKey(windowEndMs - 1)
-    buildWindow = { start, end }
-    const range = `${formatGuidanceDate(start)}–${formatGuidanceDate(end)}`
-    const label = buildOverdue
-      ? `Due now — train today to keep building. ${buildDose ?? ''}`.trim()
-      : `Build window · train ${range} to keep building. ${buildDose ?? ''}`.trim()
-    // A day that has passed never keeps its highlight: only today-or-later window
-    // days are marked, and a fully overdue window collapses to a single due-now
-    // mark on today (the summary/legend already say "train now").
-    let markerDate = maxKey(start, today)
-    while (markerDate <= end) {
-      markers[markerDate] = { kind: 'build', label }
-      markerDate = addDaysKey(markerDate, 1)
+
+    if (!isStale) {
+      buildWindow = { start, end }
+      const range = `${formatGuidanceDate(start)}–${formatGuidanceDate(end)}`
+      const label = buildOverdue
+        ? `Due now — train today to keep building. ${buildDose ?? ''}`.trim()
+        : `Build window · train ${range} to keep building. ${buildDose ?? ''}`.trim()
+      // A day that has passed never keeps its highlight: only today-or-later
+      // window days are marked, and a freshly-overdue window (still within the
+      // grace above) collapses to a single due-now mark on today (the
+      // summary/legend already say "train now"). Once stale, buildWindow is null
+      // and no marker is added at all — see staleAfterMs above.
+      let markerDate = maxKey(start, today)
+      while (markerDate <= end) {
+        markers[markerDate] = { kind: 'build', label }
+        markerDate = addDaysKey(markerDate, 1)
+      }
+      if (buildOverdue) markers[today] = { kind: 'build', label }
     }
-    if (buildOverdue) markers[today] = { kind: 'build', label }
   }
 
   // ── PHASE. warn_after_days (the durable-erosion-vs-band "eases" horizon) is

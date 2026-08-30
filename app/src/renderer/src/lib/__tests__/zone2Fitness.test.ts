@@ -223,7 +223,36 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
     expect(g.buildOverdue).toBe(false)
   })
 
-  it('collapses an overdue build window to a single due-now mark on today', () => {
+  it('collapses a freshly-overdue build window to a single due-now mark on today', () => {
+    // Window [07-08, 07-09] closed yesterday (last session 07-07); still within
+    // one build-cadence (2d) of grace past the close, so it stays actionable.
+    const g = zone2CalendarGuidance(
+      {
+        date: '2026-07-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2
+      },
+      ['2026-07-07'],
+      TODAY
+    )
+    // The literal window is reported unchanged, but its passed days carry no
+    // highlight — the actionable mark moves to today.
+    expect(g.buildWindow).toEqual({ start: '2026-07-08', end: '2026-07-09' })
+    expect(g.buildOverdue).toBe(true)
+    expect(g.markers['2026-07-08']).toBeUndefined()
+    expect(g.markers['2026-07-09']).toBeUndefined()
+    expect(Object.keys(g.markers)).toEqual([TODAY])
+    expect(g.markers[TODAY].kind).toBe('build')
+    expect(g.markers[TODAY].label).toMatch(/due now/i)
+  })
+
+  it('drops the due-now marker once the window has been stale for more than one build-cadence cycle', () => {
+    // Regression for the "highlighted today for a 4-5-day-old miss" report: the
+    // window [07-02, 07-03] (last session 07-01, cadence 2d) closed 07-03; grace
+    // runs out 07-05. By TODAY (07-10) it is long stale — the app must not keep
+    // painting today as due for a miss from a week ago. No build guidance at all
+    // (same as "no session on record"), not a marker glued to today forever.
     const g = zone2CalendarGuidance(
       {
         date: '2026-07-10',
@@ -234,15 +263,35 @@ describe('zone2CalendarGuidance (v4: build window + phase gate)', () => {
       ['2026-07-01'],
       TODAY
     )
-    // The literal window is reported unchanged, but its passed days carry no
-    // highlight — the actionable mark moves to today.
-    expect(g.buildWindow).toEqual({ start: '2026-07-02', end: '2026-07-03' })
-    expect(g.buildOverdue).toBe(true)
-    expect(g.markers['2026-07-02']).toBeUndefined()
-    expect(g.markers['2026-07-03']).toBeUndefined()
-    expect(Object.keys(g.markers)).toEqual([TODAY])
-    expect(g.markers[TODAY].kind).toBe('build')
-    expect(g.markers[TODAY].label).toMatch(/due now/i)
+    expect(g.buildWindow).toBeNull()
+    expect(g.buildOverdue).toBe(false)
+    expect(g.markers).toEqual({})
+    expect(g.summary).not.toMatch(/train now/i)
+  })
+
+  it('a lapsed scenario: last Zone-2 cardio 6 days ago plus an unrelated same-day gym session produce no build highlight on today', () => {
+    // Worked example: last qualifying Zone-2 session 2026-08-04 (cycling),
+    // build_interval_days ~2.25 (as stored on the 08-10 row), and a strength
+    // session on 08-09 (excluded upstream by cardioModalityOf/isZone2Session —
+    // gym/strength types never even reach sessionStarts). The window
+    // [08-05, 08-06] is long past its grace by 08-10 (6 days after the last
+    // session) — today must not be highlighted "due now".
+    const g = zone2CalendarGuidance(
+      {
+        date: '2026-08-10',
+        warn_after_days: null,
+        maintain_horizon_days: null,
+        build_interval_days: 2.25
+      },
+      ['2026-08-04T17:00:00.000Z'], // only the cardio session — gym is never in sessionStarts
+      '2026-08-10',
+      'UTC',
+      '2026-08-10T12:00:00.000Z'
+    )
+    expect(g.lastSession).toBe('2026-08-04')
+    expect(g.buildWindow).toBeNull()
+    expect(g.markers['2026-08-10']).toBeUndefined()
+    expect(Object.keys(g.markers)).toHaveLength(0)
   })
 
   it('does not invent a build window when no session is on record', () => {
