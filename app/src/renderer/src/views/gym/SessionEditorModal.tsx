@@ -396,6 +396,26 @@ export function quickSetFieldValue(draft: string | null, derived: string): strin
   return draft ?? derived
 }
 
+/**
+ * Whether a Sets/Reps box's in-progress draft can be safely released back to
+ * derived-tracking on blur. Only true once the draft is already reflected in
+ * the derived value (i.e. it was successfully committed to rows) — or when
+ * there's no draft to release in the first place.
+ *
+ * This matters because building rows needs BOTH boxes valid at once
+ * (buildQuickSetRows), but a user normally fills them one at a time: type
+ * Sets, tab to Reps, type Reps. Typing "3" alone can't commit (Reps is still
+ * blank), so right after that keystroke the derived value is still blank too.
+ * If blur released the draft unconditionally, the "3" the user just typed
+ * would vanish the moment they tab away — and since Reps then reads Sets back
+ * as blank, the pair never builds any rows: the whole "3 x 12" entry silently
+ * gets rejected. Keeping the un-synced draft alive across the tab lets the
+ * *next* field's onChange read it back correctly and complete the pair.
+ */
+export function shouldReleaseQuickSetDraftOnBlur(draft: string | null, derived: string): boolean {
+  return draft === null || draft === derived
+}
+
 /** Body parts to show as derived tags: only those actually present across
  *  the blocks' resolved exercises, in the canon GYM_BODY_PARTS order. */
 export function derivedBodyParts(
@@ -536,10 +556,34 @@ function SetRowEditor({
           className="gym-check-input"
           type="checkbox"
           checked={row.isWarmup}
-          onChange={(e) => onChange({ isWarmup: e.target.checked })}
+          onChange={(e) =>
+            // Warm-ups never persist as unilateral (blocksToNewSets forces
+            // is_unilateral false for them) — clearing it here the moment a
+            // set is marked warm-up keeps this checkbox from showing a
+            // checked-but-inert state.
+            onChange({
+              isWarmup: e.target.checked,
+              ...(e.target.checked ? { isUnilateral: false } : {})
+            })
+          }
         />
         <span className="gym-check-mark" aria-hidden="true" />
         Warm-up
+      </label>
+      <label
+        className="gym-check gym-set-unilateral"
+        title="Single-arm or single-leg set — overrides the exercise's default for just this set"
+      >
+        <input
+          className="gym-check-input"
+          type="checkbox"
+          checked={row.isUnilateral}
+          disabled={row.isWarmup}
+          aria-label={`Set ${index + 1} unilateral (single-arm or single-leg)`}
+          onChange={(e) => onChange({ isUnilateral: e.target.checked })}
+        />
+        <span className="gym-check-mark" aria-hidden="true" />
+        Uni
       </label>
       <button type="button" className="gym-set-remove" aria-label="Remove set" onClick={onRemove}>
         ×
@@ -628,15 +672,18 @@ function ExerciseBlockEditor({
     onChange({ ...block, rows: [...block.rows, copy] })
   }
 
-  const applyQuickSets = (setValue: string, repValue: string): void => {
-    if (!block.exerciseId) return
+  /** Returns whether the pair committed to rows — callers use this to decide
+   *  whether it's now safe to release the fields' in-progress drafts (see
+   *  shouldReleaseQuickSetDraftOnBlur's doc comment for why that matters). */
+  const applyQuickSets = (setValue: string, repValue: string): boolean => {
+    if (!block.exerciseId) return false
     const rows = buildQuickSetRows(
       block.exerciseId,
       block.exerciseName,
       Number(setValue),
       Number(repValue)
     )
-    if (!rows) return
+    if (!rows) return false
     const eccentricFlags = eccentricFlagsForQuickSetRebuild(block.rows, rows.length)
     const unilateralFlags = unilateralFlagsForQuickSetRebuild(block.rows, rows.length)
     onChange({
@@ -652,6 +699,7 @@ function ExerciseBlockEditor({
         isUnilateral: unilateralFlags[index]
       }))
     })
+    return true
   }
 
   return (
@@ -760,9 +808,18 @@ function ExerciseBlockEditor({
             onChange={(event) => {
               const value = event.target.value
               setSetsDraft(value)
-              applyQuickSets(value, quickReps)
+              // Once this pairs with Reps and commits, both boxes can safely
+              // go back to tracking the derived value.
+              if (applyQuickSets(value, quickReps)) {
+                setSetsDraft(null)
+                setRepsDraft(null)
+              }
             }}
-            onBlur={() => setSetsDraft(null)}
+            onBlur={() =>
+              setSetsDraft((draft) =>
+                shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.sets) ? null : draft
+              )
+            }
           />
         </label>
         <span className="gym-quick-set-times" aria-hidden="true">
@@ -782,9 +839,18 @@ function ExerciseBlockEditor({
             onChange={(event) => {
               const value = event.target.value
               setRepsDraft(value)
-              applyQuickSets(quickSets, value)
+              // Once this pairs with Sets and commits, both boxes can safely
+              // go back to tracking the derived value.
+              if (applyQuickSets(quickSets, value)) {
+                setSetsDraft(null)
+                setRepsDraft(null)
+              }
             }}
-            onBlur={() => setRepsDraft(null)}
+            onBlur={() =>
+              setRepsDraft((draft) =>
+                shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.reps) ? null : draft
+              )
+            }
           />
         </label>
         <span className="gym-quick-set-hint">updates rows automatically</span>

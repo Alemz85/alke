@@ -12,6 +12,7 @@ import {
   moveBlock,
   quickSetFieldValue,
   saveErrorDetail,
+  shouldReleaseQuickSetDraftOnBlur,
   weightPlaceholderFor,
   type Block,
   type SetRow
@@ -101,6 +102,102 @@ describe('quickSetFieldValue (Sets/Reps box two-way sync)', () => {
 
   it('falls back to derived the instant the draft clears (field blurred)', () => {
     expect(quickSetFieldValue(null, '5')).toBe('5')
+  })
+})
+
+describe('shouldReleaseQuickSetDraftOnBlur (regression: "3 x 12" quick-log entry silently rejected)', () => {
+  it('releases a draft that already matches the derived value', () => {
+    expect(shouldReleaseQuickSetDraftOnBlur('3', '3')).toBe(true)
+  })
+
+  it('releases a null draft (nothing to keep)', () => {
+    expect(shouldReleaseQuickSetDraftOnBlur(null, '')).toBe(true)
+  })
+
+  it('keeps an un-synced draft instead of discarding it', () => {
+    // Sets was typed "3" but Reps is still blank, so nothing committed yet —
+    // releasing here is exactly what used to wipe the user's keystroke.
+    expect(shouldReleaseQuickSetDraftOnBlur('3', '')).toBe(false)
+  })
+
+  it('simulates the reported bug: typing Sets then tabbing to Reps used to lose the pair', () => {
+    // Reproduces the exact sequence from the bug report — fill "3" into Sets,
+    // tab to Reps, fill "12" — using the same primitives the component's
+    // onChange/onBlur handlers are built from (buildQuickSetRows,
+    // quickSetFieldValue, shouldReleaseQuickSetDraftOnBlur). This is a
+    // regression test for a real production bug: the OLD blur handler was
+    // `() => setSetsDraft(null)` unconditionally, which — because
+    // buildQuickSetRows requires both Sets AND Reps to be valid at once —
+    // wiped the "3" the instant focus left the field, before Reps was ever
+    // filled in. Swap `release` below for `() => true` (the old behavior) and
+    // this test fails: quickSets reads back '' instead of '3', so the second
+    // buildQuickSetRows call also returns null and rows never builds.
+    let setsDraft: string | null = null
+    let repsDraft: string | null = null
+    let rows: SetRow[] = [
+      {
+        key: 'row-1',
+        exerciseId: 'ex-1',
+        exerciseName: 'Bench Press',
+        reps: null,
+        durationS: null,
+        doseUnit: 'reps',
+        weightKg: null,
+        rpe: null,
+        note: '',
+        isWarmup: false,
+        isEccentric: false,
+        isUnilateral: false
+      }
+    ]
+    const derived = () => uniformPrefillDose(rows)
+    const commit = (setValue: string, repValue: string): boolean => {
+      const built = buildQuickSetRows('ex-1', 'Bench Press', Number(setValue), Number(repValue))
+      if (!built) return false
+      rows = built.map((row, i) => ({
+        ...row,
+        key: `row-${i}`,
+        doseUnit: 'reps' as const,
+        rpe: null,
+        note: '',
+        isEccentric: false,
+        isUnilateral: false
+      }))
+      return true
+    }
+
+    // Focus Sets, type "3".
+    setsDraft = '3'
+    const firstCommit = commit(setsDraft, quickSetFieldValue(repsDraft, derived().reps))
+    expect(firstCommit).toBe(false) // Reps is still blank — can't build yet.
+
+    // Tab away: Sets blurs.
+    setsDraft = shouldReleaseQuickSetDraftOnBlur(setsDraft, derived().sets) ? null : setsDraft
+    expect(setsDraft).toBe('3') // fix: retained, NOT wiped to ''
+
+    // Focus Reps, type "1" then "12".
+    repsDraft = '1'
+    commit(quickSetFieldValue(setsDraft, derived().sets), repsDraft)
+    repsDraft = '12'
+    const secondCommit = commit(quickSetFieldValue(setsDraft, derived().sets), repsDraft)
+    expect(secondCommit).toBe(true)
+
+    expect(rows).toHaveLength(3)
+    expect(rows.every((row) => row.reps === 12)).toBe(true)
+  })
+})
+
+describe('quick Sets/Reps drafts release on successful commit (source contract)', () => {
+  it('clears both drafts as soon as a pairing builds rows, so a later external row change is not masked by a stale draft', () => {
+    expect(source).toMatch(/if \(applyQuickSets\(value, quickReps\)\) \{\s*setSetsDraft\(null\)\s*setRepsDraft\(null\)/)
+    expect(source).toMatch(/if \(applyQuickSets\(quickSets, value\)\) \{\s*setSetsDraft\(null\)\s*setRepsDraft\(null\)/)
+  })
+
+  it('never unconditionally nulls a draft on blur (the regressed behavior)', () => {
+    expect(source).not.toContain('onBlur={() => setSetsDraft(null)}')
+    expect(source).not.toContain('onBlur={() => setRepsDraft(null)}')
+    expect(source).toContain('shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.sets)')
+    expect(source).toContain('shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.reps)')
   })
 })
 
@@ -254,6 +351,44 @@ describe('unilateral set preservation (source contract)', () => {
     ]
 
     expect(unilateralFlagsForQuickSetRebuild(existing, 3)).toEqual([true, false, false])
+  })
+})
+
+describe('per-set unilateral override (agent_log #32: block checkbox marked every set)', () => {
+  it('gives each set row its own unilateral checkbox, independent of the block-level one', () => {
+    // The set-row editor (per-row controls: dose, weight, RPE, note, warm-up,
+    // remove) must also carry a per-row unilateral checkbox bound to
+    // row.isUnilateral — the actual data column is already per-set
+    // (gym_sets.is_unilateral), this is the missing UI half.
+    expect(source).toMatch(
+      /gym-set-unilateral"[\s\S]*?checked=\{row\.isUnilateral\}[\s\S]*?onChange=\{\(e\) => onChange\(\{ isUnilateral: e\.target\.checked \}\)\}/
+    )
+  })
+
+  it('disables the per-set toggle for warm-up rows, matching the save path that always drops it for them', () => {
+    expect(source).toContain('disabled={row.isWarmup}')
+  })
+
+  it('clears a set\'s unilateral flag the moment it is marked warm-up, so the disabled checkbox never shows a stale "checked"', () => {
+    expect(source).toMatch(
+      /onChange\(\{\s*isWarmup: e\.target\.checked,\s*\.\.\.\(e\.target\.checked \? \{ isUnilateral: false \} : \{\}\)\s*\}\)/
+    )
+  })
+
+  it('reproduces the reported mixed case: 3 bilateral Standing Calf Raise sets + a 4th single-leg progression', () => {
+    // Before this fix the only control was the block-level checkbox, which
+    // stamps EVERY working row with the same value — there was no way to
+    // flag just the 4th set. blockUnilateralState reads per-row values, so
+    // once the per-set checkbox can set row 4 independently, the block
+    // correctly reports 'mixed' instead of forcing an all-or-nothing choice.
+    const rows = [
+      makeSetRow({ key: 's1', isUnilateral: false }),
+      makeSetRow({ key: 's2', isUnilateral: false }),
+      makeSetRow({ key: 's3', isUnilateral: false }),
+      makeSetRow({ key: 's4', isUnilateral: true })
+    ]
+    expect(blockUnilateralState(rows)).toBe('mixed')
+    expect(rows.map((r) => r.isUnilateral)).toEqual([false, false, false, true])
   })
 })
 
@@ -428,22 +563,29 @@ describe('Sets/Reps input wiring (source contract)', () => {
     expect(source).not.toMatch(/const \[quickReps, setQuickReps\] = useState/)
   })
 
-  it('the Sets input clears its draft on blur so it snaps back to the derived count', () => {
+  // Regression note: this pair of tests used to assert the field
+  // unconditionally cleared its draft on blur — that WAS the "3 x 12 rejected"
+  // bug (see the shouldReleaseQuickSetDraftOnBlur describe block above): typing
+  // Sets then tabbing to Reps wiped the Sets value before Reps was ever
+  // filled in, since a pairing can't commit with only one side present.
+  it('the Sets input only releases its draft on blur once it is synced with derived (not unconditionally)', () => {
     const setsFieldMatch = source.match(/placeholder="3"[\s\S]*?\/>/)
     expect(setsFieldMatch).not.toBeNull()
     const setsField = setsFieldMatch?.[0] ?? ''
     expect(setsField).toContain('onFocus={() => setSetsDraft(quickSets)}')
     expect(setsField).toContain('setSetsDraft(value)')
-    expect(setsField).toContain('onBlur={() => setSetsDraft(null)}')
+    expect(setsField).not.toContain('onBlur={() => setSetsDraft(null)}')
+    expect(setsField).toContain('shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.sets)')
   })
 
-  it('the Reps input clears its draft on blur so it snaps back to the derived value', () => {
+  it('the Reps input only releases its draft on blur once it is synced with derived (not unconditionally)', () => {
     const repsFieldMatch = source.match(/placeholder="8"[\s\S]*?\/>/)
     expect(repsFieldMatch).not.toBeNull()
     const repsField = repsFieldMatch?.[0] ?? ''
     expect(repsField).toContain('onFocus={() => setRepsDraft(quickReps)}')
     expect(repsField).toContain('setRepsDraft(value)')
-    expect(repsField).toContain('onBlur={() => setRepsDraft(null)}')
+    expect(repsField).not.toContain('onBlur={() => setRepsDraft(null)}')
+    expect(repsField).toContain('shouldReleaseQuickSetDraftOnBlur(draft, derivedDose.reps)')
   })
 })
 
