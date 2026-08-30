@@ -48,7 +48,7 @@ describe('interactive Claude policy', () => {
         '--permission-mode',
         'acceptEdits',
         '--tools',
-        'Read,Glob,Grep,Edit,Write,Bash,Skill',
+        'Read,Glob,Grep,Edit,Write,Bash,Skill,WebSearch,WebFetch',
         '--add-dir',
         PACKAGED_PATHS.repoRoot
       ])
@@ -146,12 +146,17 @@ describe('interactive Claude policy', () => {
     })
   })
 
-  it('blocks MCP, browser, web, and notebook escape surfaces', () => {
+  it('blocks MCP and notebook escape surfaces, but allows WebSearch/WebFetch', () => {
     const args = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
     const denied = args[args.indexOf('--disallowedTools') + 1]
+    const tools = args[args.indexOf('--tools') + 1]
 
     expect(args).toContain('--strict-mcp-config')
-    expect(denied).toBe('mcp__*,WebFetch,WebSearch,NotebookEdit')
+    // WebSearch/WebFetch run server-side over the Anthropic API connection, so they
+    // work even though the sandbox network allowlist below only permits Supabase —
+    // verified empirically (agent_log #33). MCP and notebook editing stay blocked.
+    expect(denied).toBe('mcp__*,NotebookEdit')
+    expect(tools.split(',')).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch']))
     expect(args).not.toContain('Chrome')
   })
 })

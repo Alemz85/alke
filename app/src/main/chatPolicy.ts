@@ -60,7 +60,9 @@ export function buildInteractiveSettings(paths: ChatPolicyPaths): Record<string,
         `Write(${repo}/**)`,
         ...paths.attachmentPaths.map((path) => `Read(${absoluteRulePath(path)})`),
         'Bash',
-        'Skill'
+        'Skill',
+        'WebSearch',
+        'WebFetch'
       ],
       deny: [
         `Edit(${app}/**)`,
@@ -150,12 +152,15 @@ export function buildStreamingClaudeArgs(
     '--settings',
     JSON.stringify(buildInteractiveSettings(paths)),
     '--tools',
-    'Read,Glob,Grep,Edit,Write,Bash,Skill',
+    // WebSearch/WebFetch run server-side over the Anthropic API connection the CLI
+    // already holds open, so they work even though the sandbox network allowlist below
+    // only permits the Supabase host (verified empirically — see agent_log #33).
+    'Read,Glob,Grep,Edit,Write,Bash,Skill,WebSearch,WebFetch',
     '--add-dir',
     paths.repoRoot,
     '--strict-mcp-config',
     '--disallowedTools',
-    'mcp__*,WebFetch,WebSearch,NotebookEdit'
+    'mcp__*,NotebookEdit'
   ]
 }
 
