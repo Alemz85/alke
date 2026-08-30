@@ -4,6 +4,7 @@ its inputs so the test suite pins the math exactly."""
 from __future__ import annotations
 
 import math
+import re
 from statistics import median
 
 Sample = tuple[int, float]  # (offset_s, bpm)
@@ -58,9 +59,148 @@ def trimp_edwards(tiz: dict[int, int]) -> float:
 
 
 def ef(distance_m: float | None, duration_s: float | None, avg_hr: float | None) -> float | None:
+    """SPEED efficiency factor, in METRES PER MINUTE PER BEAT. Every consumer of
+    this number (run/bike/row/treadmill EF channels) shares those units."""
     if not distance_m or not duration_s or not avg_hr:
         return None
     return (distance_m / (duration_s / 60.0)) / avg_hr
+
+
+# ---------------------------------------------------------------------------
+# Manual indoor-cardio EF inputs (agent_log 34 + 35, phase 1). Indoor sessions
+# reach the EF channel only through owner-entered values, because the machine's
+# own numbers are either absent (erg distance is never exported) or fabricated
+# (a spin bike's "distance"; Apple's accelerometer indoor-run distance, whose
+# calibration comes from outdoor GPS runs, which a user may have few of).
+# ---------------------------------------------------------------------------
+
+# [CHOSEN THRESHOLD] Treadmill EF is only defined for a near-FLAT run. Speed per
+# beat at grade is a different quantity from speed per beat on the flat — at 1%
+# the metabolic cost of running rises by roughly 3-4% (Minetti 2002 grade-running
+# energetics; the 1% treadmill offset convention of Jones & Doust 1996 exists
+# precisely because 1% is the grade that approximates level OUTDOOR running).
+# 1% is therefore the largest grade that can be folded into a flat-run EF without
+# the correction exceeding the ~4% day-to-day EF noise the model already carries.
+# Anything steeper needs the phase-2 grade-adjustment model, which is deliberately
+# not built; those runs simply produce no EF.
+TREADMILL_FLAT_INCLINE_PCT_MAX = 1.0
+
+_INDOOR_MARKERS = ("indoor", "treadmill", "stationary")
+
+
+_ROWING_RE = re.compile(r"(?<![a-z])rowing")
+
+
+def is_rowing_modality(workout_type: str | None) -> bool:
+    """Rowing (erg or water). Anchored at a word start rather than a plain
+    substring test: 'row' would match 'throwing', and so, it turns out, does a
+    bare 'rowing' ('th-rowing')."""
+    return bool(workout_type) and _ROWING_RE.search(workout_type.lower()) is not None
+
+
+def is_cycling_modality(workout_type: str | None) -> bool:
+    return bool(workout_type) and any(m in workout_type.lower() for m in ("cycl", "bik"))
+
+
+def is_running_modality(workout_type: str | None) -> bool:
+    return bool(workout_type) and "run" in workout_type.lower()
+
+
+def is_indoor_modality(workout_type: str | None) -> bool:
+    """Whether the session happened on a machine rather than over ground. Drives
+    the per-modality distance-trust rules below; rowing counts as indoor-style
+    for those purposes only through its own branch, not this helper."""
+    return bool(workout_type) and any(m in workout_type.lower() for m in _INDOOR_MARKERS)
+
+
+def is_treadmill_run(workout_type: str | None) -> bool:
+    return is_running_modality(workout_type) and is_indoor_modality(workout_type)
+
+
+def is_indoor_cycling(workout_type: str | None) -> bool:
+    return is_cycling_modality(workout_type) and is_indoor_modality(workout_type)
+
+
+def power_ef(avg_watts: float | None, avg_hr: float | None) -> float | None:
+    """Cycling POWER efficiency factor, in WATTS PER BEAT.
+
+    The true cycling EF input: mechanical power is machine-independent, whereas a
+    trainer's reported distance is a fabrication of its own resistance model. The
+    unit (W/bpm) is NOT the unit of `ef` (m/min per beat) — these two numbers must
+    never share a column, a baseline, a variance, or a comparison. The schema
+    enforces that (computed_workout.power_ef is its own column) and so does the
+    Zone-2 wiring (bike_power_ef is its own channel with its own ratified
+    baseline).
+    """
+    if not avg_watts or not avg_hr:
+        return None
+    return float(avg_watts) / float(avg_hr)
+
+
+def treadmill_incline_ok(
+    incline_pct: float | None,
+    flat_max_pct: float = TREADMILL_FLAT_INCLINE_PCT_MAX,
+) -> bool:
+    """Whether a treadmill run's grade was logged AND is flat enough for EF.
+
+    NULL incline is NOT "assume flat": an unlogged grade means the session could
+    have been a 6% hill walk-run, whose speed-per-beat would read as a collapse in
+    fitness. Withholding EF there is the only honest option without the phase-2
+    grade model. Declines disqualify symmetrically (downhill running is cheaper,
+    which would read as an unearned fitness gain).
+    """
+    if incline_pct is None:
+        return False
+    try:
+        value = float(incline_pct)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(value):
+        return False
+    return abs(value) <= flat_max_pct
+
+
+def ef_distance_m(
+    workout_type: str | None,
+    device_distance_m: float | None,
+    manual_distance_m: float | None = None,
+    manual_incline_pct: float | None = None,
+    flat_max_pct: float = TREADMILL_FLAT_INCLINE_PCT_MAX,
+) -> float | None:
+    """The distance a workout's SPEED EF is allowed to be computed from, or None.
+
+    Per-modality trust rules (agent_log 34/35):
+
+    * TREADMILL / indoor run — the manual distance is REQUIRED and supersedes the
+      device figure outright; the device figure alone never produces EF. Apple
+      derives indoor-run distance from an accelerometer model calibrated on the
+      user's OUTDOOR GPS runs, which a user may have few or none of, so an
+      indoor_run's device distance is an uncalibrated estimate. EF additionally
+      requires an explicitly logged, near-flat incline (treadmill_incline_ok).
+    * INDOOR CYCLING — no speed EF at ANY distance. A trainer's distance is
+      fabricated from its own resistance model, so it is not a length. Indoor
+      rides reach the model through `power_ef` instead.
+    * ROWING — manual distance only. Ergs are factory-calibrated so distance/time
+      is meaningful, but HAE exports no distance for them, so the value can only
+      come from the console via the owner.
+    * EVERYTHING ELSE (outdoor run/ride/walk, pool swim) — the manual value
+      supersedes the device one when present, otherwise the device value stands.
+      This is what makes the field a general correction affordance rather than an
+      indoor-only hack.
+    """
+    manual = manual_distance_m if manual_distance_m else None
+
+    if is_treadmill_run(workout_type):
+        if manual is None or not treadmill_incline_ok(manual_incline_pct, flat_max_pct):
+            return None
+        return float(manual)
+    if is_indoor_cycling(workout_type):
+        return None
+    if is_rowing_modality(workout_type):
+        return float(manual) if manual is not None else None
+    if manual is not None:
+        return float(manual)
+    return float(device_distance_m) if device_distance_m else None
 
 
 def _valid_swim_sets(sets: list[dict]) -> list[tuple[float, float, float]]:
@@ -166,20 +306,24 @@ def swim_ef_eligibility(
     return ef_eligibility(workout_type, active_tiz, active_duration_s)
 
 
+EF_ELIGIBLE_MODALITY_MARKERS = ("swim", "cycl", "bik", "run")
+
+
 def ef_eligibility(workout_type: str | None, tiz: dict[int, int], duration_s: float | None) -> bool:
-    """EF/decoupling eligibility: swim, bike AND run, each gated ≥20 min and ≥70%
-    of classified time in Z1–Z2 (the same aerobic-specific gate for all three).
-    All three stay wired regardless of which currently produce observations —
-    the model is built for the data the user MAY produce, never trimmed to what
-    exists today (a dormant signal costs nothing; it simply starts contributing
-    the day its data appears, e.g. outdoor rides with GPS distance). Right now
-    runs carry distance + HR while every bike session to date is indoor with
-    distance_m NULL. Indoor rides (and any HR-only run without distance) yield
-    ef=None downstream — ef() requires distance — which is fine."""
+    """EF/decoupling eligibility: swim, bike, run AND rowing, each gated ≥20 min
+    and ≥70% of classified time in Z1–Z2 (the same aerobic-specific gate for all).
+    All stay wired regardless of which currently produce observations — the model
+    is built for the data the user MAY produce, never trimmed to what exists today
+    (a dormant signal costs nothing; it simply starts contributing the day its
+    data appears, e.g. outdoor rides with GPS distance). Rowing joined the list
+    with the manual erg-distance input (agent_log 34): a steady erg piece is as
+    aerobic-specific as a steady ride, and admitting it also wakes its HR-only
+    decoupling, which needs no distance at all. A session with no usable distance
+    yields ef=None downstream — ef() requires one — which is fine."""
     if not workout_type:
         return False
     t = workout_type.lower()
-    if not any(m in t for m in ("swim", "cycl", "bik", "run")):
+    if not (any(m in t for m in EF_ELIGIBLE_MODALITY_MARKERS) or is_rowing_modality(t)):
         return False
     if not duration_s or duration_s < 20 * 60:
         return False
@@ -398,6 +542,34 @@ Z2_BIKE_EF_VARIANCE = 22.0
 #   indoor bike power↔HR, but the derivation mirrors bike EF per the model contract;
 #   widen this param if the residuals warrant.)
 Z2_RUN_EF_VARIANCE = 22.0
+# ── MANUAL-INPUT indoor channels (agent_log 34/35). Same elevation architecture
+# as the two above — the user's OWN ratified detrained baseline → ef_top_factor ×
+# that baseline, mapped onto C_D = 70 — so each variance is derived the same way:
+# sd ≈ (day-to-day CV / 0.6) · 70. Only the CV differs, and each one is argued
+# from what the specific input's noise actually is. All three are inert until
+# their baseline is ratified in zone2_fitness_params.
+#
+# [LITERATURE PRIOR] cycling POWER EF (W/bpm): physiologically the cleanest EF
+#   there is — no wind, no gradient, no GPS — but a spin-bike console reports
+#   ESTIMATED power, not a calibrated meter, and the owner reads a rounded whole
+#   number off it. The estimation spread offsets the physiological cleanliness, so
+#   this lands at the same CV ≈ 4% as bike speed EF → var ≈ 22. Widen via
+#   zone2_fitness_params if residuals warrant. Note the UNIT: W/bpm shares nothing
+#   with the m/min-per-bpm channels except the shape of the elevation map.
+Z2_BIKE_POWER_EF_VARIANCE = 22.0
+# [LITERATURE PRIOR] ROWING EF (m/min per bpm): erg distance is factory-calibrated,
+#   but rowing economy swings with stroke rate and technique far more than running
+#   cadence does (a 20 s/m piece and a 28 s/m piece at the same HR cover different
+#   distance), and the drag-factor setting moves it again. CV ≈ 6% → sd ≈
+#   (0.06/0.6)·70 = 7 pts → var ≈ 49: admitted, but weighted below the run/bike
+#   channels.
+Z2_ROW_EF_VARIANCE = 49.0
+# [LITERATURE PRIOR] TREADMILL EF (m/min per bpm): belt speed is calibrated and the
+#   flat-only gate removes the grade confound, but the distance is read off a
+#   console at whatever rounding it shows, and belt running lacks air resistance so
+#   it is a different economy from the outdoor run channel (hence its OWN baseline,
+#   never run_ef's). CV ≈ 5% → sd ≈ (0.05/0.6)·70 ≈ 5.8 pts → var ≈ 34.
+Z2_TREADMILL_EF_VARIANCE = 34.0
 # [LITERATURE PRIOR] watch VO2max: Lambe 2025 LoA ≈ ±12 ml/kg/min → sd ≈ 6 ml;
 #   elevation slope ≈ C_D/(62−32) ≈ 2.33 pts per ml → sd ≈ 14 pts → var ≈ 196.
 #   (EF:VO2 var ratio ≈ 1:9 — the same RATIO as the old relative weights; only

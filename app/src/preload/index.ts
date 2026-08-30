@@ -5,6 +5,8 @@ import { IPC_CHANNELS, type HealthApi } from '@shared/types'
 const api: HealthApi = {
   getWorkouts: (fromIso, toIso) => ipcRenderer.invoke(IPC_CHANNELS.getWorkouts, fromIso, toIso),
   getWorkoutDetail: (id) => ipcRenderer.invoke(IPC_CHANNELS.getWorkoutDetail, id),
+  updateWorkoutManualInputs: (id, patch) =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateWorkoutManualInputs, id, patch),
   getSwimSets: (fromIso, toIso) => ipcRenderer.invoke(IPC_CHANNELS.getSwimSets, fromIso, toIso),
   getDailyMetrics: (fromDate, toDate) =>
     ipcRenderer.invoke(IPC_CHANNELS.getDailyMetrics, fromDate, toDate),

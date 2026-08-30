@@ -1,0 +1,197 @@
+/* Indoor-cardio EF inputs. A quiet utility panel, not a headline surface: it
+   borrows the session-list card treatment so it reads as part of the Sessions
+   view rather than a new feature demanding attention. */
+.manual-cardio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.manual-cardio-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.manual-cardio-title {
+  font-family: var(--font-display);
+  font-size: var(--type-heading-sm-size);
+  font-weight: var(--type-heading-sm-weight);
+  line-height: var(--type-heading-sm-line-height);
+  letter-spacing: var(--type-heading-sm-letter-spacing);
+  color: var(--color-text);
+}
+
+.manual-cardio-note {
+  max-width: 68ch;
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line-height);
+  letter-spacing: var(--type-body-sm-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.manual-cardio-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  list-style: none;
+}
+
+.manual-cardio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+}
+
+.manual-cardio-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.manual-cardio-date {
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+}
+
+.manual-cardio-modality {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.manual-cardio-modality-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.manual-cardio-stat,
+.manual-cardio-ef {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  letter-spacing: var(--type-caption-letter-spacing);
+  color: var(--color-text-tertiary);
+}
+
+.manual-cardio-hr-icon {
+  color: var(--color-recovery);
+}
+
+.manual-cardio-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.manual-cardio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manual-cardio-field-label {
+  font-family: var(--font-body);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-letter-spacing);
+  line-height: var(--type-label-line-height);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.manual-cardio-field-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 32px is DESIGN.md's floor for an interactive hit area; the field is sized for
+   4-5 digits, matching the compact protein-pill input rather than the 40px gym
+   fields, since several sit in one row. */
+.manual-cardio-input {
+  width: 72px;
+  min-width: 0;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--type-body-sm-size);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.manual-cardio-input::placeholder {
+  color: var(--color-text-disabled);
+}
+
+.manual-cardio-input:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.manual-cardio-unit {
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
+}
+
+.manual-cardio-save,
+.manual-cardio-more {
+  height: 32px;
+  padding: 0 14px;
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--type-button-sm-size);
+  font-weight: var(--type-button-sm-weight);
+  letter-spacing: var(--type-button-sm-letter-spacing);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.manual-cardio-save:hover:not(:disabled),
+.manual-cardio-more:hover {
+  background: var(--color-surface-hover);
+}
+
+.manual-cardio-save:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.manual-cardio-save:focus-visible,
+.manual-cardio-more:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.manual-cardio-more {
+  align-self: flex-start;
+}
+
+.manual-cardio-error {
+  flex-basis: 100%;
+  font-family: var(--font-body);
+  font-size: var(--type-caption-size);
+  color: var(--color-flag-text);
+}

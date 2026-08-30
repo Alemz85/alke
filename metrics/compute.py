@@ -24,11 +24,14 @@ from metrics.models import (
     ctl_atl_series,
     easy_aerobic_seconds,
     ef,
+    ef_distance_m,
     ef_eligibility,
     flags_for_day,
     hr_drift_pct,
     hrr60,
     is_ambulatory_modality,
+    is_cycling_modality,
+    power_ef,
     rolling_median,
     sedentary_ambient_baseline,
     swim_active_ef,
@@ -41,6 +44,14 @@ from metrics.models import (
 )
 
 RECOMPUTE_DAYS = 60
+
+# The aerobic-specific EF channels of the Zone-2 level fusion, in the order they
+# are written to computed_zone2_fitness.contributing (a tuple, so the jsonb key
+# order is stable across runs). Each has its OWN owner-ratified detrained
+# baseline in zone2_fitness_params and its own variance; they are never pooled.
+# `bike_power_ef` is watts per beat — a different UNIT from the four m/min-per-
+# beat channels — which is why it can never share one of their baselines.
+EF_CHANNELS = ("run_ef", "bike_ef", "treadmill_ef", "row_ef", "bike_power_ef")
 
 # weekly_min_sessions goal keys -> workout-type substring matching, mirroring
 # the desktop app's modality matcher (app/src/renderer/src/lib/modality.ts).
@@ -268,20 +279,40 @@ def run(full: bool) -> None:
             else ef_eligibility(w["type"], tiz, w["duration_s"])
         )
         efficiency = None
+        # Cycling POWER EF (W/bpm) — a DIFFERENT UNIT from `efficiency`
+        # (m/min per bpm), so it gets its own column, never `ef`. See
+        # models.power_ef and migration 20260830120000.
+        power_efficiency = None
         drift = None
         if eligible:
             if is_swim:
                 efficiency = swim_active_ef(swim_sets, samples)
                 drift = swim_active_hr_drift_pct(swim_sets, samples)
             else:
-                efficiency = ef(w["distance_m"], w["duration_s"], w["avg_hr"])
+                # Per-modality distance trust: a manual entry supersedes the
+                # device figure, treadmill EF additionally requires a logged
+                # near-flat incline, and an indoor trainer's fabricated distance
+                # is refused outright (it reaches the model as power instead).
+                efficiency = ef(
+                    ef_distance_m(
+                        w["type"],
+                        w.get("distance_m"),
+                        w.get("manual_distance_m"),
+                        w.get("manual_incline_pct"),
+                    ),
+                    w["duration_s"],
+                    w["avg_hr"],
+                )
                 drift = hr_drift_pct(samples)
+            if is_cycling_modality(w["type"]):
+                power_efficiency = power_ef(w.get("manual_avg_watts"), w["avg_hr"])
         computed_rows.append(
             {
                 "workout_id": w["id"],
                 "time_in_zones": {**{f"z{z}": s for z, s in tiz.items()}, "z1b": easy_sec},
                 "trimp": round(trimp_edwards(tiz), 2),
                 "ef": efficiency,
+                "power_ef": power_efficiency,
                 "decoupling_pct": drift,
                 "hrr60": hrr60(samples, w["duration_s"]),
                 "computed_at": now.isoformat(),
@@ -1180,6 +1211,12 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     rhr_top_amateur = param("rhr_top_amateur", models.Z2_RHR_TOP_AMATEUR)
     ef_top_factor = param("ef_top_factor", models.Z2_EF_TOP_FACTOR)
     run_ef_variance = param("run_ef_variance", models.Z2_RUN_EF_VARIANCE)
+    bike_ef_variance = param("bike_ef_variance", models.Z2_BIKE_EF_VARIANCE)
+    treadmill_ef_variance = param("treadmill_ef_variance", models.Z2_TREADMILL_EF_VARIANCE)
+    row_ef_variance = param("row_ef_variance", models.Z2_ROW_EF_VARIANCE)
+    bike_power_ef_variance = param(
+        "bike_power_ef_variance", models.Z2_BIKE_POWER_EF_VARIANCE
+    )
     stage = (params.get("stage") if params else None) or "literature"
 
     # ---- daily Zone-2 load w(t) from computed_workout.time_in_zones (spec §1),
@@ -1366,19 +1403,46 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # begin with the first outdoor GPS ride / first ≥20-min HR-bearing Z1–Z2 run,
     # but each signal enters the LEVEL FUSION only once its detrained baseline is
     # ratified in zone2_fitness_params — see the baseline block below.
+    #
+    # FIVE EF channels, never mixed (agent_log 34/35 added the last three):
+    #   bike_ef        outdoor cycling, m/min per bpm
+    #   run_ef         over-ground running, m/min per bpm
+    #   treadmill_ef   belt running, m/min per bpm — SAME unit and sport as run_ef
+    #                  but a systematically different economy (no air resistance),
+    #                  so it is split OUT of run_ef rather than pooled with it. An
+    #                  indoor_run silently joining run_ef_obs would score belt
+    #                  economy against the outdoor baseline.
+    #   row_ef         erg/rowing, m/min per bpm — different sport, own baseline.
+    #   bike_power_ef  cycling watts per bpm — a DIFFERENT UNIT entirely, read from
+    #                  computed_workout.power_ef, never from `ef`.
     bike_ef_obs: list[tuple[date, float]] = []
     run_ef_obs: list[tuple[date, float]] = []
+    treadmill_ef_obs: list[tuple[date, float]] = []
+    row_ef_obs: list[tuple[date, float]] = []
+    bike_power_ef_obs: list[tuple[date, float]] = []
     for wk in all_workouts:
         perf = perf_by_id.get(wk["id"])
-        if not perf or perf.get("ef") is None:
+        if not perf:
             continue
-        wtype = (wk.get("type") or "").lower()
-        if "cycl" in wtype or "bik" in wtype:
-            bike_ef_obs.append((workout_local_date(wk, tz), float(perf["ef"])))
-        elif "run" in wtype:
-            run_ef_obs.append((workout_local_date(wk, tz), float(perf["ef"])))
-    bike_ef_obs.sort()
-    run_ef_obs.sort()
+        wtype = wk.get("type")
+        wday = workout_local_date(wk, tz)
+        if perf.get("ef") is not None:
+            value = float(perf["ef"])
+            if models.is_cycling_modality(wtype):
+                # Indoor rides never produce a speed EF (ef_distance_m refuses a
+                # trainer's fabricated distance), so this stays the outdoor channel.
+                if not models.is_indoor_cycling(wtype):
+                    bike_ef_obs.append((wday, value))
+            elif models.is_treadmill_run(wtype):
+                treadmill_ef_obs.append((wday, value))
+            elif models.is_running_modality(wtype):
+                run_ef_obs.append((wday, value))
+            elif models.is_rowing_modality(wtype):
+                row_ef_obs.append((wday, value))
+        if perf.get("power_ef") is not None and models.is_cycling_modality(wtype):
+            bike_power_ef_obs.append((wday, float(perf["power_ef"])))
+    for obs in (bike_ef_obs, run_ef_obs, treadmill_ef_obs, row_ef_obs, bike_power_ef_obs):
+        obs.sort()
 
     # Raw per-date RHR / VO2max for personal detrained extremes (trailing ~180d).
     rhr_series = [
@@ -1434,6 +1498,14 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     # genuinely detrained.)
     bike_ef_personal_baseline = param("bike_ef_baseline", None)
     run_ef_personal_baseline = param("run_ef_baseline", None)
+    # The manual-input channels follow the SAME ratification rule (migration
+    # 20260830120000 adds the columns, all NULL). Until the owner ratifies a
+    # detrained baseline for one, its observations are computed, stored and
+    # displayed but contribute nothing to the level fusion — so wiring these
+    # channels changes no model number today.
+    treadmill_ef_personal_baseline = param("treadmill_ef_baseline", None)
+    row_ef_personal_baseline = param("row_ef_baseline", None)
+    bike_power_ef_personal_baseline = param("bike_power_ef_baseline", None)
 
     # valid-day counts ratchet too (widen-only) so the personal baseline's weight
     # never falls back toward the population prior once a season of data exists.
@@ -1472,12 +1544,31 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
     run_ef_top_amateur = (
         run_ef_personal_baseline * ef_top_factor if run_ef_personal_baseline else None
     )
+    # ef_top_factor is a RELATIVE economy improvement (baseline → trained), so it
+    # applies unchanged to the W/bpm channel as well as the m/min-per-bpm ones —
+    # what must never cross channels is the BASELINE, and each has its own.
+    treadmill_ef_top_amateur = (
+        treadmill_ef_personal_baseline * ef_top_factor
+        if treadmill_ef_personal_baseline
+        else None
+    )
+    row_ef_top_amateur = (
+        row_ef_personal_baseline * ef_top_factor if row_ef_personal_baseline else None
+    )
+    bike_power_ef_top_amateur = (
+        bike_power_ef_personal_baseline * ef_top_factor
+        if bike_power_ef_personal_baseline
+        else None
+    )
 
     # Last-known observation per signal ON OR BEFORE each day (None before the first).
     rhr_latest_t = causal_latest(rhr_series, days)
     vo2_latest_t = causal_latest(vo2_series, days)
     bike_latest_t = causal_latest(bike_ef_obs, days)
     run_latest_t = causal_latest(run_ef_obs, days)
+    treadmill_latest_t = causal_latest(treadmill_ef_obs, days)
+    row_latest_t = causal_latest(row_ef_obs, days)
+    bike_power_latest_t = causal_latest(bike_power_ef_obs, days)
 
     # ---- the LEVEL fusion (v4 redesign) — absolute D-space variances, each ×
     # per-day staleness inflation (documented derivations at the constants in
@@ -1522,8 +1613,39 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                 age = (days[i] - obs[0]).days
                 out["bike_ef"] = (
                     elev,
-                    models.staleness_inflated_variance(models.Z2_BIKE_EF_VARIANCE, age),
+                    models.staleness_inflated_variance(bike_ef_variance, age),
                 )
+        # Manual-input indoor channels. Identical elevation architecture, each
+        # scored ONLY against its own ratified baseline and its own variance —
+        # `treadmill_ef` and `row_ef` share the m/min-per-bpm unit with run/bike EF
+        # but never their baselines, and `bike_power_ef` (W/bpm) shares nothing but
+        # the shape of the map. All three stay absent from `out` (hence from the
+        # fusion) while their baseline param is NULL.
+        for name, latest, baseline, top, variance in (
+            (
+                "treadmill_ef",
+                treadmill_latest_t,
+                treadmill_ef_personal_baseline,
+                treadmill_ef_top_amateur,
+                treadmill_ef_variance,
+            ),
+            ("row_ef", row_latest_t, row_ef_personal_baseline, row_ef_top_amateur, row_ef_variance),
+            (
+                "bike_power_ef",
+                bike_power_latest_t,
+                bike_power_ef_personal_baseline,
+                bike_power_ef_top_amateur,
+                bike_power_ef_variance,
+            ),
+        ):
+            obs = latest[i]
+            if obs is None or top is None:
+                continue
+            elev = models.signal_elevation_score(obs[1], baseline, top, ceiling=c_durable)
+            if elev is None:
+                continue
+            age = (days[i] - obs[0]).days
+            out[name] = (elev, models.staleness_inflated_variance(variance, age))
         obs = vo2_latest_t[i]
         if obs is not None:
             elev = models.signal_elevation_score(obs[1], vo2_baseline, vo2_top, ceiling=c_durable)
@@ -1684,7 +1806,7 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
         valid_signals = 0
         if load_moved:
             valid_signals += 1
-        if "run_ef" in ests or "bike_ef" in ests:
+        if any(channel in ests for channel in EF_CHANNELS):
             valid_signals += 1  # aerobic-specific efficiency present (leads)
         if drow.get("rhr_dev") is not None:
             valid_signals += 1
@@ -1743,9 +1865,13 @@ def run_zone2_fitness(sb, all_workouts, daily_metrics, daily_rows, days, tz, now
                 "evidence_state": evidence_state,
                 "contributing": {
                     # effective inverse-variance weights actually fused THIS day
-                    # (staleness-inflated; 0 when the signal is absent).
-                    "run_ef": round(1.0 / ests["run_ef"][1], 3) if "run_ef" in ests else 0.0,
-                    "bike_ef": round(1.0 / ests["bike_ef"][1], 3) if "bike_ef" in ests else 0.0,
+                    # (staleness-inflated; 0 when the signal is absent). The three
+                    # manual-input channels read 0.0 until their baseline is
+                    # ratified — present for provenance, contributing nothing.
+                    **{
+                        name: round(1.0 / ests[name][1], 3) if name in ests else 0.0
+                        for name in EF_CHANNELS
+                    },
                     # corroborator, not level-setter (v3 pt3: strength-confounded)
                     # — the elevation is computed (rhr_elev) for provenance but
                     # its level weight is 0.0 BY DESIGN.

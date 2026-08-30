@@ -23,12 +23,18 @@ NOW = datetime(2026, 7, 11, 3, 30, tzinfo=timezone.utc)
 
 
 def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True,
-                   steps_per_day=8000, aerobic_type="indoor_cycling", params=None):
+                   steps_per_day=8000, aerobic_type="outdoor_cycling", params=None,
+                   with_power_ef=False):
     """400-day synthetic history. Toggles let the level-fusion tests isolate one
     signal at a time: with_ef=False drops ride EF (no distance in practice),
     with_rhr=False drops resting-HR data, with_vo2=False drops watch VO2max.
     aerobic_type swaps the every-3rd-day aerobic session's modality (e.g.
-    'running' to exercise the run-EF signal); params overrides the fake params row."""
+    'running' to exercise the run-EF signal); params overrides the fake params row.
+
+    The bike-EF default is an OUTDOOR ride on purpose: since the manual-input
+    change (agent_log 34/35) a trainer's fabricated distance never yields a speed
+    EF, and any stale indoor speed-EF row is refused by the bike_ef channel, so an
+    indoor session can no longer stand in for the GPS ride this fixture means."""
     today = NOW.astimezone(TZ).date()
     n_days = 400
     days = [today - timedelta(days=n_days - 1 - i) for i in range(n_days)]
@@ -47,6 +53,9 @@ def _run_synthetic(monkeypatch, with_ef=True, with_rhr=True, with_vo2=True,
             zones[w["id"]] = {"z1": 300, "z2": 1800, "z3": 300, "z4": 0, "z5": 0}
             computed.append({"workout_id": w["id"],
                              "ef": (2.0 + 1.2 * i / 300) if with_ef else None,
+                             # watts per beat — the manual-input power channel.
+                             # A different UNIT from `ef`, hence its own column.
+                             "power_ef": (1.2 + 0.4 * i / 300) if with_power_ef else None,
                              "decoupling_pct": 4.0, "hrr60": None})
         if i % 2 == 0:
             w = {"id": f"str{i}", "type": "functional_strength_training",

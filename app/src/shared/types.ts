@@ -15,10 +15,37 @@ export interface Workout {
   avg_hr: number | null
   max_hr: number | null
   source: string | null
+  // --- Owner-entered indoor-cardio EF inputs (migration 20260830120000) ---
+  // Indoor sessions carry no trustworthy distance, so they never reached the
+  // Zone-2 model's efficiency channel. These three fields are the manual way in,
+  // one per machine. Nothing in the ingest path writes them, so a Health Auto
+  // Export re-delivery cannot overwrite them. `null` always means "not logged"
+  // — never zero — and db.ts normalizes an absent column to null too, so the
+  // app keeps working against a database where the migration is not applied yet.
+  // Declared OPTIONAL for that same reason: a row read from a pre-migration
+  // schema genuinely has no such property, and `undefined` is the honest type for
+  // it. Read them as `?? null`.
+  /** Average power in watts, read off an indoor bike console. Feeds power EF (W/bpm). */
+  manual_avg_watts?: number | null
+  /** True distance in metres; SUPERSEDES `distance_m` when computing EF. */
+  manual_distance_m?: number | null
+  /** Treadmill grade in percent. Required (and must be near-flat) for treadmill EF. */
+  manual_incline_pct?: number | null
   // `raw` (the ingest archive column) is intentionally NOT projected here —
   // nothing in the app reads it; db.ts's WORKOUT_COLUMNS omits it too.
   // Joined from computed_workout (left join — may be null if not yet computed)
   computed: ComputedWorkout | null
+}
+
+/**
+ * The only columns updateWorkoutManualInputs may write. Every field is
+ * optional; an explicit `null` CLEARS the stored value (that is how the UI
+ * un-logs a mistyped entry), while an omitted field is left untouched.
+ */
+export interface WorkoutManualInputsPatch {
+  manual_avg_watts?: number | null
+  manual_distance_m?: number | null
+  manual_incline_pct?: number | null
 }
 
 export interface WorkoutHrSample {
@@ -43,7 +70,15 @@ export interface ComputedWorkout {
   workout_id: string
   time_in_zones: Record<string, unknown> | null
   trimp: number | null
+  /** Speed efficiency factor: metres per minute, per beat. */
   ef: number | null
+  /**
+   * Cycling power efficiency factor: WATTS per beat, from `manual_avg_watts`.
+   * A different unit from `ef` — never compare, average, or chart the two on one
+   * axis. Its own column for exactly that reason (migration 20260830120000).
+   * Optional for the same pre-migration reason as the workout manual_* fields.
+   */
+  power_ef?: number | null
   decoupling_pct: number | null
   hrr60: number | null
   computed_at: string | null
@@ -695,6 +730,17 @@ export interface Zone2Fitness {
 export interface HealthApi {
   getWorkouts(fromIso: string, toIso: string): Promise<Workout[]>
   getWorkoutDetail(id: string): Promise<WorkoutDetail>
+  /**
+   * Write the owner-entered indoor-cardio EF inputs on one workout. Touches ONLY
+   * the manual_* columns — every ingested field is left exactly as delivered.
+   * Not routed through the offline write queue: these values only matter once the
+   * nightly metrics job re-reads them, so a failed write is better surfaced
+   * immediately than replayed silently later.
+   */
+  updateWorkoutManualInputs(
+    id: string,
+    patch: WorkoutManualInputsPatch
+  ): Promise<Omit<Workout, 'computed'>>
   getSwimSets(fromIso: string, toIso: string): Promise<SwimSet[]>
   getDailyMetrics(fromDate: string, toDate: string): Promise<DailyMetric[]>
   getComputedDaily(fromDate: string, toDate: string): Promise<ComputedDaily[]>
@@ -812,6 +858,7 @@ export interface HealthApi {
 export const IPC_CHANNELS = {
   getWorkouts: 'db:getWorkouts',
   getWorkoutDetail: 'db:getWorkoutDetail',
+  updateWorkoutManualInputs: 'db:updateWorkoutManualInputs',
   getSwimSets: 'db:getSwimSets',
   getDailyMetrics: 'db:getDailyMetrics',
   getComputedDaily: 'db:getComputedDaily',

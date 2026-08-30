@@ -162,9 +162,15 @@ def test_ef_eligibility_swims_bikes_and_runs_z1z2_70pct_20min():
     assert ef_eligibility("running", tiz_ok, 1500)
     assert ef_eligibility("indoor_run", tiz_ok, 1500)
     assert ef_eligibility("trail_running", tiz_ok, 1500)
+    # agent_log 34: rowing joined the eligible modalities with the manual erg
+    # distance input — a steady erg piece is as aerobic-specific as a steady ride,
+    # and admitting it also wakes its HR-only decoupling (which needs no distance).
+    assert ef_eligibility("rowing", tiz_ok, 1500)
+    assert not ef_eligibility("rowing", tiz_ok, 1100)  # same ≥20 min gate
+    assert not ef_eligibility("rowing", {1: 300, 2: 300, 3: 900, 4: 0, 5: 0}, 1500)
     # everything else stays ineligible
     assert not ef_eligibility("functional_strength_training", tiz_ok, 1500)
-    assert not ef_eligibility("rowing", tiz_ok, 1500)
+    assert not ef_eligibility("surfing_sports", tiz_ok, 1500)
     assert not ef_eligibility(None, tiz_ok, 1500)
     # gates apply to bikes and runs exactly as to swims
     assert not ef_eligibility("pool_swim", tiz_ok, 1100)  # <20 min

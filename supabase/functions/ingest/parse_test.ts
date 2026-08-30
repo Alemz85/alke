@@ -1848,3 +1848,49 @@ Deno.test("leaves genuinely new workouts alone", () => {
   );
   assertEquals(adoptions, []);
 });
+
+// ---------------------------------------------------------------------------
+// Manual indoor-cardio EF inputs must survive re-delivery (agent_log 34/35)
+// ---------------------------------------------------------------------------
+// workouts.manual_avg_watts / manual_distance_m / manual_incline_pct are typed
+// by the owner in the desktop app; nothing in HealthKit can supply them. The
+// workout upsert in index.ts is `upsert(rows, { onConflict: "external_id" })`,
+// and PostgREST's ON CONFLICT DO UPDATE only assigns the columns PRESENT in the
+// payload — so the manual columns survive an HAE re-delivery precisely as long
+// as the parser never emits a key with that name. That is the property below:
+// a future FIELD_MAP entry called e.g. `manual_distance_m` would silently start
+// clobbering the owner's typed values on every re-sync, and this test fails
+// first. (A Strava UUID REPLACEMENT is safe by a different mechanism: the
+// adoption re-points external_id on the EXISTING row, keeping workouts.id, so
+// the manual values stay attached to the same session.)
+
+Deno.test("parsed workout rows never carry manual_* columns", () => {
+  const parsed = parseIngestPayload(workoutsExportFixture);
+  assertEquals(parsed.workouts.length > 0, true);
+  for (const workout of parsed.workouts) {
+    const {
+      hrSamples: _hrSamples,
+      swimSamples: _swimSamples,
+      swimSets: _swimSets,
+      route: _route,
+      ...workoutRow
+    } = workout; // exactly the projection index.ts upserts
+    const manualKeys = Object.keys(workoutRow).filter((k) =>
+      k.startsWith("manual_")
+    );
+    assertEquals(manualKeys, []);
+  }
+});
+
+Deno.test("the daily-metric merge never invents manual_* keys either", () => {
+  // Same guard on the other write path: mergeDailyMetric builds its row from
+  // the incoming metric's own keys, so a stray manual_* would ride along.
+  const merged = mergeDailyMetric(null, {
+    date: "2026-08-30",
+    resting_hr: 52,
+  } as unknown as NormalizedDailyMetric);
+  assertEquals(
+    Object.keys(merged).filter((k) => k.startsWith("manual_")),
+    [],
+  );
+});

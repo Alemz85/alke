@@ -54,6 +54,7 @@ import {
   type Workout,
   type WorkoutDetail,
   type WorkoutGeo,
+  type WorkoutManualInputsPatch,
   type WorkoutHrSample,
   type Zone2Fitness,
   USER_SEXES
@@ -99,12 +100,16 @@ const WORKOUT_NUMERIC_KEYS: (keyof Workout)[] = [
   'distance_m',
   'energy_kcal',
   'avg_hr',
-  'max_hr'
+  'max_hr',
+  'manual_avg_watts',
+  'manual_distance_m',
+  'manual_incline_pct'
 ]
 
 const COMPUTED_WORKOUT_NUMERIC_KEYS: (keyof ComputedWorkout)[] = [
   'trimp',
   'ef',
+  'power_ef',
   'decoupling_pct',
   'hrr60'
 ]
@@ -189,11 +194,90 @@ const USER_CONFIG_EDITABLE_KEYS: (keyof UserConfigPatch)[] = [
 
 // `raw` (the ingest archive column) is deliberately not selected — nothing in
 // the app reads it, and it can be large; the DB column itself stays as the archive.
-const WORKOUT_COLUMNS =
+const WORKOUT_BASE_COLUMNS =
   'id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, avg_hr, max_hr, source'
 
-const COMPUTED_WORKOUT_COLUMNS =
+// Owner-entered indoor-cardio EF inputs (migration 20260830120000). Split out so
+// the app degrades to the base projection instead of erroring the whole Sessions
+// and Dashboard surface on a database where the migration has not been pushed
+// yet — see withOptionalColumns.
+const WORKOUT_MANUAL_COLUMNS = 'manual_avg_watts, manual_distance_m, manual_incline_pct'
+const WORKOUT_COLUMNS = `${WORKOUT_BASE_COLUMNS}, ${WORKOUT_MANUAL_COLUMNS}`
+
+// Columns updateWorkoutManualInputs is allowed to write — the same whitelist
+// discipline as USER_CONFIG_EDITABLE_KEYS. Every ingested column stays
+// untouchable from the renderer.
+const WORKOUT_MANUAL_EDITABLE_KEYS: (keyof WorkoutManualInputsPatch)[] = [
+  'manual_avg_watts',
+  'manual_distance_m',
+  'manual_incline_pct'
+]
+
+const COMPUTED_WORKOUT_BASE_COLUMNS =
   'workout_id, time_in_zones, trimp, ef, decoupling_pct, hrr60, computed_at'
+
+const COMPUTED_WORKOUT_COLUMNS = `${COMPUTED_WORKOUT_BASE_COLUMNS}, power_ef`
+
+/**
+ * Runs a select twice if needed: once with the full column list, and — only when
+ * the failure is an unknown column — once with the fallback list. Migrations are
+ * pushed independently of app builds, so a build that knows about a column can
+ * meet a database that does not; without this the entire view fails instead of
+ * quietly losing one field. The outcome is cached per column set so the retry
+ * costs one request per app run, not one per query.
+ */
+const optionalColumnsAvailable = new Map<string, boolean>()
+
+function isUnknownColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  // 42703 = undefined_column; PGRST204 = column not in the schema cache.
+  return (
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /does not exist|schema cache/i.test(error.message ?? '')
+  )
+}
+
+type OptionalColumnsError = { code?: string; message?: string } | null
+type OptionalColumnsResult = PromiseLike<{ data: unknown; error: OptionalColumnsError }>
+
+async function withOptionalColumns<T>(
+  key: string,
+  fullColumns: string,
+  fallbackColumns: string,
+  run: (columns: string) => OptionalColumnsResult
+): Promise<{ data: T | null; error: OptionalColumnsError }> {
+  // The column list is built at runtime, so supabase-js cannot infer the row
+  // shape from it (its typing keys off a literal). The caller names the shape it
+  // expects via the type parameter, exactly as the `as Workout` casts below do.
+  const attempt = async (columns: string): Promise<{ data: T | null; error: OptionalColumnsError }> => {
+    const result = await run(columns)
+    return { data: (result.data ?? null) as T | null, error: result.error }
+  }
+  if (optionalColumnsAvailable.get(key) === false) return attempt(fallbackColumns)
+  const result = await attempt(fullColumns)
+  if (result.error && isUnknownColumnError(result.error)) {
+    optionalColumnsAvailable.set(key, false)
+    console.warn(`[db] ${key} unavailable (${result.error.message}); reading without it`)
+    return attempt(fallbackColumns)
+  }
+  if (!result.error) optionalColumnsAvailable.set(key, true)
+  return result
+}
+
+/** Fills the manual_* / power_ef fields a pre-migration projection omits, so the
+ *  renderer's types hold whichever schema it is talking to. */
+function withManualDefaults<T extends Omit<Workout, 'computed'>>(row: T): T {
+  row.manual_avg_watts = row.manual_avg_watts ?? null
+  row.manual_distance_m = row.manual_distance_m ?? null
+  row.manual_incline_pct = row.manual_incline_pct ?? null
+  return row
+}
+
+function withComputedDefaults(row: ComputedWorkout): ComputedWorkout {
+  row.power_ef = row.power_ef ?? null
+  return row
+}
 
 const DAILY_METRIC_COLUMNS =
   'date, resting_hr, hrv_sdnn_ms, respiratory_rate, sleep_start, sleep_end, sleep_duration_min, sleep_stages, vo2max, steps, active_energy_kcal, wrist_temp_deviation_c, weight_kg, body_fat_pct, walking_running_distance_m, cycling_distance_m, flights_climbed'
@@ -235,32 +319,42 @@ export async function getWorkouts(fromIso: string, toIso: string): Promise<Worko
 
   const supabase = getClient()
 
-  const { data: workouts, error } = await supabase
-    .from('workouts')
-    .select(WORKOUT_COLUMNS)
-    .gte('start_at', fromIso)
-    .lte('start_at', toIso)
-    .order('start_at', { ascending: false })
+  const { data: workouts, error } = await withOptionalColumns<Workout[]>(
+    'workouts.manual_*',
+    WORKOUT_COLUMNS,
+    WORKOUT_BASE_COLUMNS,
+    (columns) =>
+      supabase
+        .from('workouts')
+        .select(columns)
+        .gte('start_at', fromIso)
+        .lte('start_at', toIso)
+        .order('start_at', { ascending: false })
+  )
 
   if (error) throw new Error(`getWorkouts: ${error.message}`)
   if (!workouts || workouts.length === 0) return []
 
   const ids = workouts.map((w) => w.id)
-  const { data: computedRows, error: computedError } = await supabase
-    .from('computed_workout')
-    .select(COMPUTED_WORKOUT_COLUMNS)
-    .in('workout_id', ids)
+  const { data: computedRows, error: computedError } = await withOptionalColumns<ComputedWorkout[]>(
+    'computed_workout.power_ef',
+    COMPUTED_WORKOUT_COLUMNS,
+    COMPUTED_WORKOUT_BASE_COLUMNS,
+    (columns) => supabase.from('computed_workout').select(columns).in('workout_id', ids)
+  )
 
   if (computedError) throw new Error(`getWorkouts (computed join): ${computedError.message}`)
 
   const computedById = new Map<string, ComputedWorkout>()
   for (const row of computedRows ?? []) {
-    const normalized = normalizeNumeric(row as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
+    const normalized = withComputedDefaults(
+      normalizeNumeric(row as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
+    )
     computedById.set(normalized.workout_id, normalized)
   }
 
   return workouts.map((w) => {
-    const workout = normalizeNumeric(w as Workout, WORKOUT_NUMERIC_KEYS)
+    const workout = withManualDefaults(normalizeNumeric(w as Workout, WORKOUT_NUMERIC_KEYS))
     return {
       ...workout,
       computed: computedById.get(workout.id) ?? null
@@ -268,16 +362,63 @@ export async function getWorkouts(fromIso: string, toIso: string): Promise<Worko
   })
 }
 
+/**
+ * Update ONLY the owner-entered indoor-cardio EF inputs on one workout.
+ *
+ * The whitelist is the point: every other column on `workouts` is ingested from
+ * Health Auto Export and must stay exactly as delivered, so this write can never
+ * become a general workout editor by accident. Passing `null` for a field clears
+ * it (un-logging a mistyped value); omitting a field leaves it alone.
+ *
+ * The values take effect on the next nightly metrics run, which recomputes EF
+ * for the last 60 days — an older session needs a --full recompute.
+ */
+export async function updateWorkoutManualInputs(
+  id: string,
+  patch: WorkoutManualInputsPatch
+): Promise<Omit<Workout, 'computed'>> {
+  assertUuid(id, 'id')
+
+  const update: Record<string, number | null> = {}
+  for (const key of WORKOUT_MANUAL_EDITABLE_KEYS) {
+    if (!(key in patch)) continue
+    const value = patch[key]
+    if (value === null || value === undefined) {
+      update[key] = null
+      continue
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`updateWorkoutManualInputs: ${key} must be a finite number or null`)
+    }
+    update[key] = value
+  }
+  if (Object.keys(update).length === 0) {
+    throw new Error('updateWorkoutManualInputs: no manual input fields to update')
+  }
+
+  const supabase = getClient()
+  const { data, error } = await supabase
+    .from('workouts')
+    .update(update)
+    .eq('id', id)
+    .select(WORKOUT_COLUMNS)
+    .single()
+
+  if (error) throw new Error(`updateWorkoutManualInputs: ${error.message}`)
+  return withManualDefaults(normalizeNumeric(data as Workout, WORKOUT_NUMERIC_KEYS))
+}
+
 export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
   assertUuid(id, 'id')
 
   const supabase = getClient()
 
-  const { data: workout, error } = await supabase
-    .from('workouts')
-    .select(WORKOUT_COLUMNS)
-    .eq('id', id)
-    .single()
+  const { data: workout, error } = await withOptionalColumns<Workout>(
+    'workouts.manual_*',
+    WORKOUT_COLUMNS,
+    WORKOUT_BASE_COLUMNS,
+    (columns) => supabase.from('workouts').select(columns).eq('id', id).single()
+  )
 
   if (error) throw new Error(`getWorkoutDetail: ${error.message}`)
 
@@ -293,7 +434,13 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
       .select('workout_id, offset_s, bpm')
       .eq('workout_id', id)
       .order('offset_s', { ascending: true }),
-    supabase.from('computed_workout').select(COMPUTED_WORKOUT_COLUMNS).eq('workout_id', id).maybeSingle(),
+    withOptionalColumns<ComputedWorkout>(
+      'computed_workout.power_ef',
+      COMPUTED_WORKOUT_COLUMNS,
+      COMPUTED_WORKOUT_BASE_COLUMNS,
+      (columns) =>
+        supabase.from('computed_workout').select(columns).eq('workout_id', id).maybeSingle()
+    ),
     supabase
       .from('swim_sets')
       .select(SWIM_SET_COLUMNS)
@@ -314,11 +461,13 @@ export async function getWorkoutDetail(id: string): Promise<WorkoutDetail> {
   if (geoError) throw new Error(`getWorkoutDetail (geo): ${geoError.message}`)
 
   return {
-    workout: normalizeNumeric(workout as Workout, WORKOUT_NUMERIC_KEYS),
+    workout: withManualDefaults(normalizeNumeric(workout as Workout, WORKOUT_NUMERIC_KEYS)),
     hrSamples: (hrSamples ?? []) as WorkoutHrSample[],
     swimSets: (swimSets ?? []).map((row) => normalizeNumeric(row as SwimSet, SWIM_SET_NUMERIC_KEYS)),
     computed: computed
-      ? normalizeNumeric(computed as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
+      ? withComputedDefaults(
+          normalizeNumeric(computed as ComputedWorkout, COMPUTED_WORKOUT_NUMERIC_KEYS)
+        )
       : null,
     route: (routePoints ?? []).map((row) =>
       normalizeNumeric(row as RoutePoint, ROUTE_POINT_NUMERIC_KEYS)

@@ -30,17 +30,34 @@ def fetch_user_config(sb: Client) -> dict:
     return sb.table("user_config").select("*").eq("id", 1).single().execute().data
 
 
-def fetch_workouts(sb: Client, since_iso: str | None) -> list[dict]:
-    def q():
-        query = sb.table("workouts").select(
-            "id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, "
-            "avg_hr, max_hr, source, raw"
-        )
-        if since_iso:
-            query = query.gte("start_at", since_iso)
-        return query.order("start_at")
+WORKOUT_BASE_COLUMNS = (
+    "id, external_id, type, start_at, end_at, duration_s, distance_m, energy_kcal, "
+    "avg_hr, max_hr, source, raw"
+)
 
-    return _fetch_all(q)
+# Owner-entered indoor-cardio EF inputs (migration 20260830120000). Selected
+# separately so the job degrades to the base projection — rather than dying with
+# a PostgREST 42703 — on a database where the migration has not been applied yet
+# (the nightly cron and the migration push are independent events). Every reader
+# uses `.get()`, so an absent column simply reads as None.
+WORKOUT_MANUAL_COLUMNS = "manual_avg_watts, manual_distance_m, manual_incline_pct"
+
+
+def fetch_workouts(sb: Client, since_iso: str | None) -> list[dict]:
+    def build(columns: str):
+        def q():
+            query = sb.table("workouts").select(columns)
+            if since_iso:
+                query = query.gte("start_at", since_iso)
+            return query.order("start_at")
+
+        return q
+
+    try:
+        return _fetch_all(build(f"{WORKOUT_BASE_COLUMNS}, {WORKOUT_MANUAL_COLUMNS}"))
+    except Exception as e:  # noqa: BLE001 — pre-migration DB must not fail the job
+        print(f"workouts.manual_* columns unavailable ({e}); reading base columns only")
+        return _fetch_all(build(WORKOUT_BASE_COLUMNS))
 
 
 def fetch_hr_samples(sb: Client, workout_ids: list[str]) -> dict[str, list[tuple[int, float]]]:
@@ -104,6 +121,24 @@ def update_hr_max(sb: Client, hr_max: int) -> None:
 
 
 def upsert_computed_workouts(sb: Client, rows: list[dict]) -> None:
+    """Write per-workout metrics, degrading gracefully on a pre-migration DB.
+
+    `power_ef` (migration 20260830120000) is the only column that may not exist
+    yet; on a schema-cache/unknown-column failure the whole batch is retried
+    without it so a nightly run that lands before the migration is pushed still
+    writes every other metric instead of failing outright."""
+    try:
+        _upsert_computed_workout_rows(sb, rows)
+    except Exception as e:  # noqa: BLE001 — pre-migration DB must not fail the job
+        if not any("power_ef" in row for row in rows):
+            raise
+        print(f"computed_workout.power_ef unavailable ({e}); writing without it")
+        _upsert_computed_workout_rows(
+            sb, [{k: v for k, v in row.items() if k != "power_ef"} for row in rows]
+        )
+
+
+def _upsert_computed_workout_rows(sb: Client, rows: list[dict]) -> None:
     for i in range(0, len(rows), WRITE_CHUNK):
         sb.table("computed_workout").upsert(rows[i : i + WRITE_CHUNK]).execute()
 
@@ -113,13 +148,18 @@ def upsert_computed_daily(sb: Client, rows: list[dict]) -> None:
         sb.table("computed_daily").upsert(rows[i : i + WRITE_CHUNK]).execute()
 
 
-def fetch_computed_workouts(sb: Client) -> list[dict]:
-    def q():
-        return sb.table("computed_workout").select(
-            "workout_id, trimp, ef, decoupling_pct, hrr60, time_in_zones"
-        ).order("workout_id")
+COMPUTED_WORKOUT_BASE_COLUMNS = "workout_id, trimp, ef, decoupling_pct, hrr60, time_in_zones"
 
-    return _fetch_all(q)
+
+def fetch_computed_workouts(sb: Client) -> list[dict]:
+    def build(columns: str):
+        return lambda: sb.table("computed_workout").select(columns).order("workout_id")
+
+    try:
+        return _fetch_all(build(f"{COMPUTED_WORKOUT_BASE_COLUMNS}, power_ef"))
+    except Exception as e:  # noqa: BLE001 — pre-migration DB must not fail the job
+        print(f"computed_workout.power_ef unavailable ({e}); reading base columns only")
+        return _fetch_all(build(COMPUTED_WORKOUT_BASE_COLUMNS))
 
 
 def fetch_computed_workout_zones(sb: Client) -> dict[str, dict]:

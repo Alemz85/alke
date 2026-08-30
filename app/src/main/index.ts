@@ -91,7 +91,8 @@ import {
   type NewGoal,
   type NewGymSession,
   type NewGymTemplate,
-  type NewInjuryLog
+  type NewInjuryLog,
+  type WorkoutManualInputsPatch
 } from '@shared/types'
 import * as db from './db'
 import * as chat from './chat'
@@ -226,6 +227,14 @@ function registerIpcHandlers(): void {
     db.getWorkouts(fromIso, toIso)
   )
   ipcMain.handle(IPC_CHANNELS.getWorkoutDetail, (_event, id: string) => db.getWorkoutDetail(id))
+  // Deliberately NOT routed through offlineWrites: these values only matter to
+  // the next nightly metrics run, so surfacing a failed write immediately beats
+  // replaying it silently hours later.
+  ipcMain.handle(
+    IPC_CHANNELS.updateWorkoutManualInputs,
+    (_event, id: string, patch: WorkoutManualInputsPatch) =>
+      db.updateWorkoutManualInputs(id, patch)
+  )
   ipcMain.handle(IPC_CHANNELS.getSwimSets, (_event, fromIso: string, toIso: string) =>
     db.getSwimSets(fromIso, toIso)
   )
