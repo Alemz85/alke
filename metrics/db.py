@@ -35,12 +35,15 @@ WORKOUT_BASE_COLUMNS = (
     "avg_hr, max_hr, source, raw"
 )
 
-# Owner-entered indoor-cardio EF inputs (migration 20260830120000). Selected
+# Owner-entered indoor-cardio EF inputs (migration 20260830120000), plus the
+# owner-declared true session end (migration 20260910140000). Selected
 # separately so the job degrades to the base projection — rather than dying with
 # a PostgREST 42703 — on a database where the migration has not been applied yet
 # (the nightly cron and the migration push are independent events). Every reader
 # uses `.get()`, so an absent column simply reads as None.
-WORKOUT_MANUAL_COLUMNS = "manual_avg_watts, manual_distance_m, manual_incline_pct"
+WORKOUT_MANUAL_COLUMNS = (
+    "manual_avg_watts, manual_distance_m, manual_incline_pct, manual_end_at"
+)
 
 
 def fetch_workouts(sb: Client, since_iso: str | None) -> list[dict]:

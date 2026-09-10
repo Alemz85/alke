@@ -33,12 +33,15 @@ from metrics.models import (
     is_cycling_modality,
     power_ef,
     rolling_median,
+    samples_within_manual_end,
     sedentary_ambient_baseline,
     swim_active_ef,
     swim_active_hr_drift_pct,
     swim_ef_eligibility,
+    swim_sets_within_manual_end,
     time_in_zones,
     trimp_edwards,
+    truncate_workout_at_manual_end,
     z2_trimp_from_zones,
     zone_bounds,
 )
@@ -202,6 +205,25 @@ def configured_float(config: dict, key: str, default: float) -> float:
     return float(default if value is None else value)
 
 
+def apply_manual_ends(sb, workouts: list[dict]) -> list[dict]:
+    """Overlay owner-declared session ends (migration 20260910140000) onto a
+    list of workouts fetched from the DB.
+
+    Normally a handful of workouts (or none) carry a `manual_end_at`
+    correction, so this fetches swim sets for only THOSE workout ids rather
+    than the whole list, and returns the input unchanged (no DB round trip at
+    all) when nothing needs truncating.
+    """
+    correction_ids = [w["id"] for w in workouts if w.get("manual_end_at")]
+    if not correction_ids:
+        return workouts
+    swim_sets_by_id = db.fetch_swim_sets(sb, correction_ids)
+    return [
+        truncate_workout_at_manual_end(w, swim_sets_by_id.get(w["id"], []))
+        for w in workouts
+    ]
+
+
 def run(full: bool, skip_insights: bool = False) -> None:
     sb = db.client()
     config = db.fetch_user_config(sb)
@@ -228,7 +250,7 @@ def run(full: bool, skip_insights: bool = False) -> None:
     }
 
     # ---- hr_max: init from observed history, raise when exceeded ----
-    all_workouts = db.fetch_workouts(sb, None)
+    all_workouts = apply_manual_ends(sb, db.fetch_workouts(sb, None))
     if not all_workouts:
         print("no workouts; nothing to compute")
         return
@@ -246,7 +268,7 @@ def run(full: bool, skip_insights: bool = False) -> None:
 
     # ---- per-workout metrics (window) ----
     since = None if full else (now - timedelta(days=RECOMPUTE_DAYS)).isoformat()
-    window_workouts = db.fetch_workouts(sb, since)
+    window_workouts = apply_manual_ends(sb, db.fetch_workouts(sb, since))
     window_workout_ids = [w["id"] for w in window_workouts]
     samples_by_workout = db.fetch_hr_samples(sb, window_workout_ids)
     swim_sets_by_workout = db.fetch_swim_sets(sb, window_workout_ids)
@@ -256,7 +278,11 @@ def run(full: bool, skip_insights: bool = False) -> None:
 
     computed_rows = []
     for w in window_workouts:
-        samples = samples_by_workout.get(w["id"], [])
+        # `full_samples` is the untruncated stream (needed by hrr60 below);
+        # `samples` is what every OTHER per-workout metric reads — truncated
+        # at the owner's manual_end_at when one applies (no-op otherwise).
+        full_samples = samples_by_workout.get(w["id"], [])
+        samples = samples_within_manual_end(w, full_samples)
         day = workout_local_date(w, tz)
         bounds = zone_bounds(hr_max, rhr_recent_for(day, rhr_by_date), z2_low, z2_high)
         is_swim = bool(w["type"]) and "swim" in w["type"].lower()
@@ -272,7 +298,11 @@ def run(full: bool, skip_insights: bool = False) -> None:
             bounds[0],
             swim_hr_offset=swim_offset if is_swim else 0.0,
         )
-        swim_sets = swim_sets_by_workout.get(w["id"], []) if is_swim else []
+        swim_sets = (
+            swim_sets_within_manual_end(w, swim_sets_by_workout.get(w["id"], []))
+            if is_swim
+            else []
+        )
         eligible = (
             swim_ef_eligibility(w["type"], swim_sets, samples, bounds, swim_offset)
             if is_swim
@@ -314,7 +344,15 @@ def run(full: bool, skip_insights: bool = False) -> None:
                 "ef": efficiency,
                 "power_ef": power_efficiency,
                 "decoupling_pct": drift,
-                "hrr60": hrr60(samples, w["duration_s"]),
+                # hrr60 deliberately gets full_samples, not the truncated
+                # `samples` — see its docstring: it looks for a recovery
+                # sample in [duration_s+45, duration_s+90]. When a manual end
+                # applies, w["duration_s"] is already the truncated value, so
+                # the device's own post-cutoff tail samples become genuine
+                # post-end recovery readings; a session that previously had
+                # no HRR60 (because the device kept "exercising" past the
+                # real end) can now yield a real one.
+                "hrr60": hrr60(full_samples, w["duration_s"]),
                 "computed_at": now.isoformat(),
             }
         )

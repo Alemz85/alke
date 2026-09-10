@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import datetime
 from statistics import median
 
 Sample = tuple[int, float]  # (offset_s, bpm)
@@ -201,6 +202,133 @@ def ef_distance_m(
     if manual is not None:
         return float(manual)
     return float(device_distance_m) if device_distance_m else None
+
+
+# ---------------------------------------------------------------------------
+# Manual session-end overlay (migration 20260910140000). A workout the owner
+# forgot to stop keeps recording a fabricated tail — see the migration file
+# for the case that motivated this. `manual_end_at` is written
+# ONLY by the owner, never by ingest, and it only ever TRUNCATES: it can never
+# invent training that was not recorded. The ingested columns (start_at,
+# end_at, duration_s, distance_m, samples, swim_sets) are never modified in the
+# DB — Health Auto Export re-delivers workouts for ~2 days and would clobber
+# any in-place edit — so the correction is an overlay applied here, at COMPUTE
+# time, every run.
+# ---------------------------------------------------------------------------
+
+
+def manual_end_cutoff_s(workout: dict) -> float | None:
+    """The owner-declared end, in seconds from `start_at`, or None when no
+    correction is stored.
+
+    Derived from `manual_end_at` and `start_at` ONLY — never from `duration_s`.
+    That is deliberate, and it is what makes this safe to call on a workout dict
+    whether or not `truncate_workout_at_manual_end` has already been applied to
+    it: both inputs are immutable under truncation, so the answer never changes.
+    (An earlier version also gated on `cutoff < duration_s` here, which made the
+    function report "no correction" for an ALREADY-TRUNCATED row — silently
+    un-filtering that workout's samples and swim sets. The only-truncates gate
+    belongs to `truncate_workout_at_manual_end`, which is the one operation that
+    can actually extend something; it lives there now.)
+
+    A cutoff at or after the recorded end needs no gate here because it is
+    already inert for both filters below: every sample offset and set start lies
+    within the recorded duration, so a cutoff beyond it drops nothing.
+
+    None when `manual_end_at` is absent/None/unparseable, `start_at` is
+    unparseable, or the cutoff is <= 0.
+    """
+    manual_end_raw = workout.get("manual_end_at")
+    start_raw = workout.get("start_at")
+    if not manual_end_raw or not start_raw:
+        return None
+    try:
+        manual_end = datetime.fromisoformat(str(manual_end_raw).replace("Z", "+00:00"))
+        start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    cutoff = (manual_end - start).total_seconds()
+    if cutoff <= 0 or not math.isfinite(cutoff):
+        return None
+    return cutoff
+
+
+def samples_within_manual_end(workout: dict, samples: list[Sample]) -> list[Sample]:
+    """HR samples at/before the manual-end cutoff. Samples strictly after it
+    stop counting as exercise — they feed no zone time, no TRIMP, no drift.
+    Unchanged (same list) when there is no correction to apply."""
+    cutoff = manual_end_cutoff_s(workout)
+    if cutoff is None:
+        return samples
+    return [(offset, bpm) for offset, bpm in samples if offset <= cutoff]
+
+
+def swim_sets_within_manual_end(workout: dict, sets: list[dict]) -> list[dict]:
+    """Swim sets that started before the manual-end cutoff.
+
+    A set is dropped only when it STARTS at/after the cutoff. A set that
+    started before the cutoff is kept WHOLE even if it runs past it — it was a
+    real length already in progress, not part of the fabricated tail the
+    owner is correcting for, and there is no sub-set data to split it on.
+    Unchanged (same list) when there is no correction to apply.
+    """
+    cutoff = manual_end_cutoff_s(workout)
+    if cutoff is None:
+        return sets
+    kept = []
+    for row in sets:
+        try:
+            start = float(row["start_offset_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start < cutoff:
+            kept.append(row)
+    return kept
+
+
+def truncate_workout_at_manual_end(workout: dict, swim_sets: list[dict]) -> dict:
+    """Overlay the owner-declared true end onto a workout dict fetched from
+    the DB. Returns the SAME object unchanged when there is no correction;
+    otherwise a shallow copy with `duration_s`/`end_at`/`distance_m` adjusted.
+
+    This is the ONLY operation that could extend a workout, so it is where the
+    only-truncates rule is enforced: a cutoff at or after the current
+    `duration_s` is inert (never an error — see migration 20260910140000).
+    That gate also makes this idempotent, since a second application sees a
+    `duration_s` already equal to the cutoff.
+    """
+    cutoff = manual_end_cutoff_s(workout)
+    if cutoff is None:
+        return workout
+    try:
+        duration_s = float(workout.get("duration_s"))
+    except (TypeError, ValueError):
+        return workout
+    if not math.isfinite(duration_s) or cutoff >= duration_s:
+        return workout
+
+    kept_sets = swim_sets_within_manual_end(workout, swim_sets)
+    truncated = dict(workout)
+    truncated["duration_s"] = int(cutoff)
+    truncated["end_at"] = workout.get("manual_end_at")
+    # After truncation we cannot know how far the session had gone at the
+    # cutoff unless sub-workout distance blocks (swim sets) exist to sum from
+    # — the device's single whole-workout distance_m no longer corresponds to
+    # the truncated duration. None is the honest answer: ef() already guards
+    # on a falsy distance, so EF simply goes unavailable rather than being
+    # computed from a distance that no longer matches the duration.
+    truncated["distance_m"] = (
+        sum(s["distance_m"] for s in kept_sets) if swim_sets else None
+    )
+    # energy_kcal is left UNCHANGED, deliberately. compute.py's Zone-2 ambient
+    # channel (~line 1244) subtracts each logged workout's energy_kcal from
+    # the day's active_energy_kcal, so the ambient channel credits only what
+    # the workout channel did not already see. The day's active energy still
+    # contains the tail's calories regardless of this overlay, so trimming
+    # energy_kcal here would double-credit the tail's calories to the ambient
+    # channel (once by leaving them in active_energy_kcal, once by no longer
+    # subtracting them out).
+    return truncated
 
 
 def _valid_swim_sets(sets: list[dict]) -> list[tuple[float, float, float]]:
