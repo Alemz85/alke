@@ -12,6 +12,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Backup net for the pre-push leak gate (.githooks/pre-push). This runs AFTER the
+  # push, with generic patterns only (no private terms exist in CI), so it can flag a
+  # leak but never prevent one: the hook on the owner's machine is the real protection.
+  leak-scan:
+    name: leak scan (generic patterns)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan the pushed or proposed commits
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then base="$PR_BASE"; head="$PR_HEAD"
+          else base="$PUSH_BEFORE"; head="$SHA"; fi
+          # A force-push's old tip no longer exists here: scan just the new tip.
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=0000000000000000000000000000000000000000
+          python3 scripts/leakgate/leakgate.py range "$base" "$head" --generic-only
+      - name: Nothing tracked under the private root
+        run: python3 scripts/leakgate/leakgate.py check-tree
+      - name: Leak gate tests
+        run: |
+          python3 -m pip install --quiet pytest
+          python3 -m pytest scripts/leakgate -q
+
   metrics:
     name: metrics (pytest)
     runs-on: ubuntu-latest
@@ -23,7 +53,7 @@ jobs:
           cache: 'pip'
           cache-dependency-path: metrics/requirements.txt
       - run: pip install -r metrics/requirements.txt pytest
-      - run: python -m pytest metrics/tests/ -q
+      - run: python -m pytest metrics/tests/ chatctx/tests/ -q
 
   ingest:
     name: edge functions (deno test)

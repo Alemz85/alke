@@ -29,18 +29,19 @@ files:
 # <file>.mjs` with CHATCTX_DIR as cwd — they only need to exist alongside the
 # other chatctx files above, no special path handling.
 #
-# knowledge/ is a separate PRIVATE repo (github.com/Alemz85/health-knowledge)
-# cloned at the repo root, gitignored here, sibling to chatctx/. The chat
-# instructions (chatctx/modes/analysis.md) describe it as "cloned beside"
-# chatctx and degrade gracefully if absent — so it's bundled to `knowledge`
-# (sibling of `chatctx` under resourcesPath, matching chat.ts's
-# process.resourcesPath/chatctx and the dev-mode ../knowledge relative path)
-# straight from this machine's checkout at build time, filtered to drop its
-# own nested .git/.DS_Store. This assumes `npm run dist:mac` is run from a
-# checkout that has knowledge/ cloned (true for the owner's dev machine,
-# which is the only place this app is ever packaged) — if a checkout lacks
-# it, electron-builder fails the build rather than silently shipping without
-# it; clone the private repo to ../knowledge (repo root) before packaging.
+# knowledge/ is a separate PRIVATE repo kept inside the owner's private root
+# (private/knowledge, gitignored here). The chat instructions
+# (chatctx/modes/analysis.md) read it at `../private/knowledge` from chatctx/
+# and degrade gracefully if absent, so it's bundled to `private/knowledge`
+# under resourcesPath: the same relative path then works in dev
+# (<repo>/private/knowledge) and packaged (Resources/private/knowledge). It is
+# copied straight from this machine's checkout at build time, filtered to drop
+# its own nested .git/.DS_Store. This assumes `npm run dist:mac` runs from a
+# checkout that has private/knowledge (true for the owner's dev machine, the
+# only place this app is ever packaged); if it's missing, electron-builder fails
+# the build rather than silently shipping without it. Nothing else under
+# private/ is bundled: the chat reads the owner's overrides from the live
+# private root via ALKE_PRIVATE_ROOT, set by chat.ts.
 asar: true
 extraResources:
   - from: ../chatctx/CLAUDE.md
@@ -57,6 +58,8 @@ extraResources:
     to: chatctx/session.py
   - from: ../chatctx/gym.py
     to: chatctx/gym.py
+  - from: ../chatctx/ctx.py
+    to: chatctx/ctx.py
   - from: ../chatctx/recovery_plan_contract.mjs
     to: chatctx/recovery_plan_contract.mjs
   - from: ../chatctx/workout_template_contract.mjs
@@ -65,15 +68,15 @@ extraResources:
     to: chatctx/modes
   - from: ../chatctx/.claude/skills
     to: chatctx/.claude/skills
-  - from: ../knowledge
-    to: knowledge
+  - from: ../private/knowledge
+    to: private/knowledge
     filter:
       - '**/*'
       - '!.git{,/**/*}'
       - '!.DS_Store'
   # metrics/ ships so the "Recompute metrics" button (metricsJob.ts) can run
   # `python -m metrics.compute` from a packaged app — cwd is process.resourcesPath,
-  # so metrics/ must land directly under Resources/ (a sibling of chatctx/knowledge
+  # so metrics/ must land directly under Resources/ (a sibling of chatctx/ and private/
   # above), not nested under an "out" or "app" subdir. Requires the machine's
   # python3 to already have metrics/requirements.txt installed (true on the
   # owner's machine); metricsJob.ts's spawn-error handling reports a clear

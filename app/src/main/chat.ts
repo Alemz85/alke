@@ -21,6 +21,7 @@ import {
   buildStreamingClaudeArgs,
   closeChildStdin,
   extractClaudeCliFailure,
+  supabaseHostFrom,
   type ChatPolicyPaths
 } from './chatPolicy'
 import { ChatRuntimeStore } from './chatRuntime'
@@ -192,21 +193,53 @@ function promptWithAttachments(message: string, attachments: ChatAttachment[]): 
   )
 }
 
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 async function resolvePolicyPaths(attachments: ChatAttachment[]): Promise<ChatPolicyPaths> {
   const homeRoot = await realpath(homedir())
   const workspace = await resolveChatWorkspace({
     configuredRoot: process.env.ALKE_REPO_ROOT,
     sourceChatctxDir: app.isPackaged ? undefined : CHATCTX_DIR,
     packaged: app.isPackaged,
-    ownerFallback: join(homeRoot, 'Projects/Github/Alke')
+    ownerFallback: join(homeRoot, 'Projects/Alke')
   })
+  const privateRoot = join(workspace.repoRoot, 'private')
+  const hasPrivate = await isDirectory(privateRoot)
+  const privateChatctxDir = join(privateRoot, 'chatctx')
   return {
     repoRoot: workspace.repoRoot,
     appRoot: workspace.appRoot,
     gitRoot: workspace.gitRoot,
     runtimeRoot: await realpath(CHATCTX_DIR),
     homeRoot,
-    attachmentPaths: attachments.map(({ path }) => path)
+    attachmentPaths: attachments.map(({ path }) => path),
+    privateRoot: hasPrivate ? privateRoot : null,
+    privateChatctxDir:
+      hasPrivate && (await isDirectory(privateChatctxDir)) ? privateChatctxDir : null,
+    supabaseHost: supabaseHostFrom(process.env.SUPABASE_URL)
+  }
+}
+
+/**
+ * Env for a chat CLI child: the parent's env plus ALKE_PRIVATE_ROOT, so chatctx/ctx.py reads
+ * the owner's private overrides (in dev it also finds ../private on its own; the packaged
+ * app's chatctx lives under Resources, away from the repo).
+ */
+function chatEnv(privateRoot: string | null | undefined): NodeJS.ProcessEnv {
+  return privateRoot ? { ...process.env, ALKE_PRIVATE_ROOT: privateRoot } : process.env
+}
+
+async function goalBuildPrivateRoot(): Promise<string | null> {
+  try {
+    return (await resolvePolicyPaths([])).privateRoot ?? null
+  } catch {
+    return null // no connected workspace: repo defaults only
   }
 }
 
@@ -309,7 +342,7 @@ export async function sendMessage(
   const args = buildStreamingClaudeArgs(prompt, session.claude_session_id ?? undefined, policyPaths)
   const child = spawn('claude', args, {
     cwd: CHATCTX_DIR,
-    env: process.env,
+    env: chatEnv(policyPaths.privateRoot),
     stdio: CLAUDE_STREAM_STDIO
   })
 
@@ -493,7 +526,7 @@ const METRIC_BUILD_TIMEOUT_MS = 5 * 60 * 1000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const metricBuildsInFlight = new Set<string>()
 
-export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }> {
+export async function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: string }> {
   if (!UUID_RE.test(goalId)) return Promise.resolve({ ok: false, error: 'invalid goal id' })
   if (metricBuildsInFlight.has(goalId)) {
     return Promise.resolve({ ok: false, error: 'metric build already running for this goal' })
@@ -508,13 +541,14 @@ export function buildGoalMetric(goalId: string): Promise<{ ok: boolean; error?: 
     `materialize the series with goals.py recompute, and if the goal's description is empty ` +
     `write a short factual one via goals.py update. ${NONINTERACTIVE_SUFFIX}`
 
+  const privateRoot = await goalBuildPrivateRoot()
   return new Promise((resolve) => {
     const child = execFile(
       'claude',
       buildGoalClaudeArgs(prompt),
       {
         cwd: CHATCTX_DIR,
-        env: process.env,
+        env: chatEnv(privateRoot),
         timeout: METRIC_BUILD_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024
       },

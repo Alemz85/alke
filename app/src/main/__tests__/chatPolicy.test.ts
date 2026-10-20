@@ -9,6 +9,7 @@ import {
   buildStreamingClaudeArgs,
   closeChildStdin,
   extractClaudeCliFailure,
+  supabaseHostFrom,
   type ChatPolicyPaths
 } from '../chatPolicy'
 
@@ -20,6 +21,7 @@ const EXPECTED_HEALTH_HELPERS = [
   'Bash(python3 agent_log.py:*)',
   'Bash(python3 session.py:*)',
   'Bash(python3 gym.py:*)',
+  'Bash(python3 ctx.py:*)',
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'
 ]
@@ -30,7 +32,8 @@ const PACKAGED_PATHS: ChatPolicyPaths = {
   gitRoot: '/Users/owner/Projects/Github/Alke/.git',
   runtimeRoot: '/Applications/Alke.app/Contents/Resources/chatctx',
   homeRoot: '/Users/owner',
-  attachmentPaths: ['/Users/owner/Desktop/plan.pdf']
+  attachmentPaths: ['/Users/owner/Desktop/plan.pdf'],
+  supabaseHost: 'your-project-ref.supabase.co'
 }
 
 function settingsFrom(args: string[]): Record<string, any> {
@@ -146,6 +149,39 @@ describe('interactive Claude policy', () => {
     })
   })
 
+  it('takes the sandbox network host from SUPABASE_URL and allows nothing without it', () => {
+    expect(supabaseHostFrom('https://your-project-ref.supabase.co')).toBe(
+      'your-project-ref.supabase.co'
+    )
+    expect(supabaseHostFrom(undefined)).toBeNull()
+    expect(supabaseHostFrom('not a url')).toBeNull()
+    const settings = buildInteractiveSettings({ ...PACKAGED_PATHS, supabaseHost: null }) as Record<
+      string,
+      any
+    >
+    expect(settings.sandbox.network.allowedDomains).toEqual([])
+  })
+
+  it('lets the agent read the private root but never write it, and loads its private skills', () => {
+    const paths: ChatPolicyPaths = {
+      ...PACKAGED_PATHS,
+      privateRoot: `${PACKAGED_PATHS.repoRoot}/private`,
+      privateChatctxDir: `${PACKAGED_PATHS.repoRoot}/private/chatctx`
+    }
+    const settings = buildInteractiveSettings(paths) as Record<string, any>
+    expect(settings.sandbox.filesystem.denyWrite).toContain(paths.privateRoot)
+    expect(settings.sandbox.filesystem.allowRead).toContain(PACKAGED_PATHS.repoRoot)
+
+    const args = buildStreamingClaudeArgs('hello', undefined, paths)
+    const addDirs = args.flatMap((arg, i) => (arg === '--add-dir' ? [args[i + 1]] : []))
+    expect(addDirs).toEqual([PACKAGED_PATHS.repoRoot, paths.privateChatctxDir])
+  })
+
+  it('adds no private --add-dir when there is no private root', () => {
+    const args = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
+    expect(args.filter((arg) => arg === '--add-dir')).toHaveLength(1)
+  })
+
   it('blocks MCP and notebook escape surfaces, but allows WebSearch/WebFetch', () => {
     const args = buildStreamingClaudeArgs('hello', undefined, PACKAGED_PATHS)
     const denied = args[args.indexOf('--disallowedTools') + 1]
@@ -162,9 +198,9 @@ describe('interactive Claude policy', () => {
 })
 
 describe('fixed goal-worker policy', () => {
-  it('keeps exactly the existing eight health helper commands', () => {
+  it('keeps exactly the health helper commands, plus the ctx.py instruction resolver', () => {
     expect(CHAT_ALLOWED_TOOLS).toEqual(EXPECTED_HEALTH_HELPERS)
-    expect(CHAT_ALLOWED_TOOLS).toHaveLength(9)
+    expect(CHAT_ALLOWED_TOOLS).toHaveLength(10)
 
     const args = buildGoalClaudeArgs('build it')
     expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'dontAsk']))

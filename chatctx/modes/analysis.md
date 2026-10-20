@@ -29,20 +29,20 @@ The cards exist so you know roughly what they are aiming at. **A card's metric b
 
 ## Knowledge library
 
-A curated training-science library lives in a separate repo cloned as a SIBLING
-of this working directory. **The path from here is `../knowledge`** — that
-resolves to the repo root's `knowledge/` in dev and to
-`Contents/Resources/knowledge` in the packaged app, which is where
+A curated training-science library lives in a separate private repo, kept inside
+the owner's private folder. **The path from here is `../private/knowledge`** — that
+resolves to the repo root's `private/knowledge/` in dev and to
+`Contents/Resources/private/knowledge` in the packaged app, which is where
 `electron-builder.yml` bundles it. `./knowledge` is not the path in either case;
 looking there, finding nothing, and telling the user the library is unavailable
 is a documented failure (agent_log #19 — a load-bearing rehab question
 got answered from priors while `topics/isometric-load.md` and
 `papers/rio-2020-load-progression-tendinopathy.md` sat right there). It genuinely
 is absent sometimes (headless runs from a checkout without the private clone) —
-degrade gracefully then, but run `ls ../knowledge` before concluding it: that
+degrade gracefully then, but run `ls ../private/knowledge` before concluding it: that
 path is for a missing clone, not for a path you mistyped.
 
-`../knowledge/INDEX.md` is a cheap one-line-per-entry map; `topics/` holds
+`../private/knowledge/INDEX.md` is a cheap one-line-per-entry map; `topics/` holds
 distilled syntheses, `papers/` the evidence with quality notes. Use it to keep
 grounded claims **consistent across sessions**, not as a first resort.
 
@@ -55,7 +55,7 @@ Procedure (priors FIRST — the user's explicit decision):
    messages deep pushing on *how* or *why* something works (e.g. turning Zone 2
    mechanics over and over), or the claim is load-bearing — quantitative
    (thresholds, dosages, percentages), contested, or specific to their conditions.
-   That's when you read `../knowledge/INDEX.md` and drill into the matching
+   That's when you read `../private/knowledge/INDEX.md` and drill into the matching
    topic file.
    - Library confirms you → cite it inline (`per knowledge/topics/<slug>.md` —
      cite the library-relative path, read the `../`-prefixed one).
@@ -87,7 +87,7 @@ When the user asks for a new lifting plan (a fresh mesocycle, a swap of exercise
 
 You still own injury and goal maintenance in a default chat — the mode files just keep the detailed rules out of context until the topic actually comes up:
 
-- The user mentions pain, a flare-up, a milestone, rehab work done, or you spot an injury-risk pattern worth logging → read `modes/injuries.md` first, then follow its "when to act" rules (it covers the tables, `injuries.py` commands, and the weekly-target rulebook).
-- A goal gets settled, achieved, paused, or abandoned in conversation, or goal metrics need designing or refreshing → read `modes/goals.md` first, then follow it (`goals.py` commands and metric-design guidance).
+- The user mentions pain, a flare-up, a milestone, rehab work done, or you spot an injury-risk pattern worth logging → run `python3 ctx.py file modes/injuries.md` first, then follow its "when to act" rules (it covers the tables, `injuries.py` commands, and the weekly-target rulebook).
+- A goal gets settled, achieved, paused, or abandoned in conversation, or goal metrics need designing or refreshing → run `python3 ctx.py file modes/goals.md` first, then follow it (`goals.py` commands and metric-design guidance).
 
 Read the mode file before acting, not after — the write helpers have semantics (efficacy thresholds, deactivate-vs-remove, metric validation) that aren't guessable.

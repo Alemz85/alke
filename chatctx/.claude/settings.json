@@ -8,6 +8,7 @@
       "Bash(python3 agent_log.py:*)",
       "Bash(python3 session.py:*)",
       "Bash(python3 gym.py:*)",
+      "Bash(python3 ctx.py:*)",
       "Bash(node recovery_plan_contract.mjs:*)",
       "Bash(node workout_template_contract.mjs:*)"
     ]

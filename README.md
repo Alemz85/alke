@@ -1,78 +1,141 @@
 # Alke
 
-A personal performance lab for my own Apple Watch / Apple Health data — training
-load, recovery, and aerobic-base (Zone 2) trends, with an AI chat that reasons over the
-numbers. Built as a personal project: the whole stack runs against one private database,
-and no data is collected from anyone but the owner.
+A personal performance lab for Apple Watch and Apple Health data. It covers training load,
+recovery, aerobic-base (Zone 2) development, gym work and injury rehab, and it has an AI chat
+that reasons over the numbers. One person built it and uses it, on one private database.
+This repository holds the code, the models and the documentation. The data stays out of it
+(see [Privacy design](#privacy-design)).
 
-Three independent programs share one Supabase Postgres database:
+## What it does
 
-1. **Ingestion Edge Function** (Deno/TypeScript) — the
-   [Health Auto Export](https://github.com/Lybron/health-auto-export) iOS app POSTs new
-   health data to it; a pure, unit-tested parser normalizes each payload. Idempotent under
-   re-delivery (workouts upsert, samples dedupe, daily metrics merge per column).
-2. **Nightly metrics job** (Python, GitHub Actions cron at 03:30 UTC) — computes
-   training-load (CTL / ATL / TSB / ACWR), recovery, and Zone-2 aerobic-base metrics from
-   the raw data, plus correlational insights.
-3. **Electron desktop app** (React + Vite) — renders the dashboard and embeds an AI chat
-   driven by the local Claude Code CLI. Offline-first, with an optimistic write queue.
+- **Ingests health data continuously.** The [Health Auto Export](https://github.com/Lybron/health-auto-export)
+  iOS app POSTs workouts, heart-rate samples, routes, sleep and daily metrics to a Supabase
+  Edge Function. A pure, unit-tested parser normalises each payload. Ingest is idempotent
+  under re-delivery: workouts upsert, samples dedupe, daily metrics merge column by column.
+  Apple Health's habit of replacing a workout with an edited copy is absorbed rather than
+  double-counted.
+- **Computes models nightly.** A Python job (GitHub Actions cron) derives:
+  - training load (TRIMP, CTL/ATL/TSB, ACWR);
+  - recovery;
+  - a two-compartment Zone-2 fitness index (a slow-moving durable base plus a fast "sharpness"
+    layer, fused from efficiency-factor channels, resting HR, VO₂max and daily activity);
+  - goal progress;
+  - an N-of-1 insights screen with pre-declared questions, adjustment sets and placebo checks.
+- **Shows it in a desktop app.** An Electron + React dashboard with views for sessions,
+  Zone 2, recovery, running, walking, cardio HR, gym (templates, set logging, a per-muscle
+  fatigue model), injuries (structured recovery plans with symptom-gated phases and adherence
+  scoring), insights and a profile. It works offline first, with an optimistic write queue
+  that replays on reconnect.
+- **Chats over the data.** The app embeds the Claude Code CLI as a chat agent, sandboxed to
+  read-only SQL and a set of narrow write helpers. It logs injuries, maintains goals and
+  recovery plans, and answers questions with the evidence attached.
 
-All UI follows the design system in [`DESIGN.md`](DESIGN.md).
+Every estimate carries its uncertainty band and its data coverage, and unavailable data shows
+an honest empty state. It's informational software, not medical advice.
 
-## Highlights
+## Architecture
 
-- **Sports-science modeling** grounded in endurance-training literature — detraining
-  kinetics, maintenance dose, efficiency (EF) / decoupling trends, and a two-compartment
-  Zone-2 fitness model (a slow-moving durable base vs. a fast-moving form layer). Every
-  load-bearing constant is a documented literature prior that personalizes as history
-  grows; see [`docs/muscle-fatigue-model.md`](docs/muscle-fatigue-model.md) for one model's
-  full spec.
-- **Informational, not medical** — every estimate is banded with its uncertainty shown,
-  never presented as a diagnosis or clinical advice.
-- **AI chat over your own data** — the desktop app spawns the local Claude Code CLI in
-  `chatctx/`, which reads the database (read-only SQL) and a curated training-science
-  knowledge base to answer questions and log injuries and goals.
-
-## Layout
+```mermaid
+flowchart LR
+  HAE[Health Auto Export<br/>iOS] -->|POST, shared-secret| ING[ingest<br/>Edge Function · Deno]
+  ING --> DB[(Supabase Postgres<br/>RLS deny-all)]
+  CRON[Nightly metrics job<br/>Python · GitHub Actions] <--> DB
+  APP[Desktop app<br/>Electron · React · Vite] <--> DB
+  APP --> CHAT[Chat agent<br/>Claude Code CLI in chatctx/]
+  CHAT -->|read-only SQL RPC + write helpers| DB
+  CARD[Phone gym card<br/>Vercel] -->|capability URL| DB
+```
 
 | Path | Component |
 | --- | --- |
-| `/supabase` | SQL migrations + `ingest` Edge Function (Deno/TypeScript) |
-| `/metrics`  | Nightly metrics job (Python 3.12) |
-| `/.github`  | Actions workflow running the metrics job at 03:30 UTC |
-| `/app`      | Electron + React + Vite desktop app |
-| `/chatctx`  | Working directory given to the Claude Code chat sessions |
+| `supabase/` | 60+ SQL migrations; `ingest` and `gymcard` Edge Functions (Deno/TypeScript) |
+| `metrics/` | Nightly metrics job and models (Python 3.12, pandas, statsmodels) |
+| `app/` | Electron + React + Vite desktop app (TypeScript) |
+| `chatctx/` | The chat agent's working directory: helpers, instructions, contracts |
+| `gymcard-web/` | Vercel port of the read-only phone gym card |
+| `scripts/` | Importers (RunKeeper, blood panels), backfills, the leak gate |
+| `docs/` | Model specs and vendor payload docs |
 
-## Running each component
+## The models, briefly
 
-**Ingestion** — deployed to Supabase: `supabase functions deploy ingest`. Local tests:
-`deno test supabase/functions/ingest/` (no network needed). The Health Auto Export payload
-format the endpoint parses is documented under `docs/vendor/hae-wiki/`.
+- **Zone-2 fitness index.** A slow compartment (detraining time constant 45–90 days) and a
+  fast one (about 14 days), driven by weekly aerobic dose. The level comes from separate
+  efficiency-factor channels (swim, outdoor ride, run, treadmill, row, indoor power), each
+  gated on a baseline the owner ratifies, plus resting HR, VO₂max and a daily-activity floor.
+  Every load-bearing constant is a documented literature prior that personalises as history
+  grows. Rows are stamped with the model version that produced them.
+- **Muscle fatigue.** Per-muscle load from logged sets (with isometric holds given a grounded
+  load) and personalised recovery time constants. Full spec in
+  [`docs/muscle-fatigue-model.md`](docs/muscle-fatigue-model.md).
+- **Insights.** An N-of-1 observational screen built to avoid fishing. Each question declares
+  its exposure and outcome timing, population and adjustment set up front, and results go
+  through robustness and placebo checks. Contract in
+  [`docs/insights-statistical-design.md`](docs/insights-statistical-design.md).
 
-**Metrics job** — `pip install -r metrics/requirements.txt && python -m metrics.compute`
-with `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` in the environment (`--full` recomputes all
-history). Runs nightly via GitHub Actions. Tests: `python -m pytest metrics/`.
+## The chat agent
 
-**Desktop app (dev)** — `cd app && npm install && npm run dev`. Needs `app/.env` with the
-Supabase credentials (see `app/.env.example`). Checks: `npm run typecheck` and
-`npx vitest run`.
+The desktop app spawns `claude` in `chatctx/` with a sandbox:
+- reads only inside the repo;
+- no writes to the app code, `.git` or `private/`;
+- network limited to the project's Supabase host;
+- no MCP servers;
+- hooks disabled.
 
-**Desktop app (packaged macOS build)** — `cd app && npm run dist:mac`. Builds the
-renderer/main bundles with `electron-vite` and packages a `.dmg` and `.zip` with
-`electron-builder` into `app/release/` (gitignored). The build is unsigned
-(`identity: null`, no Apple Developer account) — on first launch of a copy that carries the
-Gatekeeper quarantine flag, macOS refuses to open it with a normal double-click; **right-click
-the app → Open → Open** once to bypass Gatekeeper, or run `xattr -cr "Alke.app"`
-before launching.
+The database is queried through `exec_readonly_sql`, a hardened RPC that accepts SELECT/WITH
+only. Writes go through narrow helpers (`injuries.py`, `goals.py`, `gym.py`, `session.py`,
+`agent_log.py`) that validate against JSON contracts shared with the app. The agent's
+instructions live in `chatctx/modes/`; it reads them through `chatctx/ctx.py`, which applies
+the owner's private overrides (below). An `agent_log` table records the agent's own mistakes
+and gaps, and those entries drove a long list of fixes visible in the history.
 
-**Packaged build credentials** — in dev the main process loads `app/.env` (resolved
-relative to `__dirname`). That path doesn't exist in a packaged app, so the packaged build
-instead reads `.env` from its userData directory (`~/Library/Application
-Support/health-analytics-app/.env` on macOS), using the same keys as `app/.env.example`.
-Secrets are never bundled into the app itself.
+## Privacy design
 
-## Configuration & secrets
+The data is health data, so the app is built to keep it out of this public repo:
+- **Database:** RLS is enabled on every table with no policies, so anonymous and
+  authenticated keys get nothing. Access is by the service-role key (server-side only) or by
+  the shared-secret Edge Functions. Credentials live in gitignored `.env` files.
+- **Private root:** everything personal that isn't in the database (notes, plans, chat
+  context, health documents, exports, backups, the training-science library) lives in
+  `private/`. That folder is its own private git repo, nested in the checkout and ignored
+  here as a whole.
+- **Overrides, not generalising:** the repo ships generic chat instructions, and a file in
+  `private/chatctx/` replaces or extends its public default.
+- **Leak gate:** a versioned pre-push hook (`.githooks/pre-push` → `scripts/leakgate/`) scans
+  only what is about to be pushed. Its personal terms are built at run time from the private
+  root and the database, never stored here. It also applies generic patterns (keys,
+  emails, coordinates, home paths) and reports `sha path:line [category]` without echoing the
+  match. CI repeats the generic scan after the push as a backup net.
+- **Fixtures:** all test fixtures use invented data.
 
-Copy `.env.example` to `.env` in each component that needs it and fill in the values; real
-`.env` files are gitignored everywhere and no keys are ever committed. `supabase/config.toml`
-ships with a placeholder `project_id` — set your own, or pass `--project-ref` on deploy.
+## Running it
+
+You need your own Supabase project.
+1. Apply the migrations with `supabase db push`, then deploy the ingest function with
+   `supabase functions deploy ingest` and set its `INGEST_TOKEN` secret.
+2. Point Health Auto Export at the function URL with the `x-ingest-token` header.
+3. Copy `.env.example` to `.env` (repo root, `app/`, `chatctx/`) and fill in `SUPABASE_URL`
+   and `SUPABASE_SERVICE_KEY`.
+4. **Metrics:** `pip install -r metrics/requirements.txt && python -m metrics.compute`
+   (`--full` recomputes all history).
+5. **App:** `cd app && npm install && npm run dev`. The chat tab needs the Claude Code CLI on
+   your PATH. `npm run dist:mac` builds an unsigned `.dmg` into `app/release/`. Gatekeeper blocks
+   a quarantined copy on first launch: right-click the app and choose Open, or run
+   `xattr -cr "Alke.app"`. The packaged build reads its credentials from
+   `~/Library/Application Support/health-analytics-app/.env` (same keys as `app/.env.example`).
+
+## Tests
+
+| Suite | Command | Tests |
+| --- | --- | --- |
+| Metrics models and job | `python -m pytest metrics/tests` | 314 |
+| Chat helpers and resolver | `python -m pytest chatctx/tests` | 146 |
+| Chat contracts | `node --test chatctx/tests/*.mjs` | 44 |
+| Ingest parser | `deno test` in `supabase/functions/ingest` | 85 |
+| Gym card renderer | `deno test` in `supabase/functions/gymcard` | 23 |
+| Desktop app | `cd app && npm test` (+ `npm run typecheck`, `npm run lint`) | 1,350+ |
+| Leak gate | `python -m pytest scripts/leakgate` | 22 |
+
+CI runs these on every push and pull request, plus the generic leak scan.
+
+UI work follows the design system in [`DESIGN.md`](DESIGN.md) and the product principles in
+[`PRODUCT.md`](PRODUCT.md).
