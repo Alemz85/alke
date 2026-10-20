@@ -191,3 +191,15 @@ def test_override_sharing_wording_with_public_default_does_not_block(repo, tmp_p
     commit(repo, "chatctx/modes/goals.md", sentence + "\nedited default\n")
     res = push(repo, gate_env(HOME=str(tmp_path)))
     assert res.returncode == 0, res.stderr
+
+
+def test_worktree_push_uses_the_main_checkouts_private_root(repo, tmp_path):
+    make_private(repo)
+    wt = tmp_path / "wt"
+    run(["git", "worktree", "add", "-q", "-b", "side", str(wt)], repo)
+    (wt / "a.txt").write_text(f"near {FIXTURE_TERM}\n")
+    run(["git", "add", "a.txt"], wt)
+    run(["git", "commit", "-q", "-m", "side"], wt)
+    res = run(["git", "push", "-q", "origin", "side"], wt, env=gate_env(HOME=str(tmp_path)), check=False)
+    assert res.returncode != 0
+    assert "a.txt:1 [private-term]" in res.stderr

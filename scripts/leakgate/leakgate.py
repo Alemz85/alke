@@ -88,10 +88,17 @@ def repo_root() -> pathlib.Path:
     return pathlib.Path(git("rev-parse", "--show-toplevel").strip())
 
 
+def main_checkout(repo: pathlib.Path) -> pathlib.Path:
+    """The main working tree, also when running inside a linked worktree (which has no
+    private/ or .env files of its own)."""
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo).strip()
+    return pathlib.Path(common).parent if common else repo
+
+
 def private_root(repo: pathlib.Path) -> pathlib.Path | None:
     configured = os.environ.get("ALKE_PRIVATE_ROOT")
-    root = pathlib.Path(configured) if configured else repo / "private"
-    return root if root.is_dir() else None
+    candidates = [pathlib.Path(configured)] if configured else [repo / "private", main_checkout(repo) / "private"]
+    return next((c for c in candidates if c.is_dir()), None)
 
 
 def words(text: str) -> list[str]:
@@ -117,8 +124,9 @@ def read_env_file(path: pathlib.Path) -> dict[str, str]:
 
 
 def env_files(repo: pathlib.Path) -> list[pathlib.Path]:
-    return [repo / ".env", repo / "app" / ".env", repo / "chatctx" / ".env",
-            pathlib.Path.home() / "Library/Application Support/health-analytics-app/.env"]
+    roots = list(dict.fromkeys([repo, main_checkout(repo)]))
+    return [root / rel for root in roots for rel in (".env", "app/.env", "chatctx/.env")] + \
+        [pathlib.Path.home() / "Library/Application Support/health-analytics-app/.env"]
 
 
 # ---------------------------------------------------------------- private terms
