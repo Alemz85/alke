@@ -199,7 +199,11 @@ def private_doc_phrases(priv: pathlib.Path, repo: pathlib.Path, public_rev: str 
     private_ph: set[str] = set()
     for md in priv.rglob("*.md"):
         rel = md.relative_to(priv).parts
-        if rel and rel[0] in ("knowledge", ".cache", "backups", "exports"):
+        # Skipped: the science library and plans/specs (written to become public code, so
+        # their wording legitimately reappears there), plus machine-local folders.
+        if rel and rel[0] in ("knowledge", "docs", ".cache", "backups", "exports"):
+            continue
+        if rel == ("README.md",):  # the folder's own generic map, not personal content
             continue
         try:
             private_ph |= shingles(md.read_text(errors="replace"))
@@ -237,9 +241,11 @@ def db_terms(repo: pathlib.Path, env: dict[str, str]) -> Terms:
 
     def q(sql: str) -> list[dict]:
         try:
-            return db.run_query(sql)
+            rows = db.run_query(sql)
         except SystemExit as e:  # db.py exits with a one-line message on failure
             raise RuntimeError(str(e)) from None
+        # exec_readonly_sql returns null for an all-null row; keep real rows only.
+        return [r for r in (rows or []) if isinstance(r, dict)]
 
     t = Terms()
     uc = (q("select birthdate::text bd, timezone, about_me, hr_max, height_cm from user_config") or [{}])[0]
@@ -306,17 +312,17 @@ def load_private_terms(repo: pathlib.Path, priv: pathlib.Path, public_rev: str |
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(dbt.to_json()))
             os.chmod(cache, 0o600)
-        except Exception as e:  # network, auth, schema: fall back to the cache
+        except Exception as e:  # network, auth, schema, bad rows: fall back to the cache
             if cache.is_file() and not refresh:
                 data = json.loads(cache.read_text())
                 age_d = (time.time() - data.get("built_at", 0)) / 86400
                 dbt = Terms.from_json(data)
-                terms.notes.append(f"database unreachable ({e}); using the cached term list from {age_d:.0f} day(s) ago")
+                terms.notes.append(f"could not read the database ({e}); using the cached term list from {age_d:.0f} day(s) ago")
                 if age_d * 86400 > CACHE_MAX_AGE_S:
                     terms.notes.append("the cache is over 30 days old: run `npm run leakgate:refresh` when online")
             else:
                 raise RuntimeError(
-                    f"cannot build the private term list: database unreachable ({e}) and no cache yet. "
+                    f"cannot build the private term list: could not read the database ({e}) and no cache yet. "
                     "Run `npm run leakgate:refresh` once you are online, then push again."
                 ) from None
     if dbt:
@@ -458,7 +464,13 @@ def scan_tag(repo: pathlib.Path, ref: str, matcher: Matcher) -> list[str]:
 def commits_to_push(repo: pathlib.Path, local: str, remote_sha: str, remote_name: str) -> list[str]:
     known = remote_sha != ZERO and subprocess.run(
         ["git", "cat-file", "-e", f"{remote_sha}^{{commit}}"], cwd=repo, capture_output=True).returncode == 0
-    rng = [f"{remote_sha}..{local}"] if known else [local, "--not", f"--remotes={remote_name}"]
+    if known:
+        rng = [f"{remote_sha}..{local}"]
+    else:
+        # New branch: everything not already on this remote. With no tracking refs for it
+        # yet, fall back to origin's, so a fresh remote doesn't mean rescanning all history.
+        has_refs = bool(git("for-each-ref", "--count=1", f"refs/remotes/{remote_name}/", cwd=repo).strip())
+        rng = [local, "--not", f"--remotes={remote_name if has_refs else 'origin'}"]
     return git("rev-list", "--reverse", *rng, cwd=repo).split()
 
 
@@ -471,7 +483,8 @@ def public_side(repo: pathlib.Path, updates: list[list[str]], remote_name: str) 
     for _, _, remote_ref, remote_sha in updates:
         if remote_sha != ZERO and exists(remote_sha):
             return remote_sha
-    for ref in (f"refs/remotes/{remote_name}/HEAD", f"refs/remotes/{remote_name}/main"):
+    for ref in (f"refs/remotes/{remote_name}/HEAD", f"refs/remotes/{remote_name}/main",
+                "refs/remotes/origin/HEAD", "refs/remotes/origin/main"):
         if exists(ref):
             return ref
     return None
