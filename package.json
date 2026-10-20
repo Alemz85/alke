@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "setup": "sh scripts/setup.sh",
+    "backup": "sh scripts/private_backup.sh",
+    "leakgate:refresh": "python3 scripts/leakgate/leakgate.py refresh",
+    "leakgate:test": "python3 -m pytest scripts/leakgate -q"
+  },
   "devDependencies": {
     "supabase": "2.115.0"
   }

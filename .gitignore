@@ -34,23 +34,28 @@ supabase/.branches/
 metrics/.venv/
 
 # Cross-tool agent skills mirror (redundant copy of .claude/skills for non-Claude
-# agents; regenerable, so it stays local). AGENTS.md itself is a symlink to
-# CLAUDE.md and IS tracked, so any agent gets the same canonical instructions.
+# agents; regenerable, so it stays local).
 .agents/
 
 # Local brainstorming mockups and browser interaction state
 .superpowers/
 .worktrees/
 
-# Internal working files — kept local, not part of the public repo
-/CLAUDE.md
+# THE PRIVATE ROOT. Everything personal that isn't in the database lives in
+# private/: its own private git repo, nested here and ignored as a whole. Never
+# add a `!` re-include for anything under it; the leak gate and CI both fail if
+# a tracked path ever sits there. See CLAUDE.md "Personal data".
+/private/
+# Personal dev-session glue (`@private/CLAUDE.md`), written by `npm run setup`.
+/CLAUDE.local.md
+
+# Safety nets for personal files that predate private/: if one of these
+# reappears at the old path, it stays out of git. Their home is now private/.
 /AGENTS.md
 /TODO.md
 /docs/superpowers/
 /docs/zone2-fitness-model.md
 /docs/zone2-model-explained.md
-
-# Knowledge library — a separate private repo, cloned in locally
 knowledge/
 
 # Personal RunKeeper export dumps (raw GPS traces — imported via
@@ -61,8 +66,8 @@ knowledge/
 
 # Medical records (blood panels, lab reports). Source PDFs carry name/DOB and
 # never belong in git — even a private remote, since history is forever. The
-# extracted RESULTS live in the database like every other health fact; these
-# files stay local. See TODO.md "Blood panels".
+# extracted RESULTS live in the database like every other health fact; the
+# files live in private/health/, which the private repo does not track either.
 /Health/
 
 # Local raw_payloads mirror (scripts/archive_raw_payloads.py) — hours of source
