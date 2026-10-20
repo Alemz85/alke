@@ -63,7 +63,7 @@ let cachedInterpreter: string | null = null
 
 // Dev: main runs from app/out/main, repo root is three levels up (mirrors
 // chat.ts's CHATCTX_DIR derivation). Packaged: metrics/ ships as an
-// extraResource sibling of chatctx/knowledge under resourcesPath, and the job
+// extraResource sibling of chatctx/ under resourcesPath, and the job
 // needs its OWN cwd at that resources root so `python -m metrics.compute`
 // resolves the `metrics` package directly beneath cwd.
 const REPO_ROOT = app.isPackaged ? process.resourcesPath : join(__dirname, '../../../')

@@ -9,6 +9,7 @@ export const CHAT_ALLOWED_TOOLS = [
   'Bash(python3 agent_log.py:*)',
   'Bash(python3 session.py:*)',
   'Bash(python3 gym.py:*)',
+  'Bash(python3 ctx.py:*)',
   'Bash(node recovery_plan_contract.mjs:*)',
   'Bash(node workout_template_contract.mjs:*)'
 ] as const
@@ -24,6 +25,22 @@ export interface ChatPolicyPaths {
   runtimeRoot: string
   homeRoot: string
   attachmentPaths: string[]
+  /** The owner's private root (`<repo>/private`) when it exists: readable, never writable. */
+  privateRoot?: string | null
+  /** `<privateRoot>/chatctx` when it exists, added with --add-dir so private skills load. */
+  privateChatctxDir?: string | null
+  /** The Supabase host the sandbox may reach, derived from SUPABASE_URL. */
+  supabaseHost?: string | null
+}
+
+/** Host of the configured Supabase project, or null when SUPABASE_URL is unset or invalid. */
+export function supabaseHostFrom(url: string | undefined): string | null {
+  if (!url) return null
+  try {
+    return new URL(url).hostname || null
+  } catch {
+    return null
+  }
 }
 
 function absoluteRulePath(path: string): string {
@@ -51,6 +68,8 @@ export function buildInteractiveSettings(paths: ChatPolicyPaths): Record<string,
     `${paths.repoRoot}/**/.env*`
   ]
   if (!isInside(paths.repoRoot, paths.runtimeRoot)) denyWrite.push(paths.runtimeRoot)
+  // The private overrides are the owner's own text: the agent reads them, never edits them.
+  if (paths.privateRoot) denyWrite.push(paths.privateRoot)
 
   return {
     permissions: {
@@ -94,7 +113,7 @@ export function buildInteractiveSettings(paths: ChatPolicyPaths): Record<string,
         allowRead: [paths.repoRoot, ...paths.attachmentPaths]
       },
       network: {
-        allowedDomains: ['your-project-ref.supabase.co']
+        allowedDomains: paths.supabaseHost ? [paths.supabaseHost] : []
       }
     },
     disableAllHooks: true,
@@ -158,6 +177,7 @@ export function buildStreamingClaudeArgs(
     'Read,Glob,Grep,Edit,Write,Bash,Skill,WebSearch,WebFetch',
     '--add-dir',
     paths.repoRoot,
+    ...(paths.privateChatctxDir ? ['--add-dir', paths.privateChatctxDir] : []),
     '--strict-mcp-config',
     '--disallowedTools',
     'mcp__*,NotebookEdit'
