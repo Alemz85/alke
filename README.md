@@ -133,7 +133,7 @@ You need your own Supabase project.
 | Ingest parser | `deno test` in `supabase/functions/ingest` | 85 |
 | Gym card renderer | `deno test` in `supabase/functions/gymcard` | 23 |
 | Desktop app | `cd app && npm test` (+ `npm run typecheck`, `npm run lint`) | 1,350+ |
-| Leak gate | `python -m pytest scripts/leakgate` | 22 |
+| Leak gate | `python -m pytest scripts/leakgate` | 24 |
 
 CI runs these on every push and pull request, plus the generic leak scan.
 

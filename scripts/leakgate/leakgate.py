@@ -41,7 +41,7 @@ CACHE_MAX_AGE_S = 30 * 24 * 3600
 
 # Placeholders and public addresses that are fine to publish.
 ALLOWED_EMAIL = re.compile(
-    r"@users\.noreply\.github\.com$|^noreply@anthropic\.com$|^noreply@openai\.com$|"
+    r"@users\.noreply\.github\.com$|^noreply@github\.com$|^noreply@anthropic\.com$|^noreply@openai\.com$|"
     r"@example\.(com|org|net)$|@localhost$",
     re.I,
 )

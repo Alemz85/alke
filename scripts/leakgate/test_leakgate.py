@@ -127,6 +127,7 @@ def test_generic_patterns_block_without_private_root(repo, tmp_path, line, cat):
 
 @pytest.mark.parametrize("line", [
     "author: 123+someone@users.noreply.github.com",  # leakgate: allow test fixture
+    "committer: GitHub <noreply@github.com>",  # leakgate: allow test fixture
     "path = '/Users/owner/Projects/x'",
     "url = 'https://your-project-ref.supabase.co'",  # leakgate: allow test fixture
     "synthetic route (45.1234, 7.6543)  # leakgate: allow synthetic fixture",
@@ -203,3 +204,13 @@ def test_worktree_push_uses_the_main_checkouts_private_root(repo, tmp_path):
     res = run(["git", "push", "-q", "origin", "side"], wt, env=gate_env(HOME=str(tmp_path)), check=False)
     assert res.returncode != 0
     assert "a.txt:1 [private-term]" in res.stderr
+
+
+def test_github_web_flow_committer_is_allowed(repo, tmp_path):
+    # Merges made on github.com are committed by "GitHub <noreply@github.com>".
+    p = repo / "m.txt"
+    p.write_text("merged\n")
+    run(["git", "add", "m.txt"], repo)
+    env = dict(os.environ, GIT_COMMITTER_NAME="GitHub", GIT_COMMITTER_EMAIL="noreply@github.com")
+    run(["git", "commit", "-q", "-m", "Merge pull request #1"], repo, env=env)
+    assert push(repo, gate_env(HOME=str(tmp_path))).returncode == 0
