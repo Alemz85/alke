@@ -1,0 +1,5 @@
+#!/bin/sh
+# Leak gate: blocks a push that would publish personal data. See scripts/leakgate/leakgate.py.
+# A blocked push means fix the leak and push again; never bypass it with --no-verify.
+repo="$(git rev-parse --show-toplevel)" || exit 1
+exec python3 "$repo/scripts/leakgate/leakgate.py" pre-push "$@"
