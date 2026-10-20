@@ -27,7 +27,7 @@ describe('Sidebar collapse', () => {
     // the stored preference via the navigation action — the rendered state
     // must never branch on the active tab.
     expect(app).toContain("if (tab === 'chat') collapseSidebar()")
-    const collapseFn = app.match(/const collapseSidebar = useCallback[\s\S]*?\n  \}, \[\]\)/)?.[0] ?? ''
+    const collapseFn = app.match(/const collapseSidebar = useCallback[\s\S]*?\n {2}\}, \[\]\)/)?.[0] ?? ''
     expect(collapseFn).toContain("localStorage.setItem('sidebar-collapsed', 'true')")
     expect(collapseFn).not.toContain("'false'")
   })
