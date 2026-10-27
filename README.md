@@ -6,6 +6,11 @@ that reasons over the numbers. One person built it and uses it, on one private d
 This repository holds the code, the models and the documentation. The data stays out of it
 (see [Privacy design](#privacy-design)).
 
+https://github.com/user-attachments/assets/22ce87d4-00a2-49de-9556-2533cf37cba7
+
+The video shows the app running on a demo database with an invented athlete, not the
+owner's data.
+
 ## What it does
 
 - **Ingests health data continuously.** The [Health Auto Export](https://github.com/Lybron/health-auto-export)

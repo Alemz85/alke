@@ -14,7 +14,7 @@
 import { execFile } from 'child_process'
 import type { MetricsJobResult } from './metricsJob'
 
-const OWNER_REPO = 'Alemz85/health-analytics'
+const OWNER_REPO = 'Alemz85/alke'
 const WORKFLOW_FILE = 'nightly-metrics.yml'
 const API_BASE = `https://api.github.com/repos/${OWNER_REPO}/actions`
 
